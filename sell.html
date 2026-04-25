@@ -762,7 +762,7 @@
   // ── SUPABASE CONFIG ──
   const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // ── n8n WEBHOOK URL (replace with your actual webhook) ──
   const N8N_WEBHOOK = 'https://your-n8n-instance.com/webhook/unique-thrift-vetting';
@@ -922,7 +922,7 @@
       const fileName = `${Date.now()}_${i}.${ext}`;
       const path = `products/${fileName}`;
 
-      const { error } = await supabase.storage
+      const { error } = await sb.storage
         .from('product-images')
         .upload(path, file, { cacheControl: '3600', upsert: false });
 
@@ -931,7 +931,7 @@
         continue;
       }
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: { publicUrl } } = sb.storage
         .from('product-images')
         .getPublicUrl(path);
 

@@ -917,7 +917,7 @@
 <script>
   const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
   const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // ── OWNER CREDENTIALS (change these) ──
   const OWNER_EMAIL = 'owner@uniquethrift.com';
@@ -971,9 +971,9 @@
   // ── LOAD ALL DATA ──
   async function loadAllData() {
     const [products, orders, messages] = await Promise.all([
-      supabase.from('products').select('*').order('created_at', { ascending: false }),
-      supabase.from('orders').select('*').order('created_at', { ascending: false }),
-      supabase.from('messages').select('*').order('created_at', { ascending: false })
+      sb.from('products').select('*').order('created_at', { ascending: false }),
+      sb.from('orders').select('*').order('created_at', { ascending: false }),
+      sb.from('messages').select('*').order('created_at', { ascending: false })
     ]);
 
     const prods = products.data || [];
@@ -1079,7 +1079,7 @@
   }
 
   async function viewProduct(id) {
-    const { data: p } = await supabase.from('products').select('*').eq('id', id).single();
+    const { data: p } = await sb.from('products').select('*').eq('id', id).single();
     if (!p) return;
     activeProductModal = p;
 
