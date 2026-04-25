@@ -1065,10 +1065,10 @@
               <td><span class="badge ${p.status}">${p.status}</span></td>
               <td>
                 <div class="action-btns">
-                  <button class="action-btn view" onclick="viewProduct('${p.id}')">View</button>
+                  <button class="action-btn view" onclick="event.preventDefault();event.stopPropagation();viewProduct('${p.id}')">View</button>
                   ${showActions ? `
-                    <button class="action-btn approve" onclick="updateStatus('${p.id}', 'approved')">✓ Approve</button>
-                    <button class="action-btn reject" onclick="updateStatus('${p.id}', 'rejected')">✗ Reject</button>
+                    <button class="action-btn approve" onclick="event.preventDefault();event.stopPropagation();updateStatus('${p.id}', 'approved')">✓ Approve</button>
+                    <button class="action-btn reject" onclick="event.preventDefault();event.stopPropagation();updateStatus('${p.id}', 'rejected')">✗ Reject</button>
                   ` : ''}
                 </div>
               </td>
