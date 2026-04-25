@@ -1138,8 +1138,16 @@
 
     if (error) { showToast('Error updating status'); return; }
     showToast(status === 'approved' ? '✅ Product approved and now live!' : '❌ Product rejected');
-    loadAllData();
-    loadProducts('pending');
+
+    // Reload everything and re-render active page
+    await loadAllData();
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const pageId = activePage.id.replace('page-', '');
+      if (['pending','approved','rejected'].includes(pageId)) {
+        await loadProducts(pageId);
+      }
+    }
   }
 
   // ── ORDERS ──
