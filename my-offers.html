@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Offers — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #f5f0e8;
+      --warm-white: #faf8f4;
+      --charcoal: #1a1a18;
+      --clay: #c4622d;
+      --clay-light: #e8845a;
+      --sage: #7a8c6e;
+      --muted: #9a9086;
+      --border: #e8e0d0;
+      --error: #d94f4f;
+      --success: #4f9d6e;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Outfit', sans-serif; background: var(--cream); color: var(--charcoal); min-height: 100vh; }
+
+    nav {
+      background: var(--charcoal); padding: 0 24px; height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 50;
+    }
+    .logo { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--cream); text-decoration: none; }
+    .logo em { font-style: italic; color: var(--clay-light); }
+
+    .page-wrap { max-width: 720px; margin: 0 auto; padding: 36px 20px 80px; }
+
+    .page-heading { font-family: 'Cormorant Garamond', serif; font-size: 32px; font-weight: 600; margin-bottom: 6px; }
+    .page-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+
+    /* Auth gate */
+    .auth-gate {
+      background: white; border-radius: 20px; padding: 36px 28px;
+      border: 1px solid var(--border); text-align: center; max-width: 400px; margin: 60px auto;
+    }
+    .auth-gate h2 { font-family: 'Cormorant Garamond', serif; font-size: 24px; margin-bottom: 8px; }
+    .auth-gate p { font-size: 13px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+    .form-input {
+      width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: 12px;
+      font-family: 'Outfit', sans-serif; font-size: 14px; outline: none; transition: border-color 0.2s;
+      background: var(--warm-white); margin-bottom: 10px;
+    }
+    .form-input:focus { border-color: var(--clay); background: white; }
+    .btn {
+      width: 100%; padding: 13px; border: none; border-radius: 100px;
+      font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-primary { background: var(--charcoal); color: white; }
+    .btn-primary:hover { background: var(--clay); }
+
+    /* Filter tabs */
+    .filter-bar { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-chip {
+      padding: 7px 18px; border-radius: 100px; border: 1.5px solid var(--border);
+      background: white; font-size: 12px; font-family: 'Outfit', sans-serif;
+      cursor: pointer; transition: all 0.2s; color: var(--charcoal);
+    }
+    .filter-chip.active { background: var(--charcoal); color: white; border-color: var(--charcoal); }
+
+    /* Offer card */
+    .offer-card {
+      background: white; border-radius: 16px; border: 1px solid var(--border);
+      margin-bottom: 14px; overflow: hidden;
+      animation: cardUp 0.35s ease both;
+    }
+    @keyframes cardUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+
+    .offer-card-header {
+      padding: 16px 18px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .offer-img {
+      width: 52px; height: 52px; border-radius: 10px;
+      object-fit: cover; background: var(--cream); flex-shrink: 0;
+    }
+    .offer-product-name { font-weight: 500; font-size: 14px; }
+    .offer-product-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .status-badge {
+      margin-left: auto; padding: 4px 12px; border-radius: 100px;
+      font-size: 11px; font-weight: 500; flex-shrink: 0;
+    }
+
+    .offer-body { padding: 16px 18px; }
+    .offer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .offer-field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 3px; }
+    .offer-field-val { font-size: 15px; font-weight: 500; }
+    .offer-amount-big { font-size: 24px; font-weight: 600; color: var(--clay); }
+    .offer-savings { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .offer-message {
+      background: var(--warm-white); border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; color: #555; font-style: italic; margin-bottom: 14px;
+    }
+
+    .counter-shown {
+      background: #eef4ff; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+    }
+    .counter-shown-label { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--muted); margin-bottom:4px; }
+    .counter-shown-val { font-size:16px; font-weight:600; color:#3b6fd4; }
+
+    .offer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .offer-btn {
+      flex: 1; min-width: 100px; padding: 10px 16px; border-radius: 100px;
+      font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: none; transition: all 0.2s;
+    }
+    .offer-btn-accept { background: var(--success); color: white; }
+    .offer-btn-accept:hover { opacity: 0.88; }
+    .offer-btn-counter { background: #eef4ff; color: #3b6fd4; border: 1.5px solid #b8cfff; }
+    .offer-btn-counter:hover { background: #3b6fd4; color: white; }
+    .offer-btn-decline { background: #fef0f0; color: var(--error); border: 1.5px solid #fcc; }
+    .offer-btn-decline:hover { background: var(--error); color: white; }
+
+    /* Counter modal */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(26,26,24,0.6); z-index: 200;
+      align-items: flex-end; justify-content: center;
+      backdrop-filter: blur(6px);
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-sheet {
+      background: white; border-radius: 28px 28px 0 0; width: 100%;
+      max-width: 560px; padding: 8px 0 32px;
+      animation: sheetUp 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    @keyframes sheetUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+    .modal-drag { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 14px auto 20px; }
+    .modal-body { padding: 0 24px 8px; }
+    .modal-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; margin-bottom: 6px; }
+    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+    .counter-input-wrap { position: relative; margin-bottom: 10px; }
+    .counter-prefix { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 16px; color: var(--muted); }
+    .counter-input {
+      width: 100%; padding: 14px 16px 14px 32px;
+      border: 2px solid var(--border); border-radius: 14px;
+      font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 500; outline: none;
+      transition: border-color 0.2s;
+    }
+    .counter-input:focus { border-color: var(--clay); }
+    .counter-note {
+      width: 100%; padding: 11px 14px; border: 1.5px solid var(--border); border-radius: 12px;
+      font-family: 'Outfit', sans-serif; font-size: 13px; outline: none; resize: none; min-height: 72px;
+      transition: border-color 0.2s; margin-bottom: 14px;
+    }
+    .counter-note:focus { border-color: var(--clay); }
+    .modal-btns { display: flex; flex-direction: column; gap: 10px; }
+    .modal-btn-send {
+      padding: 14px; border: none; border-radius: 100px; background: var(--charcoal);
+      color: white; font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 500;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .modal-btn-send:hover { background: var(--clay); }
+    .modal-btn-cancel {
+      padding: 14px; border: 1.5px solid var(--border); border-radius: 100px; background: white;
+      font-family: 'Outfit', sans-serif; font-size: 14px; cursor: pointer; transition: border-color 0.2s;
+    }
+    .modal-btn-cancel:hover { border-color: var(--charcoal); }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 64px 24px; color: var(--muted); }
+    .empty-icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--charcoal); margin-bottom: 8px; }
+
+    /* Skeleton */
+    .skel { background: linear-gradient(90deg,#f0ebe2 25%,#e4dbd0 50%,#f0ebe2 75%); background-size:200% 100%; animation: shimmer 1.4s infinite; border-radius: 10px; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120px);
+      background: var(--charcoal); color: white; padding: 12px 24px;
+      border-radius: 100px; font-size: 13px; z-index: 999;
+      transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+      white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 600px) {
+      .offer-grid { grid-template-columns: 1fr; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="./index.html" class="logo">Unique <em>Thrift</em></a>
+  <a href="./index.html" style="color:rgba(245,240,232,0.6);font-size:13px;text-decoration:none;">← Back to Shop</a>
+</nav>
+
+<!-- AUTH GATE (shown when no email verified) -->
+<div id="authGate" class="auth-gate">
+  <h2>View Your Offers</h2>
+  <p>Enter the email address you used when listing your item to see all offers from buyers.</p>
+  <input type="email" class="form-input" id="sellerEmailInput" placeholder="your@email.com"
+    onkeydown="if(event.key==='Enter')verifySellerEmail()" />
+  <button class="btn btn-primary" onclick="verifySellerEmail()">View My Offers →</button>
+  <p id="authError" style="margin-top:10px;color:var(--error);font-size:13px;display:none;"></p>
+</div>
+
+<!-- MAIN CONTENT (shown after email verified) -->
+<div class="page-wrap" id="mainContent" style="display:none;">
+  <div class="page-heading">My Offers</div>
+  <div class="page-sub" id="pageSubtitle"></div>
+
+  <div class="filter-bar">
+    <div class="filter-chip active" onclick="applyFilter('all',this)">All</div>
+    <div class="filter-chip" onclick="applyFilter('pending',this)">⏳ Pending</div>
+    <div class="filter-chip" onclick="applyFilter('countered',this)">↔ Countered</div>
+    <div class="filter-chip" onclick="applyFilter('accepted',this)">✅ Accepted</div>
+    <div class="filter-chip" onclick="applyFilter('declined',this)">❌ Declined</div>
+  </div>
+
+  <div id="offersContainer">
+    <!-- skeleton -->
+    <div class="offer-card" style="padding:20px;">
+      <div class="skel" style="height:56px;border-radius:10px;margin-bottom:14px;"></div>
+      <div class="skel" style="height:16px;width:60%;margin-bottom:8px;"></div>
+      <div class="skel" style="height:16px;width:40%;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- COUNTER-OFFER MODAL -->
+<div class="modal-backdrop" id="counterModal" onclick="if(event.target===this)closeCounter()">
+  <div class="modal-sheet">
+    <div class="modal-drag"></div>
+    <div class="modal-body">
+      <div class="modal-title">Send a Counter-Offer</div>
+      <div class="modal-sub" id="counterContext"></div>
+      <div class="counter-input-wrap">
+        <span class="counter-prefix">₦</span>
+        <input type="number" class="counter-input" id="counterAmt" placeholder="0" />
+      </div>
+      <textarea class="counter-note" id="counterNote" placeholder="Optional note to buyer (e.g. I can't go lower — item is barely used)"></textarea>
+      <div class="modal-btns">
+        <button class="modal-btn-send" onclick="sendCounter()">Send Counter-Offer →</button>
+        <button class="modal-btn-cancel" onclick="closeCounter()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let verifiedEmail = '';
+  let allOffers = [];
+  let activeOfferId = null;
+  let currentFilter = 'all';
+
+  // ── AUTO-LOGIN FROM URL PARAM ──
+  // Sellers can bookmark: /my-offers.html?email=seller@example.com
+  window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const emailParam = params.get('email');
+    if (emailParam) {
+      document.getElementById('sellerEmailInput').value = emailParam;
+      verifySellerEmail();
+    }
+  });
+
+  // ── VERIFY EMAIL ──
+  async function verifySellerEmail() {
+    const email = document.getElementById('sellerEmailInput').value.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      showAuthError('Please enter a valid email address');
+      return;
+    }
+
+    // Check if any products exist with this seller email
+    const { data, error } = await sb
+      .from('products')
+      .select('id')
+      .eq('seller_email', email)
+      .limit(1);
+
+    if (error || !data || data.length === 0) {
+      showAuthError('No listings found for this email. Make sure you use the same email you listed with.');
+      return;
+    }
+
+    verifiedEmail = email;
+    sessionStorage.setItem('ut_seller_email', email);
+    document.getElementById('authGate').style.display = 'none';
+    document.getElementById('mainContent').style.display = 'block';
+    document.getElementById('pageSubtitle').textContent = `Viewing offers for: ${email}`;
+    await loadOffers();
+  }
+
+  function showAuthError(msg) {
+    const el = document.getElementById('authError');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  // ── LOAD OFFERS ──
+  async function loadOffers() {
+    // First get all product IDs for this seller
+    const { data: products } = await sb
+      .from('products')
+      .select('id, title, images, price')
+      .eq('seller_email', verifiedEmail);
+
+    if (!products || products.length === 0) {
+      renderOffers([]);
+      return;
+    }
+
+    const productIds = products.map(p => p.id);
+
+    const { data: offers, error } = await sb
+      .from('offers')
+      .select('*, products(title, images, price)')
+      .in('product_id', productIds)
+      .order('created_at', { ascending: false });
+
+    if (error) { showToast('Failed to load offers'); return; }
+    allOffers = offers || [];
+    renderOffers(filterOffers(currentFilter));
+  }
+
+  function filterOffers(status) {
+    if (status === 'all') return allOffers;
+    return allOffers.filter(o => {
+      if (status === 'pending') {
+        return o.status === 'pending' && new Date(o.expires_at) > new Date();
+      }
+      return o.status === status;
+    });
+  }
+
+  function applyFilter(status, el) {
+    currentFilter = status;
+    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    renderOffers(filterOffers(status));
+  }
+
+  // ── RENDER OFFERS ──
+  function renderOffers(offers) {
+    const container = document.getElementById('offersContainer');
+
+    if (!offers.length) {
+      container.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">🤝</div>
+          <div class="empty-title">No offers here</div>
+          <p style="font-size:14px;">When buyers make offers on your items, they'll appear here.</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = offers.map((o, i) => {
+      const product = o.products || {};
+      const img = product.images?.[0] || 'https://placehold.co/52x52/f5f0e8/9a9086?text=?';
+      const discount = Math.round(((o.listed_price - o.offer_amount) / o.listed_price) * 100);
+      const isExpired = new Date(o.expires_at) < new Date() && o.status === 'pending';
+      const displayStatus = isExpired ? 'expired' : o.status;
+
+      const statusMap = {
+        pending:   { bg:'#fff8e8', color:'#c4622d', label:'Pending' },
+        countered: { bg:'#eef4ff', color:'#3b6fd4', label:'Countered' },
+        accepted:  { bg:'#edf7f2', color:'#4f9d6e', label:'Accepted' },
+        declined:  { bg:'#fef0f0', color:'#d94f4f', label:'Declined' },
+        expired:   { bg:'#f5f5f5', color:'#9a9086', label:'Expired' },
+        purchased: { bg:'#edf7f2', color:'#4f9d6e', label:'Purchased' },
+      };
+      const s = statusMap[displayStatus] || statusMap.pending;
+
+      const canAct = o.status === 'pending' && !isExpired;
+
+      return `
+        <div class="offer-card" style="animation-delay:${i * 0.04}s;">
+          <div class="offer-card-header">
+            <img class="offer-img" src="${img}" alt="${product.title || ''}"
+              onerror="this.src='https://placehold.co/52x52/f5f0e8/9a9086?text=?'" />
+            <div>
+              <div class="offer-product-name">${product.title || '—'}</div>
+              <div class="offer-product-meta">Listed at ₦${Number(o.listed_price).toLocaleString()}</div>
+            </div>
+            <span class="status-badge" style="background:${s.bg};color:${s.color};">${s.label}</span>
+          </div>
+
+          <div class="offer-body">
+            <div class="offer-grid">
+              <div>
+                <div class="offer-field-label">Buyer's Offer</div>
+                <div class="offer-amount-big">₦${Number(o.offer_amount).toLocaleString()}</div>
+                <div class="offer-savings">${discount}% below your price</div>
+              </div>
+              <div>
+                <div class="offer-field-label">From</div>
+                <div class="offer-field-val">${o.buyer_name}</div>
+                <div style="font-size:12px;color:var(--muted);margin-top:2px;">${o.buyer_email}</div>
+                ${o.buyer_phone ? `<div style="font-size:12px;color:var(--muted);">${o.buyer_phone}</div>` : ''}
+              </div>
+              <div>
+                <div class="offer-field-label">Received</div>
+                <div style="font-size:13px;">${formatDate(o.created_at)}</div>
+              </div>
+              <div>
+                <div class="offer-field-label">Expires</div>
+                <div style="font-size:13px;${isExpired ? 'color:var(--error);' : ''}">${formatDate(o.expires_at)}</div>
+              </div>
+            </div>
+
+            ${o.message ? `<div class="offer-message">"${o.message}"</div>` : ''}
+
+            ${o.counter_amount ? `
+              <div class="counter-shown">
+                <div class="counter-shown-label">Your Counter-Offer</div>
+                <div class="counter-shown-val">₦${Number(o.counter_amount).toLocaleString()}</div>
+                ${o.counter_note ? `<div style="font-size:13px;color:#555;margin-top:4px;">${o.counter_note}</div>` : ''}
+              </div>` : ''}
+
+            ${canAct ? `
+              <div class="offer-actions">
+                <button class="offer-btn offer-btn-accept" onclick="resolveOffer('${o.id}','accepted')">✓ Accept</button>
+                <button class="offer-btn offer-btn-counter" onclick="openCounter('${o.id}')">↔ Counter</button>
+                <button class="offer-btn offer-btn-decline" onclick="resolveOffer('${o.id}','declined')">✗ Decline</button>
+              </div>` : ''}
+
+            ${o.status === 'accepted' ? `
+              <div style="padding:10px 0;font-size:13px;color:var(--success);font-weight:500;">
+                ✅ You accepted this offer. Buyer has been notified to complete payment.
+              </div>` : ''}
+
+            ${o.status === 'countered' ? `
+              <div style="padding:10px 0 4px;">
+                <div style="font-size:13px;color:#3b6fd4;margin-bottom:10px;">↔ Waiting for buyer to respond to your counter-offer.</div>
+                <div class="offer-actions">
+                  <button class="offer-btn offer-btn-accept" onclick="resolveOffer('${o.id}','accepted')">✓ Accept Their Offer Anyway</button>
+                  <button class="offer-btn offer-btn-decline" onclick="resolveOffer('${o.id}','declined')">✗ Decline</button>
+                </div>
+              </div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── COUNTER MODAL ──
+  function openCounter(offerId) {
+    activeOfferId = offerId;
+    const offer = allOffers.find(o => o.id === offerId);
+    if (!offer) return;
+    document.getElementById('counterContext').textContent =
+      `Buyer offered ₦${Number(offer.offer_amount).toLocaleString()} for "${offer.products?.title}". Enter the lowest price you'll accept.`;
+    document.getElementById('counterAmt').value = '';
+    document.getElementById('counterNote').value = '';
+    document.getElementById('counterModal').classList.add('open');
+  }
+
+  function closeCounter() {
+    document.getElementById('counterModal').classList.remove('open');
+    activeOfferId = null;
+  }
+
+  async function sendCounter() {
+    const amount = Number(document.getElementById('counterAmt').value);
+    const note   = document.getElementById('counterNote').value.trim();
+
+    if (!amount || amount <= 0) { showToast('Please enter a counter amount'); return; }
+
+    const offer = allOffers.find(o => o.id === activeOfferId);
+    if (offer && amount >= offer.listed_price) {
+      showToast('Counter must be below your listed price'); return;
+    }
+    if (offer && amount <= offer.offer_amount) {
+      showToast('Counter should be above the buyer\'s offer'); return;
+    }
+
+    const { error } = await sb.from('offers').update({
+      status:         'countered',
+      counter_amount: amount,
+      counter_note:   note || null,
+      countered_at:   new Date().toISOString()
+    }).eq('id', activeOfferId);
+
+    if (error) { showToast('Failed to send counter-offer'); return; }
+
+    closeCounter();
+    showToast('↔ Counter-offer sent to buyer!');
+    await loadOffers();
+  }
+
+  async function resolveOffer(offerId, status) {
+    const { error } = await sb.from('offers').update({
+      status,
+      resolved_at: new Date().toISOString()
+    }).eq('id', offerId);
+
+    if (error) { showToast('Something went wrong'); return; }
+
+    const msgs = {
+      accepted: '✅ Offer accepted! Buyer will be notified.',
+      declined: '❌ Offer declined'
+    };
+    showToast(msgs[status] || 'Updated');
+    await loadOffers();
+  }
+
+  // ── UTILS ──
+  function formatDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-NG', { day:'numeric', month:'short', year:'numeric' });
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3200);
+  }
+</script>
+</body>
+</html>

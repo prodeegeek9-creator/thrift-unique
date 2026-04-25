@@ -631,6 +631,39 @@
       <div class="form-error" id="err-price">Please enter a valid price</div>
     </div>
 
+    <!-- NEGOTIATION TOGGLE -->
+    <div class="form-group" style="background:var(--cream);border-radius:14px;padding:16px 18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div>
+          <div class="form-label" style="margin-bottom:0;">Allow price negotiation</div>
+          <div class="form-hint" style="margin-top:2px;">Buyers can make you an offer below your listed price</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;flex-shrink:0;">
+          <input type="checkbox" id="allowNegotiation" onchange="toggleNegotiationFields(this.checked)"
+            style="opacity:0;width:0;height:0;" />
+          <span id="negToggleSlider" style="position:absolute;inset:0;background:var(--border);border-radius:100px;transition:0.2s;">
+            <span style="position:absolute;width:18px;height:18px;left:3px;top:3px;background:white;border-radius:50%;transition:0.2s;display:block;" id="negToggleKnob"></span>
+          </span>
+        </label>
+      </div>
+
+      <div id="negotiationFields" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:14px;">
+        <label class="form-label">Minimum discount you'll accept <span class="required">*</span></label>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <input type="range" id="minDiscountSlider" min="5" max="50" value="20" step="5"
+            oninput="updateDiscountDisplay()"
+            style="flex:1;accent-color:var(--clay);cursor:pointer;" />
+          <div style="background:var(--clay);color:white;font-size:14px;font-weight:600;padding:6px 14px;border-radius:100px;white-space:nowrap;min-width:54px;text-align:center;" id="discountDisplay">20%</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;">
+          <span>5% off</span>
+          <span id="minPricePreview" style="color:var(--clay);font-weight:500;"></span>
+          <span>50% off</span>
+        </div>
+        <div class="form-hint" style="margin-top:8px;">Offers below this threshold will be automatically rejected</div>
+      </div>
+    </div>
+
     <div class="form-group">
       <label class="form-label">Description <span class="required">*</span></label>
       <textarea class="form-textarea" id="itemDescription" placeholder="Describe the item. Include size, measurements, any flaws, reason for selling, etc." maxlength="1000"></textarea>
@@ -776,6 +809,35 @@
   // ── DESCRIPTION COUNTER ──
   document.getElementById('itemDescription').addEventListener('input', function() {
     document.getElementById('descCount').textContent = `${this.value.length} / 1000 characters`;
+  });
+
+  // ── NEGOTIATION TOGGLE ──
+  function toggleNegotiationFields(checked) {
+    const fields = document.getElementById('negotiationFields');
+    const slider = document.getElementById('negToggleSlider');
+    const knob   = document.getElementById('negToggleKnob');
+    fields.style.display = checked ? 'block' : 'none';
+    slider.style.background = checked ? 'var(--clay)' : 'var(--border)';
+    knob.style.transform = checked ? 'translateX(20px)' : 'translateX(0)';
+    if (checked) updateDiscountDisplay();
+  }
+
+  function updateDiscountDisplay() {
+    const pct   = Number(document.getElementById('minDiscountSlider').value);
+    const price = Number(document.getElementById('itemPrice').value);
+    document.getElementById('discountDisplay').textContent = pct + '%';
+    if (price > 0) {
+      const minPrice = Math.ceil(price * (1 - pct / 100));
+      document.getElementById('minPricePreview').textContent =
+        `Min offer: ₦${minPrice.toLocaleString()}`;
+    } else {
+      document.getElementById('minPricePreview').textContent = '';
+    }
+  }
+
+  // Update min price preview when price changes
+  document.getElementById('itemPrice').addEventListener('input', () => {
+    if (document.getElementById('allowNegotiation').checked) updateDiscountDisplay();
   });
 
   // ── DRAG AND DROP ──
@@ -970,6 +1032,10 @@
         seller_email: document.getElementById('sellerEmail').value.trim(),
         seller_phone: document.getElementById('sellerPhone').value.trim(),
         seller_location: document.getElementById('sellerLocation').value.trim(),
+        allow_negotiation: document.getElementById('allowNegotiation').checked,
+        min_discount_pct: document.getElementById('allowNegotiation').checked
+          ? Number(document.getElementById('minDiscountSlider').value)
+          : null,
         status: 'pending'
       };
 

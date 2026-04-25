@@ -625,6 +625,10 @@
       </div>
 
       <div class="nav-section-label">Customers</div>
+      <div class="nav-item" onclick="showPage('negotiations', this)">
+        <span class="icon">🤝</span> Negotiations
+        <span id="negotiationsCount" style="margin-left:auto;background:var(--clay);color:white;font-size:10px;padding:2px 7px;border-radius:100px;display:none;"></span>
+      </div>
       <div class="nav-item" onclick="showPage('orders', this)">
         <span class="icon">🛍️</span> Orders
       </div>
@@ -675,6 +679,11 @@
             <div class="stat-icon">💬</div>
             <div class="stat-value" id="stat-messages">—</div>
             <div class="stat-label">Messages</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">🤝</div>
+            <div class="stat-value" id="stat-negotiations">—</div>
+            <div class="stat-label">Pending Offers</div>
           </div>
           <div class="stat-card">
             <div class="stat-icon">💰</div>
@@ -739,6 +748,23 @@
           </div>
           <div id="rejectedTable"></div>
         </div>
+      </div>
+
+      <!-- NEGOTIATIONS PAGE -->
+      <div class="page" id="page-negotiations">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Negotiations</div>
+            <div class="page-subtitle">Buyer offers across all your products</div>
+          </div>
+          <div class="filter-tabs">
+            <div class="filter-tab active" onclick="filterNegotiations('pending',this)">Pending</div>
+            <div class="filter-tab" onclick="filterNegotiations('countered',this)">Countered</div>
+            <div class="filter-tab" onclick="filterNegotiations('accepted',this)">Accepted</div>
+            <div class="filter-tab" onclick="filterNegotiations('all',this)">All</div>
+          </div>
+        </div>
+        <div id="negotiationsContainer"></div>
       </div>
 
       <!-- ORDERS PAGE -->
@@ -961,6 +987,33 @@
   </div>
 </div>
 
+<!-- COUNTER-OFFER MODAL -->
+<div class="modal-overlay" id="counterModal">
+  <div class="modal-box" style="max-width:440px;">
+    <h3>Counter Offer</h3>
+    <div id="counterOfferContext" style="background:var(--warm-white);border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;line-height:1.8;"></div>
+    <div style="margin-bottom:12px;">
+      <label style="font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">Your Counter-Offer (₦)</label>
+      <div style="position:relative;">
+        <span style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:15px;">₦</span>
+        <input type="number" id="counterAmountInput" placeholder="0"
+          style="width:100%;padding:13px 14px 13px 30px;border:2px solid var(--border);border-radius:12px;font-size:20px;font-weight:500;font-family:'DM Sans',sans-serif;outline:none;transition:border-color 0.2s;"
+          onfocus="this.style.borderColor='var(--clay)'" onblur="this.style.borderColor='var(--border)'" />
+      </div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label style="font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">Message to buyer (optional)</label>
+      <textarea id="counterNoteInput" placeholder="e.g. Best I can do — item is barely used"
+        style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:12px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;resize:none;min-height:72px;transition:border-color 0.2s;"
+        onfocus="this.style.borderColor='var(--clay)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-approve" onclick="submitCounter()">Send Counter →</button>
+      <button class="modal-close-btn" onclick="document.getElementById('counterModal').classList.remove('open')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -1024,32 +1077,44 @@
 
   // ── LOAD ALL DATA ──
   async function loadAllData() {
-    const [products, orders, messages] = await Promise.all([
+    const [products, orders, messages, offers] = await Promise.all([
       sb.from('products').select('*').order('created_at', { ascending: false }),
       sb.from('orders').select('*').order('created_at', { ascending: false }),
-      sb.from('messages').select('*').order('created_at', { ascending: false })
+      sb.from('messages').select('*').order('created_at', { ascending: false }),
+      sb.from('offers').select('*').eq('status','pending').order('created_at', { ascending: false })
     ]);
 
     const prods = products.data || [];
-    const ords = orders.data || [];
-    const msgs = messages.data || [];
+    const ords  = orders.data  || [];
+    const msgs  = messages.data || [];
+    const pendingOffers = offers.data || [];
 
     allOrders = ords;
 
-    const pending = prods.filter(p => p.status === 'pending');
+    const pending  = prods.filter(p => p.status === 'pending');
     const approved = prods.filter(p => p.status === 'approved');
-    const revenue = ords.filter(o => o.status === 'paid').reduce((s, o) => s + Number(o.amount), 0);
+    const revenue  = ords.filter(o => o.status === 'paid').reduce((s, o) => s + Number(o.amount), 0);
 
     // Stats
-    document.getElementById('stat-pending').textContent = pending.length;
-    document.getElementById('stat-approved').textContent = approved.length;
-    document.getElementById('stat-orders').textContent = ords.length;
-    document.getElementById('stat-messages').textContent = msgs.length;
-    document.getElementById('stat-revenue').textContent = revenue > 0 ? `₦${revenue.toLocaleString()}` : '₦0';
+    document.getElementById('stat-pending').textContent      = pending.length;
+    document.getElementById('stat-approved').textContent     = approved.length;
+    document.getElementById('stat-orders').textContent       = ords.length;
+    document.getElementById('stat-messages').textContent     = msgs.length;
+    document.getElementById('stat-revenue').textContent      = revenue > 0 ? `₦${revenue.toLocaleString()}` : '₦0';
+    document.getElementById('stat-negotiations').textContent = pendingOffers.length;
 
     // Pending count badge
     const pc = document.getElementById('pendingCount');
     pc.textContent = pending.length > 0 ? pending.length : '';
+
+    // Negotiations badge
+    const nc = document.getElementById('negotiationsCount');
+    if (pendingOffers.length > 0) {
+      nc.textContent = pendingOffers.length;
+      nc.style.display = 'inline-block';
+    } else {
+      nc.style.display = 'none';
+    }
 
     // Recent pending table on overview
     renderProductTable('recentPendingTable', pending.slice(0, 5), true);
@@ -1061,6 +1126,7 @@
     else if (name === 'rejected') loadProducts('rejected');
     else if (name === 'orders') loadOrders();
     else if (name === 'messages') loadMessages();
+    else if (name === 'negotiations') loadNegotiations('pending');
     else if (name === 'overview') loadAllData();
   }
 
@@ -1507,6 +1573,190 @@
   }
 
   loadSavedSettings();
+
+  // ── NEGOTIATIONS ──
+  let allNegotiations = [];
+  let activeCounterOfferId = null;
+
+  async function loadNegotiations(statusFilter) {
+    let query = sb.from('offers')
+      .select('*, products(title, images, price, seller_name, seller_email, allow_negotiation, min_discount_pct)')
+      .order('created_at', { ascending: false });
+
+    if (statusFilter !== 'all') query = query.eq('status', statusFilter);
+
+    const { data, error } = await query;
+    if (error) { showToast('Failed to load negotiations'); return; }
+    allNegotiations = data || [];
+    renderNegotiations(allNegotiations);
+  }
+
+  function filterNegotiations(status, el) {
+    document.querySelectorAll('#page-negotiations .filter-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    loadNegotiations(status);
+  }
+
+  function renderNegotiations(offers) {
+    const container = document.getElementById('negotiationsContainer');
+    if (!offers.length) {
+      container.innerHTML = `
+        <div class="table-empty" style="background:white;border-radius:16px;border:1px solid var(--border);padding:60px 24px;">
+          <div class="table-empty-icon">🤝</div>
+          <div class="table-empty-text">No offers in this category</div>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = offers.map(o => {
+      const product = o.products || {};
+      const img = product.images?.[0] || 'https://placehold.co/56x56/f5f0e8/9a9086?text=?';
+      const discount = Math.round(((o.listed_price - o.offer_amount) / o.listed_price) * 100);
+      const isExpired = new Date(o.expires_at) < new Date() && o.status === 'pending';
+      const displayStatus = isExpired ? 'expired' : o.status;
+
+      const statusColors = {
+        pending:  { bg:'#fff8e8', color:'#c4622d' },
+        countered:{ bg:'#eef4ff', color:'#3b6fd4' },
+        accepted: { bg:'#edf7f2', color:'#4f9d6e' },
+        declined: { bg:'#fef0f0', color:'#d94f4f' },
+        expired:  { bg:'#f5f5f5', color:'#9a9086' },
+        purchased:{ bg:'#edf7f2', color:'#4f9d6e' },
+      };
+      const sc = statusColors[displayStatus] || statusColors.pending;
+
+      return `
+        <div style="background:white;border-radius:16px;border:1px solid var(--border);margin-bottom:12px;overflow:hidden;">
+          <!-- Header -->
+          <div style="padding:16px 20px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--border);">
+            <img src="${img}" style="width:56px;height:56px;border-radius:10px;object-fit:cover;flex-shrink:0;" />
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${product.title || '—'}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">Listed at ₦${Number(o.listed_price).toLocaleString()}</div>
+            </div>
+            <span style="background:${sc.bg};color:${sc.color};font-size:11px;font-weight:500;padding:4px 12px;border-radius:100px;white-space:nowrap;flex-shrink:0;">${displayStatus}</span>
+          </div>
+
+          <!-- Offer details -->
+          <div style="padding:16px 20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Buyer Offer</div>
+              <div style="font-size:20px;font-weight:600;color:var(--clay);">₦${Number(o.offer_amount).toLocaleString()}</div>
+              <div style="font-size:11px;color:var(--muted);">${discount}% off listed</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">From</div>
+              <div style="font-size:13px;font-weight:500;">${o.buyer_name}</div>
+              <div style="font-size:11px;color:var(--muted);">${o.buyer_email}</div>
+              ${o.buyer_phone ? `<div style="font-size:11px;color:var(--muted);">${o.buyer_phone}</div>` : ''}
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Received</div>
+              <div style="font-size:13px;">${formatDate(o.created_at)}</div>
+              <div style="font-size:11px;color:var(--muted);">Expires ${formatDate(o.expires_at)}</div>
+            </div>
+          </div>
+
+          ${o.message ? `
+            <div style="margin:0 20px 12px;background:var(--warm-white);border-radius:10px;padding:10px 14px;font-size:13px;color:#555;font-style:italic;">
+              "${o.message}"
+            </div>` : ''}
+
+          ${o.counter_amount ? `
+            <div style="margin:0 20px 12px;background:#eef4ff;border-radius:10px;padding:10px 14px;font-size:13px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Your Counter-Offer</div>
+              <strong>₦${Number(o.counter_amount).toLocaleString()}</strong>
+              ${o.counter_note ? ` — ${o.counter_note}` : ''}
+            </div>` : ''}
+
+          <!-- Actions -->
+          ${(o.status === 'pending' && !isExpired) ? `
+            <div style="padding:12px 20px 16px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="action-btn approve" onclick="resolveOffer('${o.id}','accepted')" style="flex:1;">✓ Accept Offer</button>
+              <button class="action-btn" onclick="openCounterModal('${o.id}')"
+                style="flex:1;border-color:#3b6fd4;color:#3b6fd4;background:#eef4ff;">↔ Counter</button>
+              <button class="action-btn reject" onclick="resolveOffer('${o.id}','declined')" style="flex:1;">✗ Decline</button>
+            </div>` : ''}
+          ${o.status === 'accepted' ? `
+            <div style="padding:12px 20px 16px;">
+              <div style="font-size:13px;color:var(--success);font-weight:500;">✅ Accepted — buyer has been notified to complete payment</div>
+            </div>` : ''}
+          ${o.status === 'countered' ? `
+            <div style="padding:12px 20px 16px;display:flex;gap:8px;">
+              <button class="action-btn approve" onclick="resolveOffer('${o.id}','accepted')">✓ Accept Anyway</button>
+              <button class="action-btn reject" onclick="resolveOffer('${o.id}','declined')">✗ Decline</button>
+            </div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  function openCounterModal(offerId) {
+    const offer = allNegotiations.find(o => o.id === offerId);
+    if (!offer) return;
+    activeCounterOfferId = offerId;
+
+    document.getElementById('counterOfferContext').innerHTML = `
+      <strong>${offer.products?.title}</strong><br>
+      Buyer: ${offer.buyer_name} (${offer.buyer_email})<br>
+      Their offer: <strong style="color:var(--clay);">₦${Number(offer.offer_amount).toLocaleString()}</strong>
+      &nbsp;·&nbsp; Listed: ₦${Number(offer.listed_price).toLocaleString()}`;
+
+    document.getElementById('counterAmountInput').value = '';
+    document.getElementById('counterNoteInput').value = '';
+    document.getElementById('counterModal').classList.add('open');
+  }
+
+  document.getElementById('counterModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('counterModal'))
+      document.getElementById('counterModal').classList.remove('open');
+  });
+
+  async function submitCounter() {
+    const amount = Number(document.getElementById('counterAmountInput').value);
+    const note   = document.getElementById('counterNoteInput').value.trim();
+    if (!amount || amount <= 0) { showToast('Please enter a counter amount'); return; }
+
+    const offer = allNegotiations.find(o => o.id === activeCounterOfferId);
+    if (offer && amount >= offer.listed_price) {
+      showToast('Counter must be below listed price'); return;
+    }
+
+    const { error } = await sb.from('offers').update({
+      status:        'countered',
+      counter_amount: amount,
+      counter_note:   note || null,
+      countered_at:   new Date().toISOString()
+    }).eq('id', activeCounterOfferId);
+
+    if (error) { showToast('Failed to send counter'); return; }
+
+    document.getElementById('counterModal').classList.remove('open');
+    showToast('↔ Counter-offer sent to buyer!');
+    await loadNegotiations('countered');
+    await loadAllData();
+  }
+
+  async function resolveOffer(offerId, status) {
+    const { error } = await sb.from('offers').update({
+      status,
+      resolved_at: new Date().toISOString()
+    }).eq('id', offerId);
+
+    if (error) { showToast('Failed to update offer'); return; }
+
+    const msgs = {
+      accepted: '✅ Offer accepted — buyer notified!',
+      declined: '❌ Offer declined'
+    };
+    showToast(msgs[status] || 'Updated');
+
+    // Reload current filter
+    const activeTab = document.querySelector('#page-negotiations .filter-tab.active');
+    const filter = activeTab?.textContent.toLowerCase().trim() || 'pending';
+    const filterMap = { 'pending':'pending', 'countered':'countered', 'accepted':'accepted', 'all':'all' };
+    await loadNegotiations(filterMap[filter] || 'pending');
+    await loadAllData();
+  }
 
   // ── UTILS ──
   function formatDate(iso) {
