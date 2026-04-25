@@ -1138,7 +1138,7 @@
   });
 
   async function updateStatus(id, status) {
-    const { error } = await sb
+    const { error } = await sbAdmin
       .from('products')
       .update({ status, reviewed_at: new Date().toISOString() })
       .eq('id', id);
