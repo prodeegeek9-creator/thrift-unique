@@ -766,11 +766,58 @@
       <div class="page" id="page-messages">
         <div class="topbar">
           <div>
-            <div class="page-title">Messages</div>
-            <div class="page-subtitle">Buyer enquiries about your products</div>
+            <div class="page-title">Messages &amp; Live Chat</div>
+            <div class="page-subtitle">Buyer enquiries and live conversations</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:13px;color:var(--muted);">You are</div>
+            <label class="toggle">
+              <input type="checkbox" id="ownerOnlineToggle" onchange="toggleOwnerStatus(this.checked)" />
+              <span class="toggle-slider"></span>
+            </label>
+            <div id="ownerStatusLabel" style="font-size:13px;color:var(--muted);">Offline</div>
           </div>
         </div>
-        <div id="messagesContainer"></div>
+
+        <div style="display:grid;grid-template-columns:300px 1fr;gap:16px;height:calc(100vh - 180px);">
+
+          <!-- SESSION LIST -->
+          <div style="background:white;border-radius:16px;border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column;">
+            <div style="padding:16px;border-bottom:1px solid var(--border);display:flex;gap:8px;">
+              <div class="filter-tab active" onclick="switchMsgTab('chat',this)" style="flex:1;text-align:center;">&#x1F4AC; Live Chat</div>
+              <div class="filter-tab" onclick="switchMsgTab('offline',this)" style="flex:1;text-align:center;">&#x1F4E9; Offline</div>
+            </div>
+            <div id="sessionList" style="overflow-y:auto;flex:1;"></div>
+          </div>
+
+          <!-- CONVERSATION PANEL -->
+          <div style="background:white;border-radius:16px;border:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+            <div id="convEmpty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:var(--muted);">
+              <div style="font-size:40px;">&#x1F4AC;</div>
+              <div style="font-size:14px;">Select a conversation</div>
+            </div>
+            <div id="convPanel" style="display:none;flex-direction:column;height:100%;">
+              <div id="convHeader" style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <div id="convName" style="font-weight:500;font-size:15px;"></div>
+                  <div id="convMeta" style="font-size:12px;color:var(--muted);margin-top:2px;"></div>
+                </div>
+                <div id="convProduct" style="font-size:12px;color:var(--clay);background:#fff5ef;padding:4px 12px;border-radius:100px;"></div>
+              </div>
+              <div id="convMessages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:var(--warm-white);"></div>
+              <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-end;">
+                <textarea id="ownerReplyInput" placeholder="Type your reply..." rows="1"
+                  style="flex:1;border:1.5px solid var(--border);border-radius:20px;padding:10px 16px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;resize:none;max-height:100px;line-height:1.4;transition:border-color 0.2s;"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendOwnerReply();}"></textarea>
+                <button onclick="sendOwnerReply()"
+                  style="width:40px;height:40px;background:var(--charcoal);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.2s;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
       </div>
 
       <!-- SETTINGS PAGE -->
@@ -922,7 +969,7 @@
   const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
   // Service role key for owner writes — paste yours here
-  const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdramFmaW1lZHV3ZHZwdWtuenV5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzAyNzYwNCwiZXhwIjoyMDkyNjAzNjA0fQ.gCKvu4JnnUcUjaYsGHbILFuELHf_69YZf9cx3dgNDf0';
+  const SUPABASE_SERVICE_KEY = 'PASTE_YOUR_SERVICE_ROLE_KEY_HERE';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const sbAdmin = window.supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -1138,7 +1185,7 @@
   });
 
   async function updateStatus(id, status) {
-    const { error } = await sbAdmin
+    const { error } = await sb
       .from('products')
       .update({ status, reviewed_at: new Date().toISOString() })
       .eq('id', id);
@@ -1212,32 +1259,210 @@
       </table>`;
   }
 
-  // ── MESSAGES ──
+  // ── MESSAGES & LIVE CHAT ──
+  let activeMsgTab = 'chat';
+  let activeSessionId = null;
+  let chatPollInterval = null;
+
+  function switchMsgTab(tab, el) {
+    document.querySelectorAll('#page-messages .filter-tab').forEach(t => t.classList.remove('active'));
+    if (el) el.classList.add('active');
+    activeMsgTab = tab;
+    loadMessages();
+    // Clear conversation panel
+    document.getElementById('convEmpty').style.display = 'flex';
+    document.getElementById('convPanel').style.display = 'none';
+    activeSessionId = null;
+    if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
+  }
+
   async function loadMessages() {
+    if (activeMsgTab === 'chat') {
+      await loadChatSessions();
+    } else {
+      await loadOfflineMessages();
+    }
+  }
+
+  async function loadChatSessions() {
+    // Get unique sessions from chat_messages
+    const { data } = await sb
+      .from('chat_messages')
+      .select('session_id, sender_name, sender_email, product_title, message, created_at')
+      .order('created_at', { ascending: false });
+
+    const sessionList = document.getElementById('sessionList');
+    if (!data || data.length === 0) {
+      sessionList.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">No live chats yet</div>';
+      return;
+    }
+
+    // Group by session_id, get latest message per session
+    const sessions = {};
+    data.forEach(m => {
+      if (!sessions[m.session_id]) {
+        sessions[m.session_id] = {
+          session_id: m.session_id,
+          name: m.sender_name || 'Anonymous',
+          email: m.sender_email || '',
+          product: m.product_title || '',
+          lastMessage: m.message,
+          lastTime: m.created_at
+        };
+      }
+    });
+
+    sessionList.innerHTML = Object.values(sessions).map(s => `
+      <div onclick="openSession('${s.session_id}', '${s.name.replace(/'/g,"\'")}', '${s.email}', '${s.product.replace(/'/g,"\'")}' )"
+        style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;${activeSessionId === s.session_id ? 'background:var(--cream);' : ''}"
+        onmouseover="this.style.background='var(--cream)'" onmouseout="this.style.background='${activeSessionId === s.session_id ? 'var(--cream)' : 'white'}'">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <div style="font-weight:500;font-size:13px;">${s.name}</div>
+          <div style="font-size:11px;color:var(--muted);">${formatDate(s.lastTime)}</div>
+        </div>
+        ${s.product ? `<div style="font-size:11px;color:var(--clay);margin-bottom:4px;">Re: ${s.product}</div>` : ''}
+        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.lastMessage}</div>
+      </div>
+    `).join('');
+  }
+
+  async function openSession(sessionId, name, email, product) {
+    activeSessionId = sessionId;
+    document.getElementById('convEmpty').style.display = 'none';
+    document.getElementById('convPanel').style.display = 'flex';
+    document.getElementById('convName').textContent = name;
+    document.getElementById('convMeta').textContent = email;
+    document.getElementById('convProduct').textContent = product ? 'Re: ' + product : '';
+    document.getElementById('convProduct').style.display = product ? 'block' : 'none';
+
+    await renderConversation(sessionId);
+
+    // Poll every 3 seconds for new messages
+    if (chatPollInterval) clearInterval(chatPollInterval);
+    chatPollInterval = setInterval(() => renderConversation(sessionId), 3000);
+
+    // Reload session list to highlight active
+    loadChatSessions();
+  }
+
+  async function renderConversation(sessionId) {
+    const { data } = await sb
+      .from('chat_messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true });
+
+    const container = document.getElementById('convMessages');
+    const msgs = data || [];
+
+    container.innerHTML = msgs.map(m => `
+      <div style="display:flex;flex-direction:column;align-items:${m.sender === 'buyer' ? 'flex-start' : 'flex-end'};">
+        <div style="max-width:75%;padding:10px 14px;border-radius:14px;font-size:13px;line-height:1.5;
+          ${m.sender === 'buyer'
+            ? 'background:white;border:1px solid var(--border);border-bottom-left-radius:4px;'
+            : 'background:var(--charcoal);color:white;border-bottom-right-radius:4px;'}">
+          ${m.message}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;padding:0 4px;">${formatTime(m.created_at)}</div>
+      </div>
+    `).join('');
+
+    container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendOwnerReply() {
+    const input = document.getElementById('ownerReplyInput');
+    const text = input.value.trim();
+    if (!text || !activeSessionId) return;
+    input.value = '';
+
+    await sb.from('chat_messages').insert({
+      session_id: activeSessionId,
+      sender: 'owner',
+      sender_name: 'Unique Thrift',
+      message: text
+    });
+
+    await renderConversation(activeSessionId);
+  }
+
+  async function loadOfflineMessages() {
     const { data } = await sb
       .from('messages')
       .select('*, products(title)')
       .order('created_at', { ascending: false });
 
-    const container = document.getElementById('messagesContainer');
+    const sessionList = document.getElementById('sessionList');
     const msgs = data || [];
 
     if (msgs.length === 0) {
-      container.innerHTML = `<div class="table-empty" style="background:white;border-radius:16px;border:1px solid var(--border)"><div class="table-empty-icon">💬</div><div class="table-empty-text">No messages yet</div></div>`;
+      sessionList.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">No offline messages yet</div>';
+      document.getElementById('convEmpty').style.display = 'flex';
+      document.getElementById('convPanel').style.display = 'none';
       return;
     }
 
-    container.innerHTML = msgs.map(m => `
-      <div class="message-card">
-        <div class="message-header">
-          <div class="message-sender">${m.sender_name}</div>
-          <div class="message-time">${formatDate(m.created_at)}</div>
+    sessionList.innerHTML = msgs.map(m => `
+      <div onclick="openOfflineMessage('${m.id}', '${(m.sender_name||'').replace(/'/g,"\'")}', '${(m.sender_email||'').replace(/'/g,"\'")}', '${(m.message||'').replace(/'/g,"\'").replace(/\n/g,' ')}')"
+        style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;"
+        onmouseover="this.style.background='var(--cream)'" onmouseout="this.style.background='white'">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <div style="font-weight:500;font-size:13px;">${m.sender_name || 'Anonymous'}</div>
+          <div style="font-size:11px;color:var(--muted);">${formatDate(m.created_at)}</div>
         </div>
-        <div class="message-product">Re: ${m.products?.title || 'Unknown Product'}</div>
-        <div class="message-text">${m.message}</div>
-        <div class="message-email">📧 ${m.sender_email}</div>
+        <div style="font-size:11px;color:var(--clay);margin-bottom:4px;">${m.products?.title || 'General enquiry'}</div>
+        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${m.message}</div>
       </div>
     `).join('');
+  }
+
+  function openOfflineMessage(id, name, email, message) {
+    document.getElementById('convEmpty').style.display = 'none';
+    document.getElementById('convPanel').style.display = 'flex';
+    document.getElementById('convName').textContent = name || 'Anonymous';
+    document.getElementById('convMeta').textContent = email;
+    document.getElementById('convProduct').style.display = 'none';
+
+    if (chatPollInterval) { clearInterval(chatPollInterval); chatPollInterval = null; }
+
+    const container = document.getElementById('convMessages');
+    container.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:flex-start;">
+        <div style="max-width:80%;padding:12px 16px;border-radius:14px;border-bottom-left-radius:4px;font-size:13px;line-height:1.6;background:white;border:1px solid var(--border);">
+          ${message}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;padding:0 4px;">${name}</div>
+      </div>
+      <div style="text-align:center;font-size:12px;color:var(--muted);padding:8px;">
+        Reply via email: <a href="mailto:${email}" style="color:var(--clay);">${email}</a>
+      </div>`;
+    container.scrollTop = container.scrollHeight;
+  }
+
+  // ── OWNER ONLINE STATUS ──
+  async function toggleOwnerStatus(isOnline) {
+    document.getElementById('ownerStatusLabel').textContent = isOnline ? 'Online' : 'Offline';
+    document.getElementById('ownerStatusLabel').style.color = isOnline ? 'var(--success)' : 'var(--muted)';
+
+    await sb.from('owner_status')
+      .update({ is_online: isOnline, last_seen: new Date().toISOString() })
+      .eq('id', 1);
+
+    showToast(isOnline ? '🟢 You are now online' : '⚫ You are now offline');
+
+    // Keep updating last_seen every 2 minutes while online
+    if (isOnline) {
+      if (window._ownerPing) clearInterval(window._ownerPing);
+      window._ownerPing = setInterval(async () => {
+        if (document.getElementById('ownerOnlineToggle').checked) {
+          await sb.from('owner_status').update({ last_seen: new Date().toISOString() }).eq('id', 1);
+        }
+      }, 120000);
+    }
+  }
+
+  function formatTime(iso) {
+    return new Date(iso).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' });
   }
 
   // ── SETTINGS ──
