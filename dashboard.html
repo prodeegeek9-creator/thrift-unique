@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owner Dashboard — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #f5f0e8;
+      --warm-white: #faf8f4;
+      --charcoal: #1a1a18;
+      --clay: #c4622d;
+      --clay-light: #e8845a;
+      --sage: #7a8c6e;
+      --gold: #d4a853;
+      --muted: #9a9086;
+      --border: #e8e0d0;
+      --error: #d94f4f;
+      --success: #4f9d6e;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--cream);
+      color: var(--charcoal);
+      min-height: 100vh;
+    }
+
+    /* ── LOGIN SCREEN ── */
+    .login-screen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--charcoal);
+    }
+
+    .login-box {
+      background: white;
+      border-radius: 24px;
+      padding: 40px 32px;
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+    }
+
+    .login-logo {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      color: var(--charcoal);
+      margin-bottom: 6px;
+    }
+
+    .login-logo span { color: var(--clay); font-style: italic; }
+
+    .login-sub {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+
+    .login-input {
+      width: 100%;
+      padding: 13px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      outline: none;
+      margin-bottom: 12px;
+      transition: border-color 0.2s;
+      background: var(--warm-white);
+    }
+
+    .login-input:focus { border-color: var(--clay); background: white; }
+
+    .login-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--charcoal);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 4px;
+    }
+
+    .login-btn:hover { background: var(--clay); }
+
+    .login-error {
+      font-size: 13px;
+      color: var(--error);
+      margin-top: 10px;
+      display: none;
+    }
+
+    .login-error.show { display: block; }
+
+    /* ── DASHBOARD ── */
+    .dashboard { display: none; }
+    .dashboard.show { display: block; }
+
+    /* ── SIDEBAR + LAYOUT ── */
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 220px;
+      background: var(--charcoal);
+      padding: 24px 0;
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 100vh;
+      overflow-y: auto;
+      z-index: 50;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      font-family: 'Playfair Display', serif;
+      font-size: 18px;
+      color: var(--cream);
+      padding: 0 20px 28px;
+      border-bottom: 1px solid rgba(245,240,232,0.1);
+      margin-bottom: 16px;
+    }
+
+    .sidebar-logo span { color: var(--clay-light); font-style: italic; }
+    .sidebar-label { font-size: 10px; color: var(--muted); display: block; letter-spacing: 0.5px; }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 20px;
+      color: rgba(245,240,232,0.6);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+    }
+
+    .nav-item:hover { color: var(--cream); background: rgba(245,240,232,0.05); }
+    .nav-item.active { color: var(--cream); border-left-color: var(--clay); background: rgba(196,98,45,0.1); }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+
+    .nav-section-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: rgba(245,240,232,0.3);
+      padding: 16px 20px 6px;
+    }
+
+    .logout-btn {
+      position: absolute;
+      bottom: 24px;
+      left: 0;
+      width: 100%;
+      padding: 11px 20px;
+      color: rgba(245,240,232,0.4);
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: color 0.2s;
+      background: none;
+      border: none;
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    .logout-btn:hover { color: var(--error); }
+
+    /* ── MAIN CONTENT ── */
+    .main {
+      margin-left: 220px;
+      flex: 1;
+      padding: 32px;
+      min-height: 100vh;
+    }
+
+    .page { display: none; }
+    .page.active { display: block; animation: fadeIn 0.3s ease; }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ── TOP BAR ── */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+
+    .page-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .page-subtitle { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+    /* ── STATS CARDS ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .stat-card {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .stat-icon { font-size: 24px; margin-bottom: 12px; }
+    .stat-value { font-size: 28px; font-weight: 500; color: var(--charcoal); }
+    .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .stat-change { font-size: 12px; color: var(--success); margin-top: 6px; }
+
+    /* ── TABLES ── */
+    .table-card {
+      background: white;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .table-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .table-title { font-size: 16px; font-weight: 500; }
+
+    .filter-tabs {
+      display: flex;
+      gap: 4px;
+    }
+
+    .filter-tab {
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-size: 12px;
+      cursor: pointer;
+      border: 1.5px solid var(--border);
+      background: white;
+      transition: all 0.2s;
+      color: var(--muted);
+    }
+
+    .filter-tab.active { background: var(--charcoal); color: white; border-color: var(--charcoal); }
+
+    table { width: 100%; border-collapse: collapse; }
+
+    th {
+      text-align: left;
+      padding: 12px 24px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--warm-white);
+    }
+
+    td {
+      padding: 14px 24px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--warm-white); }
+
+    .product-thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: var(--cream);
+    }
+
+    .product-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .product-name { font-weight: 500; font-size: 13px; }
+    .product-meta { font-size: 11px; color: var(--muted); }
+
+    /* ── STATUS BADGES ── */
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .badge.pending { background: #fff8e8; color: #c4622d; }
+    .badge.approved { background: #edf7f2; color: #4f9d6e; }
+    .badge.rejected { background: #fef0f0; color: #d94f4f; }
+    .badge.paid { background: #edf7f2; color: #4f9d6e; }
+    .badge.unpaid { background: #fff8e8; color: #c4622d; }
+
+    /* ── ACTION BUTTONS ── */
+    .action-btns { display: flex; gap: 6px; }
+
+    .action-btn {
+      padding: 6px 12px;
+      border-radius: 100px;
+      font-size: 11px;
+      cursor: pointer;
+      border: 1.5px solid var(--border);
+      background: white;
+      transition: all 0.2s;
+      font-family: 'DM Sans', sans-serif;
+    }
+
+    .action-btn.approve { border-color: var(--success); color: var(--success); }
+    .action-btn.approve:hover { background: var(--success); color: white; }
+    .action-btn.reject { border-color: var(--error); color: var(--error); }
+    .action-btn.reject:hover { background: var(--error); color: white; }
+    .action-btn.view { border-color: var(--charcoal); color: var(--charcoal); }
+    .action-btn.view:hover { background: var(--charcoal); color: white; }
+
+    /* ── EMPTY STATE ── */
+    .table-empty {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--muted);
+    }
+
+    .table-empty-icon { font-size: 32px; margin-bottom: 10px; }
+    .table-empty-text { font-size: 14px; }
+
+    /* ── MESSAGES ── */
+    .message-card {
+      background: white;
+      border-radius: 12px;
+      padding: 16px 20px;
+      border: 1px solid var(--border);
+      margin-bottom: 12px;
+      transition: box-shadow 0.2s;
+    }
+
+    .message-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+
+    .message-sender { font-size: 14px; font-weight: 500; }
+    .message-time { font-size: 11px; color: var(--muted); }
+    .message-product { font-size: 12px; color: var(--clay); margin-bottom: 8px; }
+    .message-text { font-size: 13px; color: #555; line-height: 1.6; }
+    .message-email { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    /* ── SETTINGS ── */
+    .settings-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+
+    .settings-title { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+    .settings-sub { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+
+    .setting-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+    .setting-label { font-size: 14px; font-weight: 500; }
+    .setting-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      cursor: pointer;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 100px;
+      transition: 0.2s;
+    }
+
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      left: 3px;
+      top: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+
+    .toggle input:checked + .toggle-slider { background: var(--sage); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+    .settings-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      outline: none;
+      margin-top: 8px;
+      transition: border-color 0.2s;
+    }
+
+    .settings-input:focus { border-color: var(--clay); }
+
+    .save-btn {
+      padding: 10px 24px;
+      background: var(--charcoal);
+      color: white;
+      border: none;
+      border-radius: 100px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 16px;
+    }
+
+    .save-btn:hover { background: var(--clay); }
+
+    /* ── MODAL ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(26,26,24,0.6);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal-box {
+      background: white;
+      border-radius: 20px;
+      padding: 28px;
+      width: 100%;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .modal-box h3 { font-family: 'Playfair Display', serif; font-size: 20px; margin-bottom: 16px; }
+
+    .modal-img-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .modal-img-grid img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 10px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .detail-row:last-child { border-bottom: none; }
+    .detail-key { color: var(--muted); }
+    .detail-val { font-weight: 500; text-align: right; max-width: 60%; }
+
+    .ai-verdict {
+      background: var(--warm-white);
+      border-radius: 12px;
+      padding: 14px;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+
+    .ai-verdict-title { font-weight: 500; margin-bottom: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+    .ai-score { font-size: 20px; font-weight: 500; color: var(--clay); }
+
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .modal-actions button { flex: 1; padding: 12px; border-radius: 100px; font-family: 'DM Sans', sans-serif; font-size: 13px; cursor: pointer; border: none; transition: all 0.2s; }
+    .modal-approve { background: var(--success); color: white; }
+    .modal-approve:hover { opacity: 0.9; }
+    .modal-reject { background: var(--error); color: white; }
+    .modal-reject:hover { opacity: 0.9; }
+    .modal-close-btn { background: var(--cream); color: var(--charcoal); }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--charcoal);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 100px;
+      font-size: 14px;
+      z-index: 500;
+      transition: transform 0.3s ease;
+      white-space: nowrap;
+    }
+
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── LOADING ── */
+    .spinner-inline {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @media (max-width: 768px) {
+      .sidebar { width: 100%; height: auto; position: relative; }
+      .main { margin-left: 0; padding: 20px; }
+      .layout { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">Unique <span>Thrift</span></div>
+    <div class="login-sub">Owner Dashboard</div>
+    <input type="email" class="login-input" id="loginEmail" placeholder="Email address" />
+    <input type="password" class="login-input" id="loginPassword" placeholder="Password" />
+    <button class="login-btn" onclick="login()">Sign In</button>
+    <div class="login-error" id="loginError">Invalid email or password</div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="dashboard" id="dashboard">
+  <div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        Unique <span>Thrift</span>
+        <span class="sidebar-label">Owner Dashboard</span>
+      </div>
+
+      <div class="nav-section-label">Overview</div>
+      <div class="nav-item active" onclick="showPage('overview', this)">
+        <span class="icon">📊</span> Overview
+      </div>
+
+      <div class="nav-section-label">Products</div>
+      <div class="nav-item" onclick="showPage('pending', this)">
+        <span class="icon">⏳</span> Pending Review
+        <span id="pendingCount" style="margin-left:auto;background:var(--clay);color:white;font-size:10px;padding:2px 7px;border-radius:100px;"></span>
+      </div>
+      <div class="nav-item" onclick="showPage('approved', this)">
+        <span class="icon">✅</span> Approved
+      </div>
+      <div class="nav-item" onclick="showPage('rejected', this)">
+        <span class="icon">❌</span> Rejected
+      </div>
+
+      <div class="nav-section-label">Customers</div>
+      <div class="nav-item" onclick="showPage('orders', this)">
+        <span class="icon">🛍️</span> Orders
+      </div>
+      <div class="nav-item" onclick="showPage('messages', this)">
+        <span class="icon">💬</span> Messages
+      </div>
+
+      <div class="nav-section-label">Config</div>
+      <div class="nav-item" onclick="showPage('settings', this)">
+        <span class="icon">⚙️</span> Settings
+      </div>
+
+      <button class="logout-btn" onclick="logout()">
+        <span>🚪</span> Sign Out
+      </button>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="main">
+
+      <!-- OVERVIEW PAGE -->
+      <div class="page active" id="page-overview">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Overview</div>
+            <div class="page-subtitle" id="overviewDate"></div>
+          </div>
+          <a href="./index.html" target="_blank" style="font-size:13px;color:var(--clay);text-decoration:none;">View Live Store →</a>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-value" id="stat-pending">—</div>
+            <div class="stat-label">Pending Review</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value" id="stat-approved">—</div>
+            <div class="stat-label">Live Products</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">🛍️</div>
+            <div class="stat-value" id="stat-orders">—</div>
+            <div class="stat-label">Total Orders</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">💬</div>
+            <div class="stat-value" id="stat-messages">—</div>
+            <div class="stat-label">Messages</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-value" id="stat-revenue">—</div>
+            <div class="stat-label">Total Revenue</div>
+          </div>
+        </div>
+
+        <!-- Recent Pending -->
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">Items Awaiting Review</div>
+            <div style="font-size:13px;color:var(--clay);cursor:pointer;" onclick="showPage('pending', document.querySelector('.nav-item:nth-child(5))'))">View all →</div>
+          </div>
+          <div id="recentPendingTable"></div>
+        </div>
+      </div>
+
+      <!-- PENDING PAGE -->
+      <div class="page" id="page-pending">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Pending Review</div>
+            <div class="page-subtitle">Items waiting for your approval</div>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">Submissions</div>
+          </div>
+          <div id="pendingTable"></div>
+        </div>
+      </div>
+
+      <!-- APPROVED PAGE -->
+      <div class="page" id="page-approved">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Approved Products</div>
+            <div class="page-subtitle">Currently live on your store</div>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">Live Products</div>
+          </div>
+          <div id="approvedTable"></div>
+        </div>
+      </div>
+
+      <!-- REJECTED PAGE -->
+      <div class="page" id="page-rejected">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Rejected Items</div>
+            <div class="page-subtitle">Items that didn't pass review</div>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">Rejected</div>
+          </div>
+          <div id="rejectedTable"></div>
+        </div>
+      </div>
+
+      <!-- ORDERS PAGE -->
+      <div class="page" id="page-orders">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Orders</div>
+            <div class="page-subtitle">All purchases made on your store</div>
+          </div>
+        </div>
+        <div class="table-card">
+          <div class="table-header">
+            <div class="table-title">All Orders</div>
+            <div class="filter-tabs">
+              <div class="filter-tab active" onclick="filterOrders('all', this)">All</div>
+              <div class="filter-tab" onclick="filterOrders('paid', this)">Paid</div>
+              <div class="filter-tab" onclick="filterOrders('pending', this)">Pending</div>
+            </div>
+          </div>
+          <div id="ordersTable"></div>
+        </div>
+      </div>
+
+      <!-- MESSAGES PAGE -->
+      <div class="page" id="page-messages">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Messages</div>
+            <div class="page-subtitle">Buyer enquiries about your products</div>
+          </div>
+        </div>
+        <div id="messagesContainer"></div>
+      </div>
+
+      <!-- SETTINGS PAGE -->
+      <div class="page" id="page-settings">
+        <div class="topbar">
+          <div>
+            <div class="page-title">Settings</div>
+            <div class="page-subtitle">Configure your store and vetting rules</div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-title">Store Info</div>
+          <div class="settings-sub">Basic details shown to buyers</div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Store Name</div>
+              <input type="text" class="settings-input" id="storeName" value="Unique Thrift" />
+            </div>
+          </div>
+          <div class="setting-row">
+            <div style="width:100%">
+              <div class="setting-label">Store WhatsApp</div>
+              <input type="text" class="settings-input" id="storeWhatsapp" placeholder="+234 800 000 0000" />
+            </div>
+          </div>
+          <button class="save-btn" onclick="saveSettings()">Save Store Info</button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-title">AI Vetting Rules</div>
+          <div class="settings-sub">Configure what Gemini checks when reviewing submissions</div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Check image quality</div>
+              <div class="setting-desc">Reject blurry or irrelevant images</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="checkImage" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Check for prohibited items</div>
+              <div class="setting-desc">Reject weapons, drugs, counterfeit goods</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="checkProhibited" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Check pricing fairness</div>
+              <div class="setting-desc">Flag items that seem overpriced for Nigerian market</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="checkPricing" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Minimum description length</div>
+              <div class="setting-desc">Characters required in description</div>
+            </div>
+            <input type="number" style="width:70px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;text-align:center;" id="minDescLength" value="20" />
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Minimum images required</div>
+              <div class="setting-desc">How many photos sellers must upload</div>
+            </div>
+            <input type="number" style="width:70px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;text-align:center;" id="minImages" value="1" min="1" max="6" />
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Minimum AI quality score</div>
+              <div class="setting-desc">Items scoring below this are rejected (1–10)</div>
+            </div>
+            <input type="number" style="width:70px;padding:6px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;text-align:center;" id="minScore" value="5" min="1" max="10" />
+          </div>
+
+          <button class="save-btn" onclick="saveVettingRules()">Save Vetting Rules</button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-title">Notifications</div>
+          <div class="settings-sub">Where to receive alerts for new submissions and orders</div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Email notifications</div>
+              <div class="setting-desc">Get emailed on new orders and messages</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="notifEmail" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">WhatsApp notifications</div>
+              <div class="setting-desc">Get WhatsApp alerts for new activity</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="notifWhatsapp" checked />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <button class="save-btn" onclick="saveSettings()">Save Notification Settings</button>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- PRODUCT DETAIL MODAL -->
+<div class="modal-overlay" id="productModal">
+  <div class="modal-box">
+    <h3 id="modalProductTitle"></h3>
+    <div class="modal-img-grid" id="modalImgGrid"></div>
+    <div id="modalDetails"></div>
+    <div class="ai-verdict" id="modalVerdict" style="display:none">
+      <div class="ai-verdict-title">AI Review</div>
+      <div class="ai-score" id="verdictScore"></div>
+      <div style="font-size:13px;color:#555;margin-top:4px;" id="verdictReason"></div>
+      <div style="font-size:12px;color:var(--error);margin-top:6px;" id="verdictFlags"></div>
+    </div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // ── OWNER CREDENTIALS (change these) ──
+  const OWNER_EMAIL = 'owner@uniquethrift.com';
+  const OWNER_PASSWORD = 'UniqueThrift2026!';
+
+  let allOrders = [];
+  let activeProductModal = null;
+
+  // ── LOGIN ──
+  function login() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const pass = document.getElementById('loginPassword').value;
+    if (email === OWNER_EMAIL && pass === OWNER_PASSWORD) {
+      sessionStorage.setItem('ut_owner', '1');
+      showDashboard();
+    } else {
+      document.getElementById('loginError').classList.add('show');
+    }
+  }
+
+  function logout() {
+    sessionStorage.removeItem('ut_owner');
+    document.getElementById('dashboard').classList.remove('show');
+    document.getElementById('loginScreen').style.display = 'flex';
+  }
+
+  function showDashboard() {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('dashboard').classList.add('show');
+    document.getElementById('overviewDate').textContent = new Date().toLocaleDateString('en-NG', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+    loadAllData();
+  }
+
+  // Auto-login if session exists
+  if (sessionStorage.getItem('ut_owner')) showDashboard();
+
+  // Enter key on login
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && document.getElementById('loginScreen').style.display !== 'none') login();
+  });
+
+  // ── PAGE NAVIGATION ──
+  function showPage(name, el) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById(`page-${name}`).classList.add('active');
+    if (el) el.classList.add('active');
+    loadPageData(name);
+  }
+
+  // ── LOAD ALL DATA ──
+  async function loadAllData() {
+    const [products, orders, messages] = await Promise.all([
+      supabase.from('products').select('*').order('created_at', { ascending: false }),
+      supabase.from('orders').select('*').order('created_at', { ascending: false }),
+      supabase.from('messages').select('*').order('created_at', { ascending: false })
+    ]);
+
+    const prods = products.data || [];
+    const ords = orders.data || [];
+    const msgs = messages.data || [];
+
+    allOrders = ords;
+
+    const pending = prods.filter(p => p.status === 'pending');
+    const approved = prods.filter(p => p.status === 'approved');
+    const revenue = ords.filter(o => o.status === 'paid').reduce((s, o) => s + Number(o.amount), 0);
+
+    // Stats
+    document.getElementById('stat-pending').textContent = pending.length;
+    document.getElementById('stat-approved').textContent = approved.length;
+    document.getElementById('stat-orders').textContent = ords.length;
+    document.getElementById('stat-messages').textContent = msgs.length;
+    document.getElementById('stat-revenue').textContent = revenue > 0 ? `₦${revenue.toLocaleString()}` : '₦0';
+
+    // Pending count badge
+    const pc = document.getElementById('pendingCount');
+    pc.textContent = pending.length > 0 ? pending.length : '';
+
+    // Recent pending table on overview
+    renderProductTable('recentPendingTable', pending.slice(0, 5), true);
+  }
+
+  function loadPageData(name) {
+    if (name === 'pending') loadProducts('pending');
+    else if (name === 'approved') loadProducts('approved');
+    else if (name === 'rejected') loadProducts('rejected');
+    else if (name === 'orders') loadOrders();
+    else if (name === 'messages') loadMessages();
+    else if (name === 'overview') loadAllData();
+  }
+
+  // ── PRODUCTS ──
+  async function loadProducts(status) {
+    const { data } = await supabase
+      .from('products')
+      .select('*')
+      .eq('status', status)
+      .order('created_at', { ascending: false });
+
+    renderProductTable(`${status}Table`, data || [], status === 'pending');
+  }
+
+  function renderProductTable(containerId, products, showActions) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (products.length === 0) {
+      container.innerHTML = `<div class="table-empty"><div class="table-empty-icon">📭</div><div class="table-empty-text">Nothing here yet</div></div>`;
+      return;
+    }
+
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Category</th>
+            <th>Price</th>
+            <th>Seller</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${products.map(p => `
+            <tr>
+              <td>
+                <div class="product-cell">
+                  <img class="product-thumb" src="${p.images?.[0] || 'https://placehold.co/44x44/f5f0e8/9a9086?text=?'}" alt="" />
+                  <div>
+                    <div class="product-name">${p.title}</div>
+                    <div class="product-meta">${p.condition || 'Used'}</div>
+                  </div>
+                </div>
+              </td>
+              <td>${p.category || '—'}</td>
+              <td>₦${Number(p.price).toLocaleString()}</td>
+              <td>
+                <div class="product-name">${p.seller_name || '—'}</div>
+                <div class="product-meta">${p.seller_email || ''}</div>
+              </td>
+              <td>${formatDate(p.created_at)}</td>
+              <td><span class="badge ${p.status}">${p.status}</span></td>
+              <td>
+                <div class="action-btns">
+                  <button class="action-btn view" onclick="viewProduct('${p.id}')">View</button>
+                  ${showActions ? `
+                    <button class="action-btn approve" onclick="updateStatus('${p.id}', 'approved')">✓ Approve</button>
+                    <button class="action-btn reject" onclick="updateStatus('${p.id}', 'rejected')">✗ Reject</button>
+                  ` : ''}
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  async function viewProduct(id) {
+    const { data: p } = await supabase.from('products').select('*').eq('id', id).single();
+    if (!p) return;
+    activeProductModal = p;
+
+    document.getElementById('modalProductTitle').textContent = p.title;
+
+    document.getElementById('modalImgGrid').innerHTML = (p.images || []).map(src =>
+      `<img src="${src}" alt="${p.title}" />`
+    ).join('') || '<div style="color:var(--muted);font-size:13px;grid-column:1/-1">No images</div>';
+
+    document.getElementById('modalDetails').innerHTML = `
+      <div class="detail-row"><span class="detail-key">Category</span><span class="detail-val">${p.category}</span></div>
+      <div class="detail-row"><span class="detail-key">Condition</span><span class="detail-val">${p.condition}</span></div>
+      <div class="detail-row"><span class="detail-key">Price</span><span class="detail-val">₦${Number(p.price).toLocaleString()}</span></div>
+      <div class="detail-row"><span class="detail-key">Seller</span><span class="detail-val">${p.seller_name}</span></div>
+      <div class="detail-row"><span class="detail-key">Email</span><span class="detail-val">${p.seller_email}</span></div>
+      <div class="detail-row"><span class="detail-key">Phone</span><span class="detail-val">${p.seller_phone}</span></div>
+      <div class="detail-row"><span class="detail-key">Location</span><span class="detail-val">${p.seller_location || '—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Description</span><span class="detail-val" style="font-size:12px;color:#555;">${p.description}</span></div>
+    `;
+
+    const verdict = p.ai_verdict;
+    const verdictEl = document.getElementById('modalVerdict');
+    if (verdict) {
+      verdictEl.style.display = 'block';
+      document.getElementById('verdictScore').textContent = `Quality Score: ${verdict.quality_score}/10`;
+      document.getElementById('verdictReason').textContent = verdict.reason;
+      document.getElementById('verdictFlags').textContent = verdict.flags?.length > 0
+        ? 'Flags: ' + verdict.flags.join(', ') : '';
+    } else {
+      verdictEl.style.display = 'none';
+    }
+
+    document.getElementById('modalActions').innerHTML = p.status === 'pending' ? `
+      <button class="modal-approve" onclick="updateStatus('${p.id}', 'approved'); closeModal()">✓ Approve</button>
+      <button class="modal-reject" onclick="updateStatus('${p.id}', 'rejected'); closeModal()">✗ Reject</button>
+      <button class="modal-close-btn" onclick="closeModal()">Close</button>
+    ` : `<button class="modal-close-btn" style="flex:1" onclick="closeModal()">Close</button>`;
+
+    document.getElementById('productModal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('productModal').classList.remove('open');
+    activeProductModal = null;
+  }
+
+  document.getElementById('productModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('productModal')) closeModal();
+  });
+
+  async function updateStatus(id, status) {
+    const { error } = await supabase
+      .from('products')
+      .update({ status, reviewed_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) { showToast('Error updating status'); return; }
+    showToast(status === 'approved' ? '✅ Product approved and now live!' : '❌ Product rejected');
+    loadAllData();
+    loadProducts('pending');
+  }
+
+  // ── ORDERS ──
+  async function loadOrders() {
+    const { data } = await supabase
+      .from('orders')
+      .select('*, products(title)')
+      .order('created_at', { ascending: false });
+
+    allOrders = data || [];
+    renderOrders(allOrders);
+  }
+
+  function filterOrders(status, el) {
+    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    const filtered = status === 'all' ? allOrders : allOrders.filter(o => o.status === status);
+    renderOrders(filtered);
+  }
+
+  function renderOrders(orders) {
+    const container = document.getElementById('ordersTable');
+    if (orders.length === 0) {
+      container.innerHTML = `<div class="table-empty"><div class="table-empty-icon">🛍️</div><div class="table-empty-text">No orders yet</div></div>`;
+      return;
+    }
+
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Buyer</th>
+            <th>Product</th>
+            <th>Amount</th>
+            <th>Reference</th>
+            <th>Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orders.map(o => `
+            <tr>
+              <td>
+                <div class="product-name">${o.buyer_name}</div>
+                <div class="product-meta">${o.buyer_email}</div>
+              </td>
+              <td>${o.products?.title || '—'}</td>
+              <td>₦${Number(o.amount).toLocaleString()}</td>
+              <td style="font-size:11px;color:var(--muted);font-family:monospace">${o.payment_ref || '—'}</td>
+              <td>${formatDate(o.created_at)}</td>
+              <td><span class="badge ${o.status}">${o.status}</span></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // ── MESSAGES ──
+  async function loadMessages() {
+    const { data } = await supabase
+      .from('messages')
+      .select('*, products(title)')
+      .order('created_at', { ascending: false });
+
+    const container = document.getElementById('messagesContainer');
+    const msgs = data || [];
+
+    if (msgs.length === 0) {
+      container.innerHTML = `<div class="table-empty" style="background:white;border-radius:16px;border:1px solid var(--border)"><div class="table-empty-icon">💬</div><div class="table-empty-text">No messages yet</div></div>`;
+      return;
+    }
+
+    container.innerHTML = msgs.map(m => `
+      <div class="message-card">
+        <div class="message-header">
+          <div class="message-sender">${m.sender_name}</div>
+          <div class="message-time">${formatDate(m.created_at)}</div>
+        </div>
+        <div class="message-product">Re: ${m.products?.title || 'Unknown Product'}</div>
+        <div class="message-text">${m.message}</div>
+        <div class="message-email">📧 ${m.sender_email}</div>
+      </div>
+    `).join('');
+  }
+
+  // ── SETTINGS ──
+  function saveSettings() {
+    const settings = {
+      storeName: document.getElementById('storeName').value,
+      storeWhatsapp: document.getElementById('storeWhatsapp').value,
+      notifEmail: document.getElementById('notifEmail').checked,
+      notifWhatsapp: document.getElementById('notifWhatsapp').checked
+    };
+    localStorage.setItem('ut_settings', JSON.stringify(settings));
+    showToast('Settings saved ✅');
+  }
+
+  function saveVettingRules() {
+    const rules = {
+      checkImage: document.getElementById('checkImage').checked,
+      checkProhibited: document.getElementById('checkProhibited').checked,
+      checkPricing: document.getElementById('checkPricing').checked,
+      minDescLength: document.getElementById('minDescLength').value,
+      minImages: document.getElementById('minImages').value,
+      minScore: document.getElementById('minScore').value
+    };
+    localStorage.setItem('ut_vetting_rules', JSON.stringify(rules));
+    showToast('Vetting rules saved ✅');
+  }
+
+  function loadSavedSettings() {
+    const s = JSON.parse(localStorage.getItem('ut_settings') || '{}');
+    if (s.storeName) document.getElementById('storeName').value = s.storeName;
+    if (s.storeWhatsapp) document.getElementById('storeWhatsapp').value = s.storeWhatsapp;
+    if (s.notifEmail !== undefined) document.getElementById('notifEmail').checked = s.notifEmail;
+    if (s.notifWhatsapp !== undefined) document.getElementById('notifWhatsapp').checked = s.notifWhatsapp;
+
+    const r = JSON.parse(localStorage.getItem('ut_vetting_rules') || '{}');
+    if (r.minScore) document.getElementById('minScore').value = r.minScore;
+    if (r.minImages) document.getElementById('minImages').value = r.minImages;
+    if (r.minDescLength) document.getElementById('minDescLength').value = r.minDescLength;
+    if (r.checkImage !== undefined) document.getElementById('checkImage').checked = r.checkImage;
+    if (r.checkProhibited !== undefined) document.getElementById('checkProhibited').checked = r.checkProhibited;
+    if (r.checkPricing !== undefined) document.getElementById('checkPricing').checked = r.checkPricing;
+  }
+
+  loadSavedSettings();
+
+  // ── UTILS ──
+  function formatDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+</script>
+</body>
+</html>
