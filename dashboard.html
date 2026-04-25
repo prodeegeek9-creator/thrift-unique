@@ -327,22 +327,26 @@
     /* ── ACTION BUTTONS ── */
     .action-btns { display: flex; gap: 6px; }
 
+    .action-btns { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+
     .action-btn {
-      padding: 6px 12px;
+      padding: 5px 12px;
       border-radius: 100px;
-      font-size: 11px;
+      font-size: 12px;
       cursor: pointer;
       border: 1.5px solid var(--border);
       background: white;
       transition: all 0.2s;
       font-family: 'DM Sans', sans-serif;
+      white-space: nowrap;
+      font-weight: 500;
     }
 
-    .action-btn.approve { border-color: var(--success); color: var(--success); }
+    .action-btn.approve { border-color: var(--success); color: var(--success); background: #edf7f2; }
     .action-btn.approve:hover { background: var(--success); color: white; }
-    .action-btn.reject { border-color: var(--error); color: var(--error); }
+    .action-btn.reject { border-color: var(--error); color: var(--error); background: #fef0f0; }
     .action-btn.reject:hover { background: var(--error); color: white; }
-    .action-btn.view { border-color: var(--charcoal); color: var(--charcoal); }
+    .action-btn.view { border-color: #ddd; color: var(--charcoal); }
     .action-btn.view:hover { background: var(--charcoal); color: white; }
 
     /* ── EMPTY STATE ── */
@@ -916,8 +920,11 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const SUPABASE_ANON_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  // Service role key for owner writes — paste yours here
+  const SUPABASE_SERVICE_KEY = 'PASTE_YOUR_SERVICE_ROLE_KEY_HERE';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const sbAdmin = window.supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   // ── OWNER CREDENTIALS (change these) ──
   const OWNER_EMAIL = 'owner@uniquethrift.com';
