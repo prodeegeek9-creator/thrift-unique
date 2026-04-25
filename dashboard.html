@@ -1012,7 +1012,7 @@
 
   // ── PRODUCTS ──
   async function loadProducts(status) {
-    const { data } = await supabase
+    const { data } = await sb
       .from('products')
       .select('*')
       .eq('status', status)
@@ -1131,7 +1131,7 @@
   });
 
   async function updateStatus(id, status) {
-    const { error } = await supabase
+    const { error } = await sb
       .from('products')
       .update({ status, reviewed_at: new Date().toISOString() })
       .eq('id', id);
@@ -1144,7 +1144,7 @@
 
   // ── ORDERS ──
   async function loadOrders() {
-    const { data } = await supabase
+    const { data } = await sb
       .from('orders')
       .select('*, products(title)')
       .order('created_at', { ascending: false });
@@ -1199,7 +1199,7 @@
 
   // ── MESSAGES ──
   async function loadMessages() {
-    const { data } = await supabase
+    const { data } = await sb
       .from('messages')
       .select('*, products(title)')
       .order('created_at', { ascending: false });

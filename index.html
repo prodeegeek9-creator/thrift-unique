@@ -913,7 +913,7 @@
 
   // ── LOAD PRODUCTS FROM SUPABASE ──
   async function loadProducts() {
-    const { data, error } = await supabase
+    const { data, error } = await sb
       .from('products')
       .select('*')
       .eq('status', 'approved')
@@ -1175,6 +1175,9 @@
 
 <!-- PAYSTACK SDK -->
 <script src="https://js.paystack.co/v1/inline.js"></script>
+
+<!-- LIVE CHAT WIDGET -->
+<script src="./chat.js"></script>
 
 </body>
 </html>

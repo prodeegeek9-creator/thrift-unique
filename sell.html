@@ -973,7 +973,7 @@
         status: 'pending'
       };
 
-      const { data: product, error: dbError } = await supabase
+      const { data: product, error: dbError } = await sb
         .from('products')
         .insert(productData)
         .select()
