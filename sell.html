@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sell an Item — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #f5f0e8;
+      --warm-white: #faf8f4;
+      --charcoal: #1a1a18;
+      --clay: #c4622d;
+      --clay-light: #e8845a;
+      --sage: #7a8c6e;
+      --gold: #d4a853;
+      --muted: #9a9086;
+      --card-bg: #ffffff;
+      --border: #e8e0d0;
+      --error: #d94f4f;
+      --success: #4f9d6e;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--cream);
+      color: var(--charcoal);
+      min-height: 100vh;
+    }
+
+    /* ── NAV ── */
+    nav {
+      background: var(--charcoal);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      font-family: 'Playfair Display', serif;
+      font-size: 22px;
+      color: var(--cream);
+      letter-spacing: -0.5px;
+      text-decoration: none;
+    }
+
+    .logo span { color: var(--clay-light); font-style: italic; }
+
+    .back-btn {
+      background: none;
+      border: 1.5px solid rgba(245,240,232,0.3);
+      color: var(--cream);
+      padding: 8px 18px;
+      border-radius: 100px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+      transition: all 0.2s;
+    }
+
+    .back-btn:hover { background: rgba(245,240,232,0.1); }
+
+    /* ── PAGE HEADER ── */
+    .page-header {
+      background: var(--charcoal);
+      padding: 40px 24px 60px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .page-header::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 40% 80%, rgba(196,98,45,0.12) 0%, transparent 70%);
+    }
+
+    .page-header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(28px, 5vw, 46px);
+      color: var(--cream);
+      margin-bottom: 12px;
+      position: relative;
+    }
+
+    .page-header h1 em { font-style: italic; color: var(--clay-light); }
+
+    .page-header p {
+      color: var(--muted);
+      font-size: 15px;
+      max-width: 420px;
+      margin: 0 auto;
+      line-height: 1.6;
+      position: relative;
+    }
+
+    /* ── STEPS INDICATOR ── */
+    .steps-bar {
+      background: var(--warm-white);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+      display: flex;
+      justify-content: center;
+      gap: 0;
+    }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s;
+    }
+
+    .step.active .step-num { background: var(--clay); color: white; }
+    .step.done .step-num { background: var(--sage); color: white; }
+
+    .step-label {
+      font-size: 13px;
+      color: var(--muted);
+      transition: color 0.3s;
+    }
+
+    .step.active .step-label { color: var(--charcoal); font-weight: 500; }
+
+    .step-line {
+      width: 40px;
+      height: 2px;
+      background: var(--border);
+      margin: 0 8px;
+      transition: background 0.3s;
+    }
+
+    .step-line.done { background: var(--sage); }
+
+    /* ── MAIN FORM ── */
+    .form-container {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    .form-section {
+      background: white;
+      border-radius: 20px;
+      padding: 28px;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+      display: none;
+      animation: fadeUp 0.3s ease both;
+    }
+
+    .form-section.active { display: block; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .section-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+
+    .section-subtitle {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .form-group { margin-bottom: 16px; }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: var(--charcoal);
+    }
+
+    .form-label .required { color: var(--clay); margin-left: 2px; }
+
+    .form-input, .form-textarea, .form-select {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: var(--warm-white);
+      color: var(--charcoal);
+    }
+
+    .form-input:focus, .form-textarea:focus, .form-select:focus {
+      border-color: var(--clay);
+      box-shadow: 0 0 0 3px rgba(196,98,45,0.08);
+      background: white;
+    }
+
+    .form-input.error, .form-textarea.error, .form-select.error {
+      border-color: var(--error);
+    }
+
+    .form-textarea { resize: vertical; min-height: 120px; line-height: 1.6; }
+
+    .form-select { cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%239a9086' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 16px center;
+      padding-right: 40px;
+    }
+
+    .form-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 5px;
+    }
+
+    .form-error {
+      font-size: 12px;
+      color: var(--error);
+      margin-top: 5px;
+      display: none;
+    }
+
+    .form-error.show { display: block; }
+
+    /* ── PRICE INPUT ── */
+    .price-wrap {
+      position: relative;
+    }
+
+    .price-prefix {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
+    .price-wrap .form-input { padding-left: 36px; }
+
+    /* ── IMAGE UPLOAD ── */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 16px;
+      padding: 32px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: var(--warm-white);
+      position: relative;
+    }
+
+    .upload-zone:hover, .upload-zone.dragging {
+      border-color: var(--clay);
+      background: rgba(196,98,45,0.03);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .upload-icon { font-size: 36px; margin-bottom: 12px; }
+
+    .upload-text {
+      font-size: 14px;
+      color: var(--charcoal);
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+
+    .upload-hint { font-size: 12px; color: var(--muted); }
+
+    .image-previews {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .preview-wrap {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--cream);
+    }
+
+    .preview-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .preview-remove {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(26,26,24,0.7);
+      color: white;
+      border: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-main-badge {
+      position: absolute;
+      bottom: 6px;
+      left: 6px;
+      background: var(--clay);
+      color: white;
+      font-size: 9px;
+      padding: 2px 8px;
+      border-radius: 100px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── CONDITIONS CHIPS ── */
+    .condition-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .condition-chip {
+      padding: 8px 16px;
+      border-radius: 100px;
+      border: 1.5px solid var(--border);
+      background: white;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: var(--charcoal);
+    }
+
+    .condition-chip:hover { border-color: var(--clay); }
+    .condition-chip.selected { background: var(--charcoal); color: white; border-color: var(--charcoal); }
+
+    /* ── NAV BUTTONS ── */
+    .form-nav {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .btn-back {
+      flex: 1;
+      padding: 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 100px;
+      background: white;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-back:hover { border-color: var(--charcoal); }
+
+    .btn-next {
+      flex: 2;
+      padding: 14px;
+      border: none;
+      border-radius: 100px;
+      background: var(--clay);
+      color: white;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-next:hover { background: var(--clay-light); }
+    .btn-next:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* ── SUCCESS STATE ── */
+    .success-screen {
+      display: none;
+      text-align: center;
+      padding: 60px 24px;
+      animation: fadeUp 0.4s ease;
+    }
+
+    .success-screen.show { display: block; }
+
+    .success-icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+      animation: bounceIn 0.5s ease;
+    }
+
+    @keyframes bounceIn {
+      0% { transform: scale(0); }
+      60% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    .success-screen h2 {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      margin-bottom: 12px;
+    }
+
+    .success-screen p {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 360px;
+      margin: 0 auto 32px;
+    }
+
+    .success-steps {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      text-align: left;
+      max-width: 360px;
+      margin: 0 auto 32px;
+      border: 1px solid var(--border);
+    }
+
+    .success-step {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .success-step:last-child { border-bottom: none; }
+
+    .success-step-icon { font-size: 18px; margin-top: 2px; }
+
+    .success-step-text { font-size: 13px; color: var(--charcoal); line-height: 1.5; }
+    .success-step-label { font-weight: 500; margin-bottom: 2px; }
+    .success-step-sub { color: var(--muted); }
+
+    .btn-home {
+      display: inline-block;
+      background: var(--charcoal);
+      color: white;
+      padding: 14px 32px;
+      border-radius: 100px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+
+    .btn-home:hover { background: var(--clay); }
+
+    /* ── LOADING OVERLAY ── */
+    .loading-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(26,26,24,0.6);
+      z-index: 300;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .loading-overlay.show { display: flex; }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(245,240,232,0.2);
+      border-top-color: var(--clay-light);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text {
+      color: var(--cream);
+      font-size: 14px;
+    }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--charcoal);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 100px;
+      font-size: 14px;
+      z-index: 500;
+      transition: transform 0.3s ease;
+      white-space: nowrap;
+    }
+
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 600px) {
+      .step-label { display: none; }
+      .step-line { width: 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="index.html" class="logo">Unique <span>Thrift</span></a>
+  <a href="index.html" class="back-btn">← Back to Shop</a>
+</nav>
+
+<!-- PAGE HEADER -->
+<div class="page-header">
+  <h1>Sell your <em>unique</em> finds</h1>
+  <p>No registration needed. Upload your item, we review it, and list it for thousands to see.</p>
+</div>
+
+<!-- STEPS BAR -->
+<div class="steps-bar">
+  <div class="step active" id="step-indicator-1">
+    <div class="step-num">1</div>
+    <div class="step-label">Item Details</div>
+  </div>
+  <div class="step-line" id="line-1"></div>
+  <div class="step" id="step-indicator-2">
+    <div class="step-num">2</div>
+    <div class="step-label">Photos</div>
+  </div>
+  <div class="step-line" id="line-2"></div>
+  <div class="step" id="step-indicator-3">
+    <div class="step-num">3</div>
+    <div class="step-label">Contact</div>
+  </div>
+</div>
+
+<!-- FORM -->
+<div class="form-container">
+
+  <!-- STEP 1: ITEM DETAILS -->
+  <div class="form-section active" id="step1">
+    <div class="section-title">Tell us about your item</div>
+    <div class="section-subtitle">Be honest and detailed — this helps buyers trust you and speeds up our review.</div>
+
+    <div class="form-group">
+      <label class="form-label">Item Title <span class="required">*</span></label>
+      <input type="text" class="form-input" id="itemTitle" placeholder="e.g. Vintage Levi's 501 Jeans — Size 32" maxlength="100" />
+      <div class="form-hint">Be specific. Include brand, size, colour if relevant.</div>
+      <div class="form-error" id="err-title">Please enter a title</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Category <span class="required">*</span></label>
+      <select class="form-select" id="itemCategory">
+        <option value="">Select a category</option>
+        <option value="clothing">👗 Clothing</option>
+        <option value="shoes">👟 Shoes</option>
+        <option value="bags">👜 Bags</option>
+        <option value="accessories">💍 Accessories</option>
+        <option value="electronics">📱 Electronics</option>
+        <option value="furniture">🪑 Furniture</option>
+        <option value="books">📚 Books</option>
+        <option value="other">✨ Other</option>
+      </select>
+      <div class="form-error" id="err-category">Please select a category</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Condition <span class="required">*</span></label>
+      <div class="condition-chips">
+        <button type="button" class="condition-chip" onclick="selectCondition('Brand New', this)">✨ Brand New</button>
+        <button type="button" class="condition-chip" onclick="selectCondition('Like New', this)">🌟 Like New</button>
+        <button type="button" class="condition-chip" onclick="selectCondition('Good', this)">👍 Good</button>
+        <button type="button" class="condition-chip" onclick="selectCondition('Fair', this)">🙂 Fair</button>
+        <button type="button" class="condition-chip" onclick="selectCondition('Used', this)">🔄 Used</button>
+      </div>
+      <div class="form-error" id="err-condition">Please select a condition</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Price (₦) <span class="required">*</span></label>
+      <div class="price-wrap">
+        <span class="price-prefix">₦</span>
+        <input type="number" class="form-input" id="itemPrice" placeholder="0" min="0" />
+      </div>
+      <div class="form-hint">Set a fair price. Items priced well sell faster.</div>
+      <div class="form-error" id="err-price">Please enter a valid price</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Description <span class="required">*</span></label>
+      <textarea class="form-textarea" id="itemDescription" placeholder="Describe the item. Include size, measurements, any flaws, reason for selling, etc." maxlength="1000"></textarea>
+      <div class="form-hint" id="descCount">0 / 1000 characters</div>
+      <div class="form-error" id="err-description">Please write a description (at least 20 characters)</div>
+    </div>
+
+    <div class="form-nav">
+      <button class="btn-next" onclick="goToStep(2)">Continue to Photos →</button>
+    </div>
+  </div>
+
+  <!-- STEP 2: PHOTOS -->
+  <div class="form-section" id="step2">
+    <div class="section-title">Add photos</div>
+    <div class="section-subtitle">Upload clear photos from different angles. More photos = more buyer trust. First photo becomes the cover image.</div>
+
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="imageInput" accept="image/*" multiple onchange="handleImages(this.files)" />
+      <div class="upload-icon">📸</div>
+      <div class="upload-text">Tap to upload photos</div>
+      <div class="upload-hint">JPG, PNG or WEBP · Max 5MB each · Up to 6 photos</div>
+    </div>
+
+    <div class="image-previews" id="imagePreviews"></div>
+    <div class="form-error" id="err-images" style="margin-top:10px;">Please upload at least one photo</div>
+
+    <div class="form-nav">
+      <button class="btn-back" onclick="goToStep(1)">← Back</button>
+      <button class="btn-next" onclick="goToStep(3)">Continue to Contact →</button>
+    </div>
+  </div>
+
+  <!-- STEP 3: CONTACT -->
+  <div class="form-section" id="step3">
+    <div class="section-title">Your contact details</div>
+    <div class="section-subtitle">We'll notify you when your item is approved or if we need more info. Not published publicly.</div>
+
+    <div class="form-group">
+      <label class="form-label">Your Name <span class="required">*</span></label>
+      <input type="text" class="form-input" id="sellerName" placeholder="First and last name" />
+      <div class="form-error" id="err-sellerName">Please enter your name</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Email Address <span class="required">*</span></label>
+      <input type="email" class="form-input" id="sellerEmail" placeholder="you@email.com" />
+      <div class="form-hint">We'll send you an approval notification here.</div>
+      <div class="form-error" id="err-sellerEmail">Please enter a valid email</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">WhatsApp Number <span class="required">*</span></label>
+      <input type="tel" class="form-input" id="sellerPhone" placeholder="+234 800 000 0000" />
+      <div class="form-hint">We'll also notify you via WhatsApp when your item is approved.</div>
+      <div class="form-error" id="err-sellerPhone">Please enter your WhatsApp number</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Location (City) <span class="required">*</span></label>
+      <input type="text" class="form-input" id="sellerLocation" placeholder="e.g. Lagos, Abuja, Port Harcourt" />
+      <div class="form-error" id="err-sellerLocation">Please enter your city</div>
+    </div>
+
+    <div style="background:var(--cream);border-radius:12px;padding:16px;margin-bottom:20px;">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px;">What happens after you submit?</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.8;">
+        ✅ Our AI reviews your item for quality and appropriateness<br>
+        📩 You get notified by email and WhatsApp within 24 hours<br>
+        🛍️ Approved items go live for buyers to see immediately<br>
+        ❌ Rejected items include feedback so you can resubmit
+      </div>
+    </div>
+
+    <div class="form-nav">
+      <button class="btn-back" onclick="goToStep(2)">← Back</button>
+      <button class="btn-next" id="submitBtn" onclick="submitListing()">Submit for Review →</button>
+    </div>
+  </div>
+
+  <!-- SUCCESS STATE -->
+  <div class="success-screen" id="successScreen">
+    <div class="success-icon">🎉</div>
+    <h2>Item submitted!</h2>
+    <p>Your listing is now in review. Our AI will check it and we'll get back to you within 24 hours.</p>
+
+    <div class="success-steps">
+      <div class="success-step">
+        <div class="success-step-icon">🤖</div>
+        <div class="success-step-text">
+          <div class="success-step-label">AI Review</div>
+          <div class="success-step-sub">Checking images, pricing, and description</div>
+        </div>
+      </div>
+      <div class="success-step">
+        <div class="success-step-icon">📩</div>
+        <div class="success-step-text">
+          <div class="success-step-label">Notification</div>
+          <div class="success-step-sub">Email + WhatsApp within 24 hours</div>
+        </div>
+      </div>
+      <div class="success-step">
+        <div class="success-step-icon">🛍️</div>
+        <div class="success-step-text">
+          <div class="success-step-label">Goes Live</div>
+          <div class="success-step-sub">Approved items appear on the shop instantly</div>
+        </div>
+      </div>
+    </div>
+
+    <a href="index.html" class="btn-home">Back to Shop →</a>
+  </div>
+
+</div>
+
+<!-- LOADING OVERLAY -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Submitting your listing...</div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- SUPABASE SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+  // ── SUPABASE CONFIG ──
+  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // ── n8n WEBHOOK URL (replace with your actual webhook) ──
+  const N8N_WEBHOOK = 'https://your-n8n-instance.com/webhook/unique-thrift-vetting';
+
+  // ── STATE ──
+  let currentStep = 1;
+  let selectedCondition = '';
+  let imageFiles = [];
+  let uploadedImageUrls = [];
+
+  // ── DESCRIPTION COUNTER ──
+  document.getElementById('itemDescription').addEventListener('input', function() {
+    document.getElementById('descCount').textContent = `${this.value.length} / 1000 characters`;
+  });
+
+  // ── DRAG AND DROP ──
+  const uploadZone = document.getElementById('uploadZone');
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragging'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragging'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragging');
+    handleImages(e.dataTransfer.files);
+  });
+
+  // ── CONDITION SELECT ──
+  function selectCondition(value, el) {
+    document.querySelectorAll('.condition-chip').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedCondition = value;
+    document.getElementById('err-condition').classList.remove('show');
+  }
+
+  // ── IMAGE HANDLING ──
+  function handleImages(files) {
+    const remaining = 6 - imageFiles.length;
+    const toAdd = Array.from(files).slice(0, remaining);
+
+    toAdd.forEach(file => {
+      if (file.size > 5 * 1024 * 1024) {
+        showToast(`${file.name} is too large (max 5MB)`);
+        return;
+      }
+      imageFiles.push(file);
+    });
+
+    renderPreviews();
+    if (imageFiles.length > 0) document.getElementById('err-images').classList.remove('show');
+  }
+
+  function renderPreviews() {
+    const container = document.getElementById('imagePreviews');
+    container.innerHTML = imageFiles.map((file, i) => {
+      const url = URL.createObjectURL(file);
+      return `
+        <div class="preview-wrap">
+          <img src="${url}" alt="Preview ${i+1}" />
+          ${i === 0 ? '<div class="preview-main-badge">Cover</div>' : ''}
+          <button class="preview-remove" onclick="removeImage(${i})">✕</button>
+        </div>`;
+    }).join('');
+  }
+
+  function removeImage(idx) {
+    imageFiles.splice(idx, 1);
+    renderPreviews();
+  }
+
+  // ── STEP NAVIGATION ──
+  function goToStep(num) {
+    if (num > currentStep && !validateStep(currentStep)) return;
+
+    document.getElementById(`step${currentStep}`).classList.remove('active');
+    document.getElementById(`step-indicator-${currentStep}`).classList.remove('active');
+    document.getElementById(`step-indicator-${currentStep}`).classList.add('done');
+    if (currentStep < 3) document.getElementById(`line-${currentStep}`).classList.add('done');
+
+    currentStep = num;
+    document.getElementById(`step${currentStep}`).classList.add('active');
+    document.getElementById(`step-indicator-${currentStep}`).classList.add('active');
+    document.getElementById(`step-indicator-${currentStep}`).classList.remove('done');
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ── VALIDATION ──
+  function validateStep(step) {
+    let valid = true;
+
+    if (step === 1) {
+      const title = document.getElementById('itemTitle').value.trim();
+      const category = document.getElementById('itemCategory').value;
+      const price = document.getElementById('itemPrice').value;
+      const desc = document.getElementById('itemDescription').value.trim();
+
+      if (!title) { showErr('err-title', 'itemTitle'); valid = false; }
+      else hideErr('err-title', 'itemTitle');
+
+      if (!category) { showErr('err-category', 'itemCategory'); valid = false; }
+      else hideErr('err-category', 'itemCategory');
+
+      if (!selectedCondition) { document.getElementById('err-condition').classList.add('show'); valid = false; }
+      else document.getElementById('err-condition').classList.remove('show');
+
+      if (!price || Number(price) <= 0) { showErr('err-price', 'itemPrice'); valid = false; }
+      else hideErr('err-price', 'itemPrice');
+
+      if (!desc || desc.length < 20) { showErr('err-description', 'itemDescription'); valid = false; }
+      else hideErr('err-description', 'itemDescription');
+    }
+
+    if (step === 2) {
+      if (imageFiles.length === 0) {
+        document.getElementById('err-images').classList.add('show');
+        valid = false;
+      }
+    }
+
+    if (step === 3) {
+      const name = document.getElementById('sellerName').value.trim();
+      const email = document.getElementById('sellerEmail').value.trim();
+      const phone = document.getElementById('sellerPhone').value.trim();
+      const location = document.getElementById('sellerLocation').value.trim();
+
+      if (!name) { showErr('err-sellerName', 'sellerName'); valid = false; }
+      else hideErr('err-sellerName', 'sellerName');
+
+      if (!email || !email.includes('@')) { showErr('err-sellerEmail', 'sellerEmail'); valid = false; }
+      else hideErr('err-sellerEmail', 'sellerEmail');
+
+      if (!phone) { showErr('err-sellerPhone', 'sellerPhone'); valid = false; }
+      else hideErr('err-sellerPhone', 'sellerPhone');
+
+      if (!location) { showErr('err-sellerLocation', 'sellerLocation'); valid = false; }
+      else hideErr('err-sellerLocation', 'sellerLocation');
+    }
+
+    return valid;
+  }
+
+  function showErr(errId, inputId) {
+    document.getElementById(errId).classList.add('show');
+    if (inputId) document.getElementById(inputId)?.classList.add('error');
+  }
+
+  function hideErr(errId, inputId) {
+    document.getElementById(errId).classList.remove('show');
+    if (inputId) document.getElementById(inputId)?.classList.remove('error');
+  }
+
+  // ── UPLOAD IMAGES TO SUPABASE STORAGE ──
+  async function uploadImages() {
+    const urls = [];
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      const ext = file.name.split('.').pop();
+      const fileName = `${Date.now()}_${i}.${ext}`;
+      const path = `products/${fileName}`;
+
+      const { error } = await supabase.storage
+        .from('product-images')
+        .upload(path, file, { cacheControl: '3600', upsert: false });
+
+      if (error) {
+        console.error('Image upload error:', error);
+        continue;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(path);
+
+      urls.push(publicUrl);
+    }
+    return urls;
+  }
+
+  // ── SUBMIT LISTING ──
+  async function submitListing() {
+    if (!validateStep(3)) return;
+
+    document.getElementById('loadingOverlay').classList.add('show');
+    document.getElementById('submitBtn').disabled = true;
+
+    try {
+      // 1. Upload images to Supabase Storage
+      const imageUrls = await uploadImages();
+
+      if (imageUrls.length === 0) {
+        showToast('Image upload failed. Please try again.');
+        document.getElementById('loadingOverlay').classList.remove('show');
+        document.getElementById('submitBtn').disabled = false;
+        return;
+      }
+
+      // 2. Save product to Supabase (status: pending)
+      const productData = {
+        title: document.getElementById('itemTitle').value.trim(),
+        category: document.getElementById('itemCategory').value,
+        condition: selectedCondition,
+        price: Number(document.getElementById('itemPrice').value),
+        description: document.getElementById('itemDescription').value.trim(),
+        images: imageUrls,
+        seller_name: document.getElementById('sellerName').value.trim(),
+        seller_email: document.getElementById('sellerEmail').value.trim(),
+        seller_phone: document.getElementById('sellerPhone').value.trim(),
+        seller_location: document.getElementById('sellerLocation').value.trim(),
+        status: 'pending'
+      };
+
+      const { data: product, error: dbError } = await supabase
+        .from('products')
+        .insert(productData)
+        .select()
+        .single();
+
+      if (dbError) throw dbError;
+
+      // 3. Trigger n8n vetting webhook
+      await fetch(N8N_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_id: product.id,
+          title: product.title,
+          category: product.category,
+          condition: product.condition,
+          price: product.price,
+          description: product.description,
+          images: product.images,
+          seller_name: product.seller_name,
+          seller_email: product.seller_email,
+          seller_phone: product.seller_phone
+        })
+      });
+
+      // 4. Show success
+      document.getElementById('loadingOverlay').classList.remove('show');
+      document.getElementById('step3').classList.remove('active');
+      document.getElementById('successScreen').classList.add('show');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    } catch (err) {
+      console.error('Submission error:', err);
+      document.getElementById('loadingOverlay').classList.remove('show');
+      document.getElementById('submitBtn').disabled = false;
+      showToast('Something went wrong. Please try again.');
+    }
+  }
+
+  // ── TOAST ──
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+</script>
+</body>
+</html>
