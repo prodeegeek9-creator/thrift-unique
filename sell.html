@@ -982,7 +982,8 @@
       if (dbError) throw dbError;
 
       // 3. Trigger n8n vetting webhook
-      await fetch(N8N_WEBHOOK, {
+      // Non-blocking — won't crash if webhook not set up yet
+      fetch(N8N_WEBHOOK, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -997,7 +998,7 @@
           seller_email: product.seller_email,
           seller_phone: product.seller_phone
         })
-      });
+      }).catch(() => console.log('n8n webhook not configured yet'));
 
       // 4. Show success
       document.getElementById('loadingOverlay').classList.remove('show');
