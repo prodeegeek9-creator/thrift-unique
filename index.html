@@ -401,7 +401,9 @@
     <button class="nav-wishlist" onclick="toggleWishlistView()">
       🤍 <div class="wishlist-badge" id="wishlistBadge">0</div>
     </button>
-    <button class="nav-link" onclick="openModal('authModal')">Sign In</button>
+    <div id="navAuthArea">
+      <button class="nav-link" onclick="openModal('authModal')">Sign In</button>
+    </div>
     <a href="./sell.html" class="nav-sell">Sell Item</a>
   </div>
 </nav>
@@ -612,23 +614,24 @@
         <div class="auth-tab active" onclick="switchAuthTab('login',this)">Sign In</div>
         <div class="auth-tab" onclick="switchAuthTab('signup',this)">Create Account</div>
       </div>
+
+      <!-- LOGIN -->
       <div id="authLoginForm">
         <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="authEmail" placeholder="you@email.com" /></div>
         <div class="form-group"><label class="form-label">Password</label><input type="password" class="form-input" id="authPassword" placeholder="••••••••" /></div>
+        <div id="authLoginError" style="display:none;font-size:12px;color:#d94f4f;margin-bottom:10px;"></div>
         <button class="modal-btn buy" onclick="authLogin()">Sign In →</button>
+        <div style="text-align:center;margin-top:14px;">
+          <a href="./my-offers.html" style="font-size:12px;color:var(--clay);text-decoration:none;">View my offers / purchases →</a>
+        </div>
       </div>
+
+      <!-- SIGNUP -->
       <div id="authSignupForm" style="display:none;">
         <div class="form-group"><label class="form-label">Full Name</label><input type="text" class="form-input" id="signupName" placeholder="Your full name" /></div>
         <div class="form-group"><label class="form-label">Email</label><input type="email" class="form-input" id="signupEmail" placeholder="you@email.com" /></div>
+        <div class="form-group"><label class="form-label">WhatsApp / Phone</label><input type="tel" class="form-input" id="signupPhone" placeholder="+234 800 000 0000" /></div>
         <div class="form-group"><label class="form-label">Password</label><input type="password" class="form-input" id="signupPassword" placeholder="Min 6 characters" /></div>
-        <div class="form-group">
-          <label class="form-label">I am a</label>
-          <select class="form-input" id="signupRole">
-            <option value="buyer">Buyer</option>
-            <option value="seller">Seller</option>
-            <option value="both">Both</option>
-          </select>
-        </div>
         <div class="form-group">
           <label class="form-label">State</label>
           <select class="form-input" id="signupState">
@@ -648,8 +651,10 @@
             <option>Zamfara</option>
           </select>
         </div>
+        <div id="authSignupError" style="display:none;font-size:12px;color:#d94f4f;margin-bottom:10px;"></div>
         <button class="modal-btn buy" onclick="authSignup()">Create Account →</button>
       </div>
+
       <p style="text-align:center;margin-top:14px;font-size:12px;color:var(--muted);">By continuing you agree to our <a href="#" style="color:var(--clay);">Terms</a></p>
     </div>
   </div>
@@ -665,6 +670,7 @@
   const PAYSTACK_KEY = 'pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxx';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+  // seller_location = state, seller_city = city
   const CITIES = {
     'Lagos': ['Ikeja','Lagos Island','Victoria Island','Lekki','Surulere','Ikoyi','Ajah','Agege','Badagry','Epe'],
     'Oyo': ['Ibadan','Ogbomoso','Oyo','Iseyin','Saki'],
@@ -686,6 +692,7 @@
   let wishlist = JSON.parse(localStorage.getItem('ut_wishlist') || '[]');
   let currentUser = null;
 
+  // ── INIT ──
   document.addEventListener('DOMContentLoaded', async () => {
     updateWishlistBadge();
     const { data: { session } } = await sb.auth.getSession();
@@ -694,16 +701,22 @@
       updateNavForUser();
     }
     await loadProducts();
-
-    // Open product from URL share link
     const pid = new URLSearchParams(window.location.search).get('product');
-    if (pid && allProducts.length) openProduct(pid);
+    if (pid) openProduct(pid);
   });
 
+  // ── NAV ──
   function updateNavForUser() {
-    if (!currentUser) return;
+    const area = document.getElementById('navAuthArea');
+    if (!currentUser) {
+      area.innerHTML = `<button class="nav-link" onclick="openModal('authModal')">Sign In</button>`;
+      return;
+    }
     const name = currentUser.user_metadata?.name || currentUser.email?.split('@')[0];
-    document.querySelector('.nav-link').textContent = '👤 ' + name;
+    area.innerHTML = `
+      <a href="./my-offers.html" class="nav-link" style="color:rgba(245,240,232,0.7);">My Offers</a>
+      <a href="./my-purchases.html" class="nav-link" style="color:rgba(245,240,232,0.7);">My Purchases</a>
+      <button class="nav-link" onclick="authSignOut()">👤 ${name} · Sign Out</button>`;
     const userState = currentUser.user_metadata?.state;
     if (userState) {
       document.getElementById('stateFilter').value = userState;
@@ -711,6 +724,14 @@
     }
   }
 
+  async function authSignOut() {
+    await sb.auth.signOut();
+    currentUser = null;
+    updateNavForUser();
+    showToast('Signed out');
+  }
+
+  // ── PRODUCTS ──
   async function loadProducts() {
     const { data } = await sb.from('products').select('*').eq('status','approved').order('created_at',{ascending:false});
     allProducts = data || [];
@@ -761,13 +782,14 @@
     }).join('');
   }
 
+  // ── FILTERS ──
   function filterProducts() {
     const state = document.getElementById('stateFilter').value;
-    const city = document.getElementById('cityFilter').value;
+    const city  = document.getElementById('cityFilter').value;
     filtered = allProducts.filter(p =>
       (!activeCategory || p.category === activeCategory) &&
       (!state || p.seller_location === state) &&
-      (!city || p.seller_city === city)
+      (!city  || p.seller_city === city)
     );
     renderProducts(filtered);
     updateFilterCount(filtered.length);
@@ -810,6 +832,7 @@
     document.getElementById('filterCount').textContent = `${n} item${n!==1?'s':''}`;
   }
 
+  // ── PRODUCT MODAL ──
   function openProduct(id) {
     activeProduct = allProducts.find(p => p.id === id);
     if (!activeProduct) return;
@@ -828,9 +851,9 @@
     const isWished = wishlist.includes(p.id);
     document.getElementById('modalBtns').innerHTML = `
       ${p.allow_negotiation
-        ? `<button class="modal-btn offer" onclick="openOffer()">💬 Make an Offer</button>
-           <button class="modal-btn buy" onclick="openCheckout()">Buy at ₦${Number(p.price).toLocaleString()}</button>`
-        : `<button class="modal-btn buy" onclick="openCheckout()">Buy Now — Pay with Paystack</button>`}
+        ? `<button class="modal-btn offer" onclick="requireAuth(openOffer)">💬 Make an Offer</button>
+           <button class="modal-btn buy"   onclick="requireAuth(openCheckout)">Buy at ₦${Number(p.price).toLocaleString()}</button>`
+        : `<button class="modal-btn buy" onclick="requireAuth(openCheckout)">Buy Now — Pay with Paystack</button>`}
       <button class="modal-btn wish" id="modalWishBtn" onclick="toggleWishlist()">
         ${isWished?'❤️ In Wishlist':'🤍 Add to Wishlist'}</button>`;
     document.getElementById('shareRow').innerHTML = `
@@ -839,56 +862,55 @@
     openModal('productModal');
   }
 
+  // ── AUTH GUARD ──
+  // Stores pending action so it fires automatically after successful login
+  function requireAuth(fn) {
+    if (!currentUser) {
+      closeModal('productModal');
+      showToast('Please sign in to continue');
+      window._pendingAction = fn;
+      openModal('authModal');
+      return;
+    }
+    fn();
+  }
+
+  // ── OFFER FLOW ──
   function openOffer() {
-    if (!activeProduct) return;
-    const p = activeProduct;
+    if (!activeProduct || !currentUser) return;
+    const p   = activeProduct;
     const pct = p.min_discount_pct || 20;
     const min = Math.ceil(p.price * (1 - pct / 100));
 
-    document.getElementById('offerSub').textContent =
-      `Seller allows up to ${pct}% off. What's your offer?`;
+    document.getElementById('offerSub').textContent = `Seller allows up to ${pct}% off. What's your offer?`;
     document.getElementById('offerRange').innerHTML =
-      `<span>Listed: <strong>₦${Number(p.price).toLocaleString()}</strong></span>` +
-      `<span>Min: <strong>₦${Number(min).toLocaleString()}</strong></span>`;
-    document.getElementById('offerHint').textContent =
-      `Offer must be ₦${Number(min).toLocaleString()} or more`;
+      `<span>Listed: <strong>₦${Number(p.price).toLocaleString()}</strong></span>
+       <span>Min: <strong>₦${Number(min).toLocaleString()}</strong></span>`;
+    document.getElementById('offerHint').textContent = `Offer must be ₦${Number(min).toLocaleString()} or more`;
     document.getElementById('offerAmount').value = '';
-    document.getElementById('offerAmount').min = min;
+    document.getElementById('offerAmount').min   = min;
     document.getElementById('offerMessage').value = '';
 
-    // Pre-fill buyer info from auth session
-    if (currentUser) {
-      document.getElementById('offerBuyerName').value =
-        currentUser.user_metadata?.name || '';
-      document.getElementById('offerBuyerEmail').value =
-        currentUser.email || '';
-    }
+    // Pre-fill hidden step-2 fields from session (used if step 2 is ever shown)
+    document.getElementById('offerBuyerName').value  = currentUser.user_metadata?.name  || '';
+    document.getElementById('offerBuyerEmail').value = currentUser.email || '';
+    document.getElementById('offerBuyerPhone').value = currentUser.user_metadata?.phone || '';
 
-    // Reset steps
     document.getElementById('offerStep1').style.display = 'block';
     document.getElementById('offerStep2').style.display = 'none';
     document.getElementById('offerStep3').style.display = 'none';
-
     openModal('offerModal');
   }
 
   function offerNextStep() {
     if (!activeProduct) return;
     const amount = Number(document.getElementById('offerAmount').value);
-    const pct = activeProduct.min_discount_pct || 20;
-    const min = Math.ceil(activeProduct.price * (1 - pct / 100));
-
-    if (!amount || amount < min) {
-      showToast(`Min offer is ₦${Number(min).toLocaleString()}`);
-      document.getElementById('offerAmount').focus();
-      return;
-    }
-    if (amount > activeProduct.price) {
-      showToast('Offer cannot exceed listed price');
-      return;
-    }
-    document.getElementById('offerStep1').style.display = 'none';
-    document.getElementById('offerStep2').style.display = 'block';
+    const pct    = activeProduct.min_discount_pct || 20;
+    const min    = Math.ceil(activeProduct.price * (1 - pct / 100));
+    if (!amount || amount < min) { showToast(`Min offer is ₦${Number(min).toLocaleString()}`); return; }
+    if (amount > activeProduct.price) { showToast('Offer cannot exceed listed price'); return; }
+    // Logged-in users skip step 2 — details come from session
+    submitOffer();
   }
 
   function offerBackStep() {
@@ -897,28 +919,19 @@
   }
 
   async function submitOffer() {
-    if (!activeProduct) return;
-
-    const name  = document.getElementById('offerBuyerName').value.trim();
-    const email = document.getElementById('offerBuyerEmail').value.trim();
-    const phone = document.getElementById('offerBuyerPhone').value.trim();
-
-    if (!name || !email) {
-      showToast('Please enter your name and email');
-      return;
-    }
-
+    if (!activeProduct || !currentUser) return;
     const amount  = Number(document.getElementById('offerAmount').value);
     const message = document.getElementById('offerMessage').value.trim();
+
     const btn = document.getElementById('offerSubmitBtn');
-    btn.disabled = true;
-    btn.textContent = 'Sending…';
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
     const { error } = await sb.from('offers').insert({
       product_id:   activeProduct.id,
-      buyer_name:   name,
-      buyer_email:  email,
-      buyer_phone:  phone || null,
+      buyer_id:     currentUser.id,
+      buyer_name:   currentUser.user_metadata?.name  || '',
+      buyer_email:  currentUser.email,
+      buyer_phone:  currentUser.user_metadata?.phone || null,
       offer_amount: amount,
       listed_price: activeProduct.price,
       message:      message || null,
@@ -926,50 +939,59 @@
       expires_at:   new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
     });
 
-    btn.disabled = false;
-    btn.textContent = 'Send Offer →';
-
-    if (error) {
-      showToast('Failed to send offer. Please try again.');
-      console.error(error);
-      return;
-    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Offer →'; }
+    if (error) { showToast('Failed to send offer. Please try again.'); console.error(error); return; }
 
     const saving = Math.round(((activeProduct.price - amount) / activeProduct.price) * 100);
     document.getElementById('offerSuccessSub').textContent =
       `Your offer of ₦${Number(amount).toLocaleString()} (${saving}% off) has been sent to the seller.`;
-
+    document.getElementById('offerStep1').style.display = 'none';
     document.getElementById('offerStep2').style.display = 'none';
     document.getElementById('offerStep3').style.display = 'block';
   }
 
+  // ── CHECKOUT ──
   function openCheckout() {
     if (!activeProduct) return;
     document.getElementById('checkoutTitle').textContent = activeProduct.title;
-    document.getElementById('checkoutAmt').textContent = `₦${Number(activeProduct.price).toLocaleString()}`;
+    document.getElementById('checkoutAmt').textContent   = `₦${Number(activeProduct.price).toLocaleString()}`;
+    if (currentUser) {
+      document.getElementById('buyerName').value  = currentUser.user_metadata?.name  || '';
+      document.getElementById('buyerEmail').value = currentUser.email || '';
+      document.getElementById('buyerPhone').value = currentUser.user_metadata?.phone || '';
+    }
     closeModal('productModal');
     openModal('checkoutModal');
   }
 
+  // FIX #2: negotiable items go straight to offer modal, not product modal
   function quickBuy(id) {
     activeProduct = allProducts.find(p => p.id === id);
-    if (activeProduct?.allow_negotiation) openProduct(id);
-    else openCheckout();
+    if (!activeProduct) return;
+    if (activeProduct.allow_negotiation) requireAuth(openOffer);
+    else requireAuth(openCheckout);
   }
 
   async function initiatePayment() {
-    const name = document.getElementById('buyerName').value.trim();
+    const name  = document.getElementById('buyerName').value.trim();
     const email = document.getElementById('buyerEmail').value.trim();
     const phone = document.getElementById('buyerPhone').value.trim();
     if (!name||!email||!phone) { showToast('Please fill all fields'); return; }
     const handler = PaystackPop.setup({
-      key: PAYSTACK_KEY, email, amount: activeProduct.price * 100, currency: 'NGN',
+      key: PAYSTACK_KEY, email,
+      amount: activeProduct.price * 100, currency: 'NGN',
       ref: 'UT_' + Date.now(),
       callback: async (res) => {
         await sb.from('orders').insert({
-          product_id: activeProduct.id, buyer_name: name, buyer_email: email,
-          buyer_phone: phone, amount: activeProduct.price, payment_ref: res.reference,
-          status: 'paid', escrow_status: 'held',
+          product_id:       activeProduct.id,
+          buyer_id:         currentUser?.id || null,
+          buyer_name:       name,
+          buyer_email:      email,
+          buyer_phone:      phone,
+          amount:           activeProduct.price,
+          payment_ref:      res.reference,
+          status:           'paid',
+          escrow_status:    'held',
           confirm_deadline: new Date(Date.now()+48*60*60*1000).toISOString()
         });
         closeModal('checkoutModal');
@@ -980,6 +1002,7 @@
     handler.openIframe();
   }
 
+  // ── WISHLIST ──
   function toggleWishlist() {
     if (!activeProduct) return;
     quickWishlist(activeProduct.id, null);
@@ -989,8 +1012,15 @@
 
   function quickWishlist(id, btn) {
     const idx = wishlist.indexOf(id);
-    if (idx > -1) { wishlist.splice(idx,1); if(btn){btn.textContent='🤍';btn.classList.remove('wished');} showToast('Removed from wishlist'); }
-    else { wishlist.push(id); if(btn){btn.textContent='❤️';btn.classList.add('wished');} showToast('Added to wishlist ❤️'); }
+    if (idx > -1) {
+      wishlist.splice(idx,1);
+      if (btn) { btn.textContent='🤍'; btn.classList.remove('wished'); }
+      showToast('Removed from wishlist');
+    } else {
+      wishlist.push(id);
+      if (btn) { btn.textContent='❤️'; btn.classList.add('wished'); }
+      showToast('Added to wishlist ❤️');
+    }
     localStorage.setItem('ut_wishlist', JSON.stringify(wishlist));
     updateWishlistBadge();
   }
@@ -1004,6 +1034,7 @@
     document.getElementById('products').scrollIntoView({behavior:'smooth'});
   }
 
+  // ── SHARE ──
   function shareProduct(id, title) {
     const url = `${location.origin}${location.pathname}?product=${id}`;
     if (navigator.share) navigator.share({title:`${title} — Unique Thrift`, url});
@@ -1020,34 +1051,63 @@
     showToast('Link copied! 🔗');
   }
 
+  // ── AUTH MODAL ──
   function switchAuthTab(tab, el) {
     document.querySelectorAll('.auth-tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    document.getElementById('authLoginForm').style.display = tab==='login'?'block':'none';
-    document.getElementById('authSignupForm').style.display = tab==='signup'?'block':'none';
+    document.getElementById('authLoginForm').style.display  = tab==='login'  ? 'block' : 'none';
+    document.getElementById('authSignupForm').style.display = tab==='signup' ? 'block' : 'none';
   }
 
   async function authLogin() {
-    const email = document.getElementById('authEmail').value.trim();
+    const email    = document.getElementById('authEmail').value.trim();
     const password = document.getElementById('authPassword').value;
-    const {data,error} = await sb.auth.signInWithPassword({email,password});
-    if (error) { showToast('Login failed: '+error.message); return; }
-    currentUser = data.user; updateNavForUser(); closeModal('authModal'); showToast('Welcome back! 👋');
+    const errEl    = document.getElementById('authLoginError');
+    errEl.style.display = 'none';
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+    currentUser = data.user;
+    updateNavForUser();
+    closeModal('authModal');
+    showToast('Welcome back! 👋');
+    // Fire any pending action that triggered the login prompt
+    if (window._pendingAction) {
+      const fn = window._pendingAction;
+      window._pendingAction = null;
+      setTimeout(fn, 300);
+    }
   }
 
   async function authSignup() {
-    const name = document.getElementById('signupName').value.trim();
-    const email = document.getElementById('signupEmail').value.trim();
+    const name     = document.getElementById('signupName').value.trim();
+    const email    = document.getElementById('signupEmail').value.trim();
+    const phone    = document.getElementById('signupPhone').value.trim();
     const password = document.getElementById('signupPassword').value;
-    const role = document.getElementById('signupRole').value;
-    const state = document.getElementById('signupState').value;
-    if (!name||!email||!password||!state) { showToast('Please fill all fields'); return; }
-    const {data,error} = await sb.auth.signUp({email,password,options:{data:{name,role,state}}});
-    if (error) { showToast('Signup failed: '+error.message); return; }
-    currentUser = data.user; updateNavForUser(); closeModal('authModal'); showToast('Welcome to Unique Thrift! 🎉');
+    const state    = document.getElementById('signupState').value;
+    const errEl    = document.getElementById('authSignupError');
+    errEl.style.display = 'none';
+    if (!name||!email||!phone||!password||!state) {
+      errEl.textContent = 'Please fill all fields';
+      errEl.style.display = 'block'; return;
+    }
+    const { data, error } = await sb.auth.signUp({
+      email, password,
+      options: { data: { name, phone, state } }
+    });
+    if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+    currentUser = data.user;
+    updateNavForUser();
+    closeModal('authModal');
+    showToast('Welcome to Unique Thrift! 🎉');
+    if (window._pendingAction) {
+      const fn = window._pendingAction;
+      window._pendingAction = null;
+      setTimeout(fn, 300);
+    }
   }
 
-  function openModal(id) { document.getElementById(id).classList.add('open'); document.body.style.overflow='hidden'; }
+  // ── MODALS ──
+  function openModal(id)  { document.getElementById(id).classList.add('open');    document.body.style.overflow='hidden'; }
   function closeModal(id) { document.getElementById(id).classList.remove('open'); document.body.style.overflow=''; }
 
   function showToast(msg) {

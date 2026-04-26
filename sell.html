@@ -578,8 +578,25 @@
   </div>
 </div>
 
+<!-- AUTH GATE — shown when not logged in -->
+<div id="sellAuthGate" style="display:none;max-width:460px;margin:60px auto;padding:0 24px;">
+  <div style="background:white;border-radius:20px;padding:36px 28px;border:1px solid var(--border);text-align:center;">
+    <div style="font-size:48px;margin-bottom:16px;">🔐</div>
+    <div style="font-family:'Playfair Display',serif;font-size:22px;margin-bottom:10px;">Sign in to sell</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.6;">
+      You need an account to list items. It's free and takes 30 seconds.
+    </p>
+    <a href="./index.html" style="display:inline-block;background:var(--charcoal);color:white;padding:13px 32px;border-radius:100px;font-family:'DM Sans',sans-serif;font-size:14px;text-decoration:none;">
+      Sign In / Create Account →
+    </a>
+    <p style="margin-top:14px;font-size:12px;color:var(--muted);">
+      You'll be redirected back here after signing in.
+    </p>
+  </div>
+</div>
+
 <!-- FORM -->
-<div class="form-container">
+<div class="form-container" id="sellFormContainer">
 
   <!-- STEP 1: ITEM DETAILS -->
   <div class="form-section active" id="step1">
@@ -700,39 +717,49 @@
   <!-- STEP 3: CONTACT -->
   <div class="form-section" id="step3">
     <div class="section-title">Your contact details</div>
-    <div class="section-subtitle">We'll notify you when your item is approved or if we need more info. Not published publicly.</div>
+    <div class="section-subtitle">Pulled from your account. Not published publicly.</div>
 
+    <!-- Read-only fields auto-filled from session -->
     <div class="form-group">
-      <label class="form-label">Your Name <span class="required">*</span></label>
-      <input type="text" class="form-input" id="sellerName" placeholder="First and last name" />
-      <div class="form-error" id="err-sellerName">Please enter your name</div>
+      <label class="form-label">Your Name</label>
+      <input type="text" class="form-input" id="sellerName" readonly
+        style="background:var(--cream);cursor:not-allowed;color:var(--muted);" />
     </div>
 
     <div class="form-group">
-      <label class="form-label">Email Address <span class="required">*</span></label>
-      <input type="email" class="form-input" id="sellerEmail" placeholder="you@email.com" />
-      <div class="form-hint">We'll send you an approval notification here.</div>
-      <div class="form-error" id="err-sellerEmail">Please enter a valid email</div>
+      <label class="form-label">Email Address</label>
+      <input type="email" class="form-input" id="sellerEmail" readonly
+        style="background:var(--cream);cursor:not-allowed;color:var(--muted);" />
+      <div class="form-hint">Approval notification will be sent here.</div>
     </div>
 
     <div class="form-group">
-      <label class="form-label">WhatsApp Number <span class="required">*</span></label>
-      <input type="tel" class="form-input" id="sellerPhone" placeholder="+234 800 000 0000" />
-      <div class="form-hint">We'll also notify you via WhatsApp when your item is approved.</div>
-      <div class="form-error" id="err-sellerPhone">Please enter your WhatsApp number</div>
+      <label class="form-label">WhatsApp Number</label>
+      <input type="tel" class="form-input" id="sellerPhone" readonly
+        style="background:var(--cream);cursor:not-allowed;color:var(--muted);" />
+    </div>
+
+    <!-- State from profile, city is selectable -->
+    <div class="form-group">
+      <label class="form-label">State</label>
+      <input type="text" class="form-input" id="sellerState" readonly
+        style="background:var(--cream);cursor:not-allowed;color:var(--muted);" />
     </div>
 
     <div class="form-group">
-      <label class="form-label">Location (City) <span class="required">*</span></label>
-      <input type="text" class="form-input" id="sellerLocation" placeholder="e.g. Lagos, Abuja, Port Harcourt" />
-      <div class="form-error" id="err-sellerLocation">Please enter your city</div>
+      <label class="form-label">City / Area <span class="required">*</span></label>
+      <select class="form-select" id="sellerCity">
+        <option value="">Select your city</option>
+      </select>
+      <div class="form-hint">Where the item is located for pickup or delivery.</div>
+      <div class="form-error" id="err-sellerCity">Please select your city</div>
     </div>
 
     <div style="background:var(--cream);border-radius:12px;padding:16px;margin-bottom:20px;">
       <div style="font-size:13px;font-weight:500;margin-bottom:8px;">What happens after you submit?</div>
       <div style="font-size:12px;color:var(--muted);line-height:1.8;">
         ✅ Our AI reviews your item for quality and appropriateness<br>
-        📩 You get notified by email and WhatsApp within 24 hours<br>
+        📩 You get notified by email within 24 hours<br>
         🛍️ Approved items go live for buyers to see immediately<br>
         ❌ Rejected items include feedback so you can resubmit
       </div>
@@ -797,14 +824,73 @@
   const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  // ── n8n WEBHOOK URL (replace with your actual webhook) ──
+  // ── n8n WEBHOOK URL ──
   const N8N_WEBHOOK = 'https://your-n8n-instance.com/webhook/unique-thrift-vetting';
 
+  // ── CITY MAP (keyed by state = seller_location) ──
+  const CITIES = {
+    'Lagos': ['Ikeja','Lagos Island','Victoria Island','Lekki','Surulere','Ikoyi','Ajah','Agege','Badagry','Epe'],
+    'Oyo': ['Ibadan','Ogbomoso','Oyo','Iseyin','Saki'],
+    'FCT — Abuja': ['Garki','Wuse','Maitama','Asokoro','Gwarinpa','Kubwa','Kuje'],
+    'Rivers': ['Port Harcourt','Obio-Akpor','Okrika','Eleme','Bonny'],
+    'Kano': ['Kano City','Fagge','Dala','Gwale','Tarauni'],
+    'Delta': ['Warri','Asaba','Sapele','Ughelli','Agbor'],
+    'Anambra': ['Awka','Onitsha','Nnewi','Ekwulobia'],
+    'Enugu': ['Enugu City','Nsukka','Oji River','Agbani'],
+    'Kaduna': ['Kaduna City','Zaria','Kafanchan'],
+    'Imo': ['Owerri','Orlu','Okigwe'],
+    'Edo': ['Benin City','Auchi','Ekpoma'],
+    'Ogun': ['Abeokuta','Sagamu','Ijebu-Ode'],
+    'Ondo': ['Akure','Ondo','Owo'],
+    'Osun': ['Osogbo','Ile-Ife','Ilesa'],
+  };
+
   // ── STATE ──
+  let currentUser = null;
   let currentStep = 1;
   let selectedCondition = '';
   let imageFiles = [];
-  let uploadedImageUrls = [];
+
+  // ── AUTH GATE ──
+  document.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      // Save destination so index.html can redirect back (future enhancement)
+      sessionStorage.setItem('ut_sell_redirect', '1');
+      document.getElementById('sellAuthGate').style.display = 'block';
+      document.getElementById('sellFormContainer').style.display = 'none';
+      document.querySelector('.steps-bar').style.display = 'none';
+      return;
+    }
+    currentUser = session.user;
+    prefillContactFields();
+  });
+
+  function prefillContactFields() {
+    const meta = currentUser.user_metadata || {};
+    document.getElementById('sellerName').value  = meta.name  || '';
+    document.getElementById('sellerEmail').value = currentUser.email || '';
+    document.getElementById('sellerPhone').value = meta.phone || '';
+    document.getElementById('sellerState').value = meta.state || '';
+    populateCityDropdown(meta.state || '');
+  }
+
+  function populateCityDropdown(state) {
+    const sel = document.getElementById('sellerCity');
+    sel.innerHTML = '<option value="">Select your city</option>';
+    const cities = CITIES[state] || [];
+    cities.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    });
+    // If no cities for this state, allow free text fallback
+    if (!cities.length && state) {
+      const o = document.createElement('option');
+      o.value = state; o.textContent = state + ' (city not listed)';
+      sel.appendChild(o);
+    }
+  }
 
   // ── DESCRIPTION COUNTER ──
   document.getElementById('itemDescription').addEventListener('input', function() {
@@ -828,14 +914,12 @@
     document.getElementById('discountDisplay').textContent = pct + '%';
     if (price > 0) {
       const minPrice = Math.ceil(price * (1 - pct / 100));
-      document.getElementById('minPricePreview').textContent =
-        `Min offer: ₦${minPrice.toLocaleString()}`;
+      document.getElementById('minPricePreview').textContent = `Min offer: ₦${minPrice.toLocaleString()}`;
     } else {
       document.getElementById('minPricePreview').textContent = '';
     }
   }
 
-  // Update min price preview when price changes
   document.getElementById('itemPrice').addEventListener('input', () => {
     if (document.getElementById('allowNegotiation').checked) updateDiscountDisplay();
   });
@@ -861,16 +945,10 @@
   // ── IMAGE HANDLING ──
   function handleImages(files) {
     const remaining = 6 - imageFiles.length;
-    const toAdd = Array.from(files).slice(0, remaining);
-
-    toAdd.forEach(file => {
-      if (file.size > 5 * 1024 * 1024) {
-        showToast(`${file.name} is too large (max 5MB)`);
-        return;
-      }
+    Array.from(files).slice(0, remaining).forEach(file => {
+      if (file.size > 5 * 1024 * 1024) { showToast(`${file.name} is too large (max 5MB)`); return; }
       imageFiles.push(file);
     });
-
     renderPreviews();
     if (imageFiles.length > 0) document.getElementById('err-images').classList.remove('show');
   }
@@ -896,17 +974,14 @@
   // ── STEP NAVIGATION ──
   function goToStep(num) {
     if (num > currentStep && !validateStep(currentStep)) return;
-
     document.getElementById(`step${currentStep}`).classList.remove('active');
     document.getElementById(`step-indicator-${currentStep}`).classList.remove('active');
     document.getElementById(`step-indicator-${currentStep}`).classList.add('done');
     if (currentStep < 3) document.getElementById(`line-${currentStep}`).classList.add('done');
-
     currentStep = num;
     document.getElementById(`step${currentStep}`).classList.add('active');
     document.getElementById(`step-indicator-${currentStep}`).classList.add('active');
     document.getElementById(`step-indicator-${currentStep}`).classList.remove('done');
-
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -915,51 +990,26 @@
     let valid = true;
 
     if (step === 1) {
-      const title = document.getElementById('itemTitle').value.trim();
+      const title    = document.getElementById('itemTitle').value.trim();
       const category = document.getElementById('itemCategory').value;
-      const price = document.getElementById('itemPrice').value;
-      const desc = document.getElementById('itemDescription').value.trim();
-
-      if (!title) { showErr('err-title', 'itemTitle'); valid = false; }
-      else hideErr('err-title', 'itemTitle');
-
-      if (!category) { showErr('err-category', 'itemCategory'); valid = false; }
-      else hideErr('err-category', 'itemCategory');
-
-      if (!selectedCondition) { document.getElementById('err-condition').classList.add('show'); valid = false; }
-      else document.getElementById('err-condition').classList.remove('show');
-
-      if (!price || Number(price) <= 0) { showErr('err-price', 'itemPrice'); valid = false; }
-      else hideErr('err-price', 'itemPrice');
-
-      if (!desc || desc.length < 20) { showErr('err-description', 'itemDescription'); valid = false; }
-      else hideErr('err-description', 'itemDescription');
+      const price    = document.getElementById('itemPrice').value;
+      const desc     = document.getElementById('itemDescription').value.trim();
+      if (!title)                            { showErr('err-title', 'itemTitle');             valid = false; } else hideErr('err-title', 'itemTitle');
+      if (!category)                         { showErr('err-category', 'itemCategory');        valid = false; } else hideErr('err-category', 'itemCategory');
+      if (!selectedCondition)                { document.getElementById('err-condition').classList.add('show'); valid = false; }
+      else                                   document.getElementById('err-condition').classList.remove('show');
+      if (!price || Number(price) <= 0)      { showErr('err-price', 'itemPrice');              valid = false; } else hideErr('err-price', 'itemPrice');
+      if (!desc || desc.length < 20)         { showErr('err-description', 'itemDescription'); valid = false; } else hideErr('err-description', 'itemDescription');
     }
 
     if (step === 2) {
-      if (imageFiles.length === 0) {
-        document.getElementById('err-images').classList.add('show');
-        valid = false;
-      }
+      if (imageFiles.length === 0) { document.getElementById('err-images').classList.add('show'); valid = false; }
     }
 
     if (step === 3) {
-      const name = document.getElementById('sellerName').value.trim();
-      const email = document.getElementById('sellerEmail').value.trim();
-      const phone = document.getElementById('sellerPhone').value.trim();
-      const location = document.getElementById('sellerLocation').value.trim();
-
-      if (!name) { showErr('err-sellerName', 'sellerName'); valid = false; }
-      else hideErr('err-sellerName', 'sellerName');
-
-      if (!email || !email.includes('@')) { showErr('err-sellerEmail', 'sellerEmail'); valid = false; }
-      else hideErr('err-sellerEmail', 'sellerEmail');
-
-      if (!phone) { showErr('err-sellerPhone', 'sellerPhone'); valid = false; }
-      else hideErr('err-sellerPhone', 'sellerPhone');
-
-      if (!location) { showErr('err-sellerLocation', 'sellerLocation'); valid = false; }
-      else hideErr('err-sellerLocation', 'sellerLocation');
+      const city = document.getElementById('sellerCity').value;
+      if (!city) { showErr('err-sellerCity', 'sellerCity'); valid = false; }
+      else        hideErr('err-sellerCity', 'sellerCity');
     }
 
     return valid;
@@ -980,23 +1030,11 @@
     const urls = [];
     for (let i = 0; i < imageFiles.length; i++) {
       const file = imageFiles[i];
-      const ext = file.name.split('.').pop();
-      const fileName = `${Date.now()}_${i}.${ext}`;
-      const path = `products/${fileName}`;
-
-      const { error } = await sb.storage
-        .from('product-images')
-        .upload(path, file, { cacheControl: '3600', upsert: false });
-
-      if (error) {
-        console.error('Image upload error:', error);
-        continue;
-      }
-
-      const { data: { publicUrl } } = sb.storage
-        .from('product-images')
-        .getPublicUrl(path);
-
+      const ext  = file.name.split('.').pop();
+      const path = `products/${Date.now()}_${i}.${ext}`;
+      const { error } = await sb.storage.from('product-images').upload(path, file, { cacheControl: '3600', upsert: false });
+      if (error) { console.error('Image upload error:', error); continue; }
+      const { data: { publicUrl } } = sb.storage.from('product-images').getPublicUrl(path);
       urls.push(publicUrl);
     }
     return urls;
@@ -1005,14 +1043,13 @@
   // ── SUBMIT LISTING ──
   async function submitListing() {
     if (!validateStep(3)) return;
+    if (!currentUser) { showToast('Please sign in to submit a listing'); return; }
 
     document.getElementById('loadingOverlay').classList.add('show');
     document.getElementById('submitBtn').disabled = true;
 
     try {
-      // 1. Upload images to Supabase Storage
       const imageUrls = await uploadImages();
-
       if (imageUrls.length === 0) {
         showToast('Image upload failed. Please try again.');
         document.getElementById('loadingOverlay').classList.remove('show');
@@ -1020,53 +1057,48 @@
         return;
       }
 
-      // 2. Save product to Supabase (status: pending)
+      const meta = currentUser.user_metadata || {};
       const productData = {
-        title: document.getElementById('itemTitle').value.trim(),
-        category: document.getElementById('itemCategory').value,
-        condition: selectedCondition,
-        price: Number(document.getElementById('itemPrice').value),
-        description: document.getElementById('itemDescription').value.trim(),
-        images: imageUrls,
-        seller_name: document.getElementById('sellerName').value.trim(),
-        seller_email: document.getElementById('sellerEmail').value.trim(),
-        seller_phone: document.getElementById('sellerPhone').value.trim(),
-        seller_location: document.getElementById('sellerLocation').value.trim(),
+        title:             document.getElementById('itemTitle').value.trim(),
+        category:          document.getElementById('itemCategory').value,
+        condition:         selectedCondition,
+        price:             Number(document.getElementById('itemPrice').value),
+        description:       document.getElementById('itemDescription').value.trim(),
+        images:            imageUrls,
+        seller_id:         currentUser.id,
+        seller_name:       meta.name  || '',
+        seller_email:      currentUser.email,
+        seller_phone:      meta.phone || '',
+        seller_location:   meta.state || '',           // state
+        seller_city:       document.getElementById('sellerCity').value,  // city — FIX #4
         allow_negotiation: document.getElementById('allowNegotiation').checked,
-        min_discount_pct: document.getElementById('allowNegotiation').checked
-          ? Number(document.getElementById('minDiscountSlider').value)
-          : null,
+        min_discount_pct:  document.getElementById('allowNegotiation').checked
+                             ? Number(document.getElementById('minDiscountSlider').value)
+                             : null,
         status: 'pending'
       };
 
-      const { data: product, error: dbError } = await sb
-        .from('products')
-        .insert(productData)
-        .select()
-        .single();
-
+      const { data: product, error: dbError } = await sb.from('products').insert(productData).select().single();
       if (dbError) throw dbError;
 
-      // 3. Trigger n8n vetting webhook
-      // Non-blocking — won't crash if webhook not set up yet
+      // Trigger n8n vetting webhook (non-blocking)
       fetch(N8N_WEBHOOK, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          product_id: product.id,
-          title: product.title,
-          category: product.category,
-          condition: product.condition,
-          price: product.price,
-          description: product.description,
-          images: product.images,
-          seller_name: product.seller_name,
+          product_id:   product.id,
+          title:        product.title,
+          category:     product.category,
+          condition:    product.condition,
+          price:        product.price,
+          description:  product.description,
+          images:       product.images,
+          seller_name:  product.seller_name,
           seller_email: product.seller_email,
           seller_phone: product.seller_phone
         })
       }).catch(() => console.log('n8n webhook not configured yet'));
 
-      // 4. Show success
       document.getElementById('loadingOverlay').classList.remove('show');
       document.getElementById('step3').classList.remove('active');
       document.getElementById('successScreen').classList.add('show');

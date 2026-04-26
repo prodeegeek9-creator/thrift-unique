@@ -758,10 +758,10 @@
             <div class="page-subtitle">Buyer offers across all your products</div>
           </div>
           <div class="filter-tabs">
-            <div class="filter-tab active" onclick="filterNegotiations('pending',this)">Pending</div>
-            <div class="filter-tab" onclick="filterNegotiations('countered',this)">Countered</div>
-            <div class="filter-tab" onclick="filterNegotiations('accepted',this)">Accepted</div>
-            <div class="filter-tab" onclick="filterNegotiations('all',this)">All</div>
+            <div class="filter-tab active" data-filter="pending"   onclick="filterNegotiations('pending',this)">Pending</div>
+            <div class="filter-tab"        data-filter="countered" onclick="filterNegotiations('countered',this)">Countered</div>
+            <div class="filter-tab"        data-filter="accepted"  onclick="filterNegotiations('accepted',this)">Accepted</div>
+            <div class="filter-tab"        data-filter="all"       onclick="filterNegotiations('all',this)">All</div>
           </div>
         </div>
         <div id="negotiationsContainer"></div>
@@ -1750,11 +1750,10 @@
     };
     showToast(msgs[status] || 'Updated');
 
-    // Reload current filter
+    // FIX #9: read filter from data attribute, not textContent (emoji breaks lookup)
     const activeTab = document.querySelector('#page-negotiations .filter-tab.active');
-    const filter = activeTab?.textContent.toLowerCase().trim() || 'pending';
-    const filterMap = { 'pending':'pending', 'countered':'countered', 'accepted':'accepted', 'all':'all' };
-    await loadNegotiations(filterMap[filter] || 'pending');
+    const currentNegFilter = activeTab?.dataset.filter || 'pending';
+    await loadNegotiations(currentNegFilter);
     await loadAllData();
   }
 

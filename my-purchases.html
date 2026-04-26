@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Purchases — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #f5f0e8;
+      --warm-white: #faf8f4;
+      --charcoal: #1a1a18;
+      --clay: #c4622d;
+      --clay-light: #e8845a;
+      --sage: #7a8c6e;
+      --muted: #9a9086;
+      --border: #e8e0d0;
+      --error: #d94f4f;
+      --success: #4f9d6e;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Outfit', sans-serif; background: var(--cream); color: var(--charcoal); min-height: 100vh; }
+
+    nav {
+      background: var(--charcoal); padding: 0 24px; height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 50;
+    }
+    .logo { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--cream); text-decoration: none; }
+    .logo em { font-style: italic; color: var(--clay-light); }
+    .nav-links { display: flex; gap: 12px; align-items: center; }
+    .nav-link {
+      color: rgba(245,240,232,0.65); font-size: 13px; text-decoration: none;
+      padding: 6px 14px; border-radius: 100px; border: 1px solid transparent; transition: all 0.2s;
+    }
+    .nav-link:hover { color: var(--cream); border-color: rgba(255,255,255,0.15); }
+
+    .page-wrap { max-width: 720px; margin: 0 auto; padding: 36px 20px 80px; }
+    .page-heading { font-family: 'Cormorant Garamond', serif; font-size: 32px; font-weight: 600; margin-bottom: 6px; }
+    .page-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+
+    /* Auth gate */
+    .auth-gate {
+      background: white; border-radius: 20px; padding: 36px 28px;
+      border: 1px solid var(--border); text-align: center; max-width: 400px; margin: 60px auto;
+    }
+    .auth-gate h2 { font-family: 'Cormorant Garamond', serif; font-size: 24px; margin-bottom: 8px; }
+    .auth-gate p { font-size: 13px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+
+    /* Tabs */
+    .page-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+    .page-tab {
+      flex: 1; padding: 13px; text-align: center; font-size: 14px; font-weight: 500;
+      cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all 0.2s;
+    }
+    .page-tab.active { color: var(--clay); border-bottom-color: var(--clay); }
+
+    /* Filter chips */
+    .filter-bar { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-chip {
+      padding: 7px 18px; border-radius: 100px; border: 1.5px solid var(--border);
+      background: white; font-size: 12px; font-family: 'Outfit', sans-serif;
+      cursor: pointer; transition: all 0.2s; color: var(--charcoal);
+    }
+    .filter-chip.active { background: var(--charcoal); color: white; border-color: var(--charcoal); }
+
+    /* Offer card */
+    .offer-card {
+      background: white; border-radius: 16px; border: 1px solid var(--border);
+      margin-bottom: 14px; overflow: hidden; animation: cardUp 0.35s ease both;
+    }
+    @keyframes cardUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+
+    .offer-card-header {
+      padding: 16px 18px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .offer-img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--cream); flex-shrink: 0; }
+    .offer-product-name { font-weight: 500; font-size: 14px; }
+    .offer-product-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .status-badge { margin-left: auto; padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
+
+    .offer-body { padding: 16px 18px; }
+    .offer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .offer-field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 3px; }
+    .offer-field-val { font-size: 15px; font-weight: 500; }
+
+    /* Your offer amount — buyer's own price */
+    .your-offer-amount { font-size: 26px; font-weight: 600; color: var(--clay); }
+    .offer-savings { font-size: 11px; color: var(--success); margin-top: 2px; font-weight: 500; }
+
+    /* Counter-offer shown to buyer */
+    .counter-box {
+      background: #eef4ff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
+      border: 1px solid #b8cfff;
+    }
+    .counter-box-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #3b6fd4; margin-bottom: 6px; font-weight: 600; }
+    .counter-box-amount { font-size: 22px; font-weight: 600; color: #3b6fd4; margin-bottom: 4px; }
+    .counter-box-note { font-size: 13px; color: #555; font-style: italic; }
+
+    /* Action buttons */
+    .offer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .offer-btn {
+      flex: 1; min-width: 100px; padding: 11px 16px; border-radius: 100px;
+      font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: none; transition: all 0.2s;
+    }
+    .btn-pay    { background: var(--clay); color: white; }
+    .btn-pay:hover { background: var(--clay-light); }
+    .btn-accept { background: var(--success); color: white; }
+    .btn-accept:hover { opacity: 0.88; }
+    .btn-decline { background: #fef0f0; color: var(--error); border: 1.5px solid #fcc !important; }
+    .btn-decline:hover { background: var(--error); color: white; }
+
+    /* Orders section */
+    .order-card {
+      background: white; border-radius: 16px; border: 1px solid var(--border);
+      margin-bottom: 14px; overflow: hidden; animation: cardUp 0.35s ease both;
+    }
+    .order-card-body { padding: 18px 20px; }
+    .order-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .order-img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--cream); flex-shrink: 0; }
+    .order-title { font-weight: 500; font-size: 14px; }
+    .order-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .order-amount { font-size: 22px; font-weight: 600; color: var(--clay); margin-bottom: 12px; }
+    .order-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .order-field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 2px; }
+    .order-field-val { font-size: 13px; font-weight: 500; }
+    .confirm-btn {
+      width: 100%; margin-top: 14px; padding: 12px; border: none; border-radius: 100px;
+      background: var(--success); color: white; font-family: 'Outfit', sans-serif;
+      font-size: 13px; font-weight: 500; cursor: pointer; transition: opacity 0.2s;
+    }
+    .confirm-btn:hover { opacity: 0.88; }
+    .confirm-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* Payment modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(26,26,24,0.65); z-index: 200;
+      backdrop-filter: blur(6px); align-items: flex-end; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-sheet {
+      background: white; border-radius: 28px 28px 0 0; width: 100%;
+      max-width: 480px; padding: 8px 0 32px;
+      animation: sheetUp 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    @keyframes sheetUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+    .modal-drag { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 14px auto 20px; }
+    .modal-body { padding: 0 24px 8px; }
+    .modal-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; margin-bottom: 6px; }
+    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
+    .pay-summary {
+      background: var(--cream); border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
+    }
+    .pay-summary-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .pay-summary-title { font-weight: 500; font-size: 14px; margin-bottom: 6px; }
+    .pay-summary-amount { font-size: 26px; font-weight: 600; color: var(--clay); }
+    .pay-summary-note { font-size: 12px; color: var(--success); margin-top: 4px; }
+    .pay-btn {
+      width: 100%; padding: 14px; border: none; border-radius: 100px;
+      background: var(--clay); color: white; font-family: 'Outfit', sans-serif;
+      font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s;
+    }
+    .pay-btn:hover { background: var(--clay-light); }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 64px 24px; color: var(--muted); }
+    .empty-icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--charcoal); margin-bottom: 8px; }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120px);
+      background: var(--charcoal); color: white; padding: 12px 24px;
+      border-radius: 100px; font-size: 13px; z-index: 999;
+      transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+      white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    @media (max-width: 600px) {
+      .offer-grid, .order-details { grid-template-columns: 1fr; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="./index.html" class="logo">Unique <em>Thrift</em></a>
+  <div class="nav-links">
+    <a href="./my-offers.html" class="nav-link">My Offers</a>
+    <a href="./index.html" class="nav-link">← Shop</a>
+  </div>
+</nav>
+
+<!-- AUTH GATE -->
+<div id="authGate" class="auth-gate" style="display:none;">
+  <div style="font-size:48px;margin-bottom:16px;">🔐</div>
+  <h2>Sign in to continue</h2>
+  <p>You need to be logged in to view your purchases and offers.</p>
+  <a href="./index.html" style="display:inline-block;background:var(--charcoal);color:white;padding:13px 28px;border-radius:100px;font-family:'Outfit',sans-serif;font-size:14px;text-decoration:none;">
+    Sign In →
+  </a>
+</div>
+
+<!-- MAIN CONTENT -->
+<div class="page-wrap" id="mainContent" style="display:none;">
+  <div class="page-heading">My Purchases</div>
+  <div class="page-sub" id="pageSubtitle"></div>
+
+  <!-- Tabs: Offers | Orders -->
+  <div class="page-tabs">
+    <div class="page-tab active" onclick="switchTab('offers', this)">💬 My Offers</div>
+    <div class="page-tab"       onclick="switchTab('orders', this)">📦 My Orders</div>
+  </div>
+
+  <!-- OFFERS TAB -->
+  <div id="tabOffers">
+    <div class="filter-bar">
+      <div class="filter-chip active" data-filter="all"       onclick="applyOfferFilter('all',this)">All</div>
+      <div class="filter-chip"        data-filter="pending"   onclick="applyOfferFilter('pending',this)">⏳ Pending</div>
+      <div class="filter-chip"        data-filter="countered" onclick="applyOfferFilter('countered',this)">↔ Countered</div>
+      <div class="filter-chip"        data-filter="accepted"  onclick="applyOfferFilter('accepted',this)">✅ Accepted</div>
+      <div class="filter-chip"        data-filter="declined"  onclick="applyOfferFilter('declined',this)">❌ Declined</div>
+    </div>
+    <div id="offersContainer"></div>
+  </div>
+
+  <!-- ORDERS TAB -->
+  <div id="tabOrders" style="display:none;">
+    <div id="ordersContainer"></div>
+  </div>
+</div>
+
+<!-- PAYMENT MODAL (for accepted offers at negotiated price) -->
+<div class="modal-overlay" id="payModal" onclick="if(event.target===this)closePayModal()">
+  <div class="modal-sheet">
+    <div class="modal-drag"></div>
+    <div class="modal-body">
+      <div class="modal-title">Complete Your Purchase</div>
+      <div class="modal-sub">You're paying your accepted offer price — not the listed price.</div>
+      <div class="pay-summary">
+        <div class="pay-summary-label">Item</div>
+        <div class="pay-summary-title" id="payProductTitle"></div>
+        <div class="pay-summary-amount" id="payAmount"></div>
+        <div class="pay-summary-note" id="paySavings"></div>
+      </div>
+      <button class="pay-btn" onclick="initiateOfferPayment()">Pay with Paystack →</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const PAYSTACK_KEY = 'pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let currentUser   = null;
+  let allOffers     = [];
+  let allOrders     = [];
+  let activeOffer   = null;
+  let offerFilter   = 'all';
+  let activeTab     = 'offers';
+
+  // ── INIT ──
+  document.addEventListener('DOMContentLoaded', async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      document.getElementById('authGate').style.display = 'block';
+      return;
+    }
+    currentUser = session.user;
+    document.getElementById('mainContent').style.display = 'block';
+    const name = currentUser.user_metadata?.name || currentUser.email?.split('@')[0];
+    document.getElementById('pageSubtitle').textContent = `Welcome back, ${name}`;
+    await loadAll();
+  });
+
+  async function loadAll() {
+    await Promise.all([loadOffers(), loadOrders()]);
+  }
+
+  // ── OFFERS ──
+  async function loadOffers() {
+    const { data, error } = await sb
+      .from('offers')
+      .select('*, products(id, title, images, price, seller_name)')
+      .eq('buyer_id', currentUser.id)
+      .order('created_at', { ascending: false });
+
+    if (error) { showToast('Failed to load offers'); return; }
+    allOffers = data || [];
+    renderOffers(filterOffers(offerFilter));
+  }
+
+  function filterOffers(status) {
+    if (status === 'all') return allOffers;
+    return allOffers.filter(o => {
+      if (status === 'pending') return o.status === 'pending' && new Date(o.expires_at) > new Date();
+      return o.status === status;
+    });
+  }
+
+  function applyOfferFilter(status, el) {
+    offerFilter = status;
+    document.querySelectorAll('#tabOffers .filter-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    renderOffers(filterOffers(status));
+  }
+
+  function renderOffers(offers) {
+    const container = document.getElementById('offersContainer');
+    if (!offers.length) {
+      container.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">💬</div>
+          <div class="empty-title">No offers yet</div>
+          <p style="font-size:14px;">Browse the shop and make an offer on a negotiable item.</p>
+          <a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--clay);color:white;padding:11px 24px;border-radius:100px;text-decoration:none;font-size:13px;">Browse Shop →</a>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = offers.map((o, i) => {
+      const product      = o.products || {};
+      const img          = product.images?.[0] || 'https://placehold.co/52x52/f5f0e8/9a9086?text=?';
+      const isExpired    = new Date(o.expires_at) < new Date() && o.status === 'pending';
+      const displayStatus = isExpired ? 'expired' : o.status;
+      const saving       = Math.round(((o.listed_price - o.offer_amount) / o.listed_price) * 100);
+
+      const statusMap = {
+        pending:   { bg:'#fff8e8', color:'#c4622d', label:'⏳ Pending' },
+        countered: { bg:'#eef4ff', color:'#3b6fd4', label:'↔ Counter Received' },
+        accepted:  { bg:'#edf7f2', color:'#4f9d6e', label:'✅ Accepted' },
+        declined:  { bg:'#fef0f0', color:'#d94f4f', label:'❌ Declined' },
+        expired:   { bg:'#f5f5f5', color:'#9a9086', label:'⏰ Expired' },
+        purchased: { bg:'#edf7f2', color:'#4f9d6e', label:'🛍️ Purchased' },
+      };
+      const s = statusMap[displayStatus] || statusMap.pending;
+
+      return `
+        <div class="offer-card" style="animation-delay:${i*0.04}s;">
+          <div class="offer-card-header">
+            <img class="offer-img" src="${img}" alt="${product.title||''}"
+              onerror="this.src='https://placehold.co/52x52/f5f0e8/9a9086?text=?'" />
+            <div>
+              <div class="offer-product-name">${product.title || '—'}</div>
+              <div class="offer-product-meta">Seller: ${product.seller_name || '—'}</div>
+            </div>
+            <span class="status-badge" style="background:${s.bg};color:${s.color};">${s.label}</span>
+          </div>
+
+          <div class="offer-body">
+            <div class="offer-grid">
+              <div>
+                <div class="offer-field-label">Your Offer</div>
+                <div class="your-offer-amount">₦${Number(o.offer_amount).toLocaleString()}</div>
+                <div class="offer-savings">You save ${saving}%</div>
+              </div>
+              <div>
+                <div class="offer-field-label">Listed Price</div>
+                <div class="offer-field-val" style="color:var(--muted);text-decoration:line-through;">₦${Number(o.listed_price).toLocaleString()}</div>
+              </div>
+              <div>
+                <div class="offer-field-label">Submitted</div>
+                <div style="font-size:13px;">${formatDate(o.created_at)}</div>
+              </div>
+              <div>
+                <div class="offer-field-label">Expires</div>
+                <div style="font-size:13px;${isExpired?'color:var(--error);':''}">${formatDate(o.expires_at)}</div>
+              </div>
+            </div>
+
+            ${o.message ? `<div style="background:var(--warm-white);border-radius:10px;padding:10px 14px;font-size:13px;color:#555;font-style:italic;margin-bottom:14px;">"${o.message}"</div>` : ''}
+
+            <!-- COUNTER-OFFER FROM SELLER -->
+            ${o.status === 'countered' && o.counter_amount ? `
+              <div class="counter-box">
+                <div class="counter-box-label">Seller's Counter-Offer</div>
+                <div class="counter-box-amount">₦${Number(o.counter_amount).toLocaleString()}</div>
+                ${o.counter_note ? `<div class="counter-box-note">"${o.counter_note}"</div>` : ''}
+                <div style="margin-top:14px;display:flex;gap:8px;">
+                  <button class="offer-btn btn-accept" onclick="acceptCounter('${o.id}', ${o.counter_amount}, '${(product.title||'').replace(/'/g,"\\'")}', ${o.listed_price})">✓ Accept Counter</button>
+                  <button class="offer-btn btn-decline" onclick="declineOffer('${o.id}')">✗ Decline</button>
+                </div>
+              </div>` : ''}
+
+            <!-- PAY NOW for accepted offers -->
+            ${o.status === 'accepted' && displayStatus !== 'purchased' ? `
+              <div style="background:#edf7f2;border-radius:12px;padding:14px 16px;margin-bottom:0;">
+                <div style="font-size:13px;color:var(--success);font-weight:500;margin-bottom:10px;">
+                  🎉 Seller accepted your offer! Complete your payment to secure the item.
+                </div>
+                <button class="offer-btn btn-pay" onclick="openPayModal('${o.id}', '${(product.title||'').replace(/'/g,"\\'")}', ${o.offer_amount}, ${o.listed_price}, '${product.images?.[0]||''}')">
+                  Pay ₦${Number(o.offer_amount).toLocaleString()} Now →
+                </button>
+              </div>` : ''}
+
+            ${o.status === 'declined' ? `
+              <div style="padding:8px 0;font-size:13px;color:var(--error);">
+                ❌ This offer was declined. <a href="./index.html" style="color:var(--clay);">Browse more items →</a>
+              </div>` : ''}
+
+            ${displayStatus === 'purchased' ? `
+              <div style="padding:8px 0;font-size:13px;color:var(--success);font-weight:500;">
+                🛍️ Purchased at ₦${Number(o.offer_amount).toLocaleString()} — check My Orders for delivery status.
+              </div>` : ''}
+
+            ${o.status === 'pending' && !isExpired ? `
+              <div style="padding:8px 0;font-size:13px;color:var(--muted);">
+                ⏳ Waiting for seller to respond. Expires ${formatDate(o.expires_at)}.
+              </div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── ORDERS ──
+  async function loadOrders() {
+    const { data, error } = await sb
+      .from('orders')
+      .select('*, products(title, images, price)')
+      .eq('buyer_id', currentUser.id)
+      .order('created_at', { ascending: false });
+
+    if (error) { showToast('Failed to load orders'); return; }
+    allOrders = data || [];
+    renderOrders(allOrders);
+  }
+
+  function renderOrders(orders) {
+    const container = document.getElementById('ordersContainer');
+    if (!orders.length) {
+      container.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">📦</div>
+          <div class="empty-title">No orders yet</div>
+          <p style="font-size:14px;">Items you purchase will appear here.</p>
+          <a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--clay);color:white;padding:11px 24px;border-radius:100px;text-decoration:none;font-size:13px;">Browse Shop →</a>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = orders.map((o, i) => {
+      const product  = o.products || {};
+      const img      = product.images?.[0] || 'https://placehold.co/52x52/f5f0e8/9a9086?text=?';
+      const isNegotiated = o.amount < (product.price || o.amount);
+      const deadline = new Date(o.confirm_deadline);
+      const now      = new Date();
+      const hoursLeft = Math.max(0, Math.round((deadline - now) / 3600000));
+      const confirmed = o.escrow_status === 'released';
+
+      const escrowMap = {
+        held:     { bg:'#fff8e8', color:'#c4622d', label:'In Escrow' },
+        released: { bg:'#edf7f2', color:'#4f9d6e', label:'Completed' },
+        disputed: { bg:'#fef0f0', color:'#d94f4f', label:'Disputed' },
+      };
+      const es = escrowMap[o.escrow_status] || escrowMap.held;
+
+      return `
+        <div class="order-card" style="animation-delay:${i*0.04}s;">
+          <div class="order-card-body">
+            <div class="order-header">
+              <img class="order-img" src="${img}" alt="${product.title||''}"
+                onerror="this.src='https://placehold.co/52x52/f5f0e8/9a9086?text=?'" />
+              <div style="flex:1;min-width:0;">
+                <div class="order-title">${product.title || '—'}</div>
+                <div class="order-meta">Ref: ${o.payment_ref || '—'}</div>
+              </div>
+              <span class="status-badge" style="background:${es.bg};color:${es.color};">${es.label}</span>
+            </div>
+
+            <div class="order-amount">
+              ₦${Number(o.amount).toLocaleString()}
+              ${isNegotiated ? `<span style="font-size:13px;color:var(--success);font-weight:400;margin-left:8px;">Negotiated price</span>` : ''}
+            </div>
+
+            <div class="order-details">
+              <div>
+                <div class="order-field-label">Ordered</div>
+                <div class="order-field-val">${formatDate(o.created_at)}</div>
+              </div>
+              <div>
+                <div class="order-field-label">Payment</div>
+                <div class="order-field-val" style="color:var(--success);">${o.status === 'paid' ? '✅ Paid' : o.status}</div>
+              </div>
+              <div>
+                <div class="order-field-label">Escrow</div>
+                <div class="order-field-val">${es.label}</div>
+              </div>
+              <div>
+                <div class="order-field-label">Auto-confirm</div>
+                <div class="order-field-val" style="font-size:12px;">
+                  ${confirmed ? 'Confirmed' : hoursLeft > 0 ? `in ${hoursLeft}h` : 'Processing'}
+                </div>
+              </div>
+            </div>
+
+            ${!confirmed && o.status === 'paid' ? `
+              <button class="confirm-btn" onclick="confirmDelivery('${o.id}', this)">
+                ✅ I've received my item — Release Payment
+              </button>
+              <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px;">
+                Payment releases to seller automatically after 48h if you don't confirm.
+              </div>` : ''}
+
+            ${confirmed ? `
+              <div style="margin-top:12px;background:#edf7f2;border-radius:10px;padding:10px 14px;font-size:13px;color:var(--success);font-weight:500;">
+                ✅ Delivery confirmed — payment released to seller.
+              </div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── CONFIRM DELIVERY ──
+  async function confirmDelivery(orderId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Confirming…';
+    const { error } = await sb.from('orders').update({
+      escrow_status: 'released',
+      confirmed_at:  new Date().toISOString()
+    }).eq('id', orderId);
+
+    if (error) { showToast('Failed to confirm. Please try again.'); btn.disabled = false; btn.textContent = '✅ I\'ve received my item — Release Payment'; return; }
+    showToast('✅ Delivery confirmed! Payment released to seller.');
+    await loadOrders();
+  }
+
+  // ── ACCEPT COUNTER-OFFER ──
+  async function acceptCounter(offerId, counterAmount, productTitle, listedPrice) {
+    const { error } = await sb.from('offers').update({
+      status:      'accepted',
+      offer_amount: counterAmount,  // buyer now pays counter amount
+      resolved_at:  new Date().toISOString()
+    }).eq('id', offerId);
+
+    if (error) { showToast('Failed to accept counter-offer'); return; }
+    showToast('✅ Counter-offer accepted!');
+    await loadOffers();
+    // Open pay modal immediately
+    openPayModal(offerId, productTitle, counterAmount, listedPrice, '');
+  }
+
+  async function declineOffer(offerId) {
+    const { error } = await sb.from('offers').update({
+      status:      'declined',
+      resolved_at:  new Date().toISOString()
+    }).eq('id', offerId);
+    if (error) { showToast('Failed to decline'); return; }
+    showToast('Offer declined');
+    await loadOffers();
+  }
+
+  // ── PAYMENT MODAL ──
+  let _activePayOffer = null;
+
+  function openPayModal(offerId, title, amount, listedPrice, img) {
+    _activePayOffer = { offerId, amount, listedPrice };
+    const saving = Math.round(((listedPrice - amount) / listedPrice) * 100);
+    document.getElementById('payProductTitle').textContent = title;
+    document.getElementById('payAmount').textContent       = `₦${Number(amount).toLocaleString()}`;
+    document.getElementById('paySavings').textContent      = saving > 0 ? `You saved ${saving}% on this item 🎉` : '';
+    document.getElementById('payModal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closePayModal() {
+    document.getElementById('payModal').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  async function initiateOfferPayment() {
+    if (!_activePayOffer || !currentUser) return;
+    const { offerId, amount } = _activePayOffer;
+    const offer = allOffers.find(o => o.id === offerId);
+    if (!offer) return;
+
+    const handler = PaystackPop.setup({
+      key:      PAYSTACK_KEY,
+      email:    currentUser.email,
+      amount:   amount * 100,
+      currency: 'NGN',
+      ref:      'UT_OFFER_' + Date.now(),
+      callback: async (res) => {
+        // Create order at negotiated price
+        await sb.from('orders').insert({
+          product_id:       offer.product_id,
+          buyer_id:         currentUser.id,
+          buyer_name:       currentUser.user_metadata?.name  || '',
+          buyer_email:      currentUser.email,
+          buyer_phone:      currentUser.user_metadata?.phone || '',
+          amount:           amount,
+          payment_ref:      res.reference,
+          status:           'paid',
+          escrow_status:    'held',
+          offer_id:         offerId,
+          confirm_deadline: new Date(Date.now() + 48*60*60*1000).toISOString()
+        });
+        // Mark offer as purchased
+        await sb.from('offers').update({ status: 'purchased' }).eq('id', offerId);
+        closePayModal();
+        showToast('🎉 Payment successful! Check My Orders.');
+        await loadAll();
+      },
+      onClose: () => showToast('Payment cancelled')
+    });
+    handler.openIframe();
+  }
+
+  // ── TAB SWITCH ──
+  function switchTab(tab, el) {
+    activeTab = tab;
+    document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tabOffers').style.display = tab === 'offers' ? 'block' : 'none';
+    document.getElementById('tabOrders').style.display = tab === 'orders' ? 'block' : 'none';
+  }
+
+  // ── UTILS ──
+  function formatDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-NG', { day:'numeric', month:'short', year:'numeric' });
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3200);
+  }
+</script>
+<script src="https://js.paystack.co/v1/inline.js"></script>
+</body>
+</html>
