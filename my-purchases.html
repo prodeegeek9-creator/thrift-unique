@@ -4,227 +4,160 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>My Purchases — Unique Thrift</title>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;0,700;1,300;1,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <style>
-    :root {
-      --cream: #f5f0e8;
-      --warm-white: #faf8f4;
-      --charcoal: #1a1a18;
-      --clay: #c4622d;
-      --clay-light: #e8845a;
-      --sage: #7a8c6e;
-      --muted: #9a9086;
-      --border: #e8e0d0;
-      --error: #d94f4f;
-      --success: #4f9d6e;
-    }
+    :root{--bg:#FAFAF9;--surface:#FFFFFF;--border:#E8E4DD;--charcoal:#0F0F0E;--ink:#2C2C2A;--muted:#8A8680;--green:#1A6B4A;--green-lt:#EAF3EE;--amber:#E8944A;--amber-lt:#FDF3E9;--red:#C94040;--red-lt:#FDEAEA;}
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;}
+    nav{background:var(--charcoal);padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+    .logo{font-family:'Fraunces',serif;font-size:20px;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-0.5px;}
+    .logo span{color:var(--amber);font-style:italic;}
+    .nav-link{color:rgba(255,255,255,0.55);font-size:13px;padding:6px 12px;border-radius:6px;border:none;background:none;cursor:pointer;font-family:'Inter',sans-serif;transition:all 0.15s;text-decoration:none;}
+    .nav-link:hover{color:#fff;background:rgba(255,255,255,0.07);}
 
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Outfit', sans-serif; background: var(--cream); color: var(--charcoal); min-height: 100vh; }
+    .page-wrap{max-width:720px;margin:0 auto;padding:36px 24px 80px;}
+    .page-heading{font-family:'Fraunces',serif;font-size:30px;font-weight:700;letter-spacing:-0.5px;margin-bottom:6px;}
+    .page-sub{font-size:14px;color:var(--muted);margin-bottom:28px;font-weight:300;}
 
-    nav {
-      background: var(--charcoal); padding: 0 24px; height: 60px;
-      display: flex; align-items: center; justify-content: space-between;
-      position: sticky; top: 0; z-index: 50;
-    }
-    .logo { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--cream); text-decoration: none; }
-    .logo em { font-style: italic; color: var(--clay-light); }
-    .nav-links { display: flex; gap: 12px; align-items: center; }
-    .nav-link {
-      color: rgba(245,240,232,0.65); font-size: 13px; text-decoration: none;
-      padding: 6px 14px; border-radius: 100px; border: 1px solid transparent; transition: all 0.2s;
-    }
-    .nav-link:hover { color: var(--cream); border-color: rgba(255,255,255,0.15); }
+    .page-tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:24px;}
+    .page-tab{padding:12px 18px;font-size:14px;font-weight:500;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all 0.15s;background:none;border-left:none;border-right:none;border-top:none;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:6px;}
+    .page-tab.active{color:var(--green);border-bottom-color:var(--green);}
+    .tab-badge{background:var(--amber);color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;}
 
-    .page-wrap { max-width: 720px; margin: 0 auto; padding: 36px 20px 80px; }
-    .page-heading { font-family: 'Cormorant Garamond', serif; font-size: 32px; font-weight: 600; margin-bottom: 6px; }
-    .page-sub { font-size: 14px; color: var(--muted); margin-bottom: 28px; }
+    /* Cart */
+    .cart-item{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;gap:14px;padding:14px;transition:box-shadow 0.15s;}
+    .cart-img{width:64px;height:64px;border-radius:6px;object-fit:cover;background:var(--border);flex-shrink:0;}
+    .cart-info{flex:1;min-width:0;}
+    .cart-title{font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .cart-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+    .cart-price{font-size:15px;font-weight:600;color:var(--charcoal);margin-top:4px;}
+    .cart-qty{display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:5px;overflow:hidden;margin-top:6px;width:fit-content;}
+    .qty-btn{width:28px;height:28px;border:none;background:var(--bg);cursor:pointer;font-size:14px;transition:background 0.15s;font-family:'Inter',sans-serif;}
+    .qty-btn:hover{background:var(--border);}
+    .qty-val{width:32px;text-align:center;font-size:13px;font-weight:500;border:none;border-left:1px solid var(--border);border-right:1px solid var(--border);height:28px;outline:none;background:var(--surface);font-family:'Inter',sans-serif;}
+    .cart-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px;transition:color 0.15s;flex-shrink:0;}
+    .cart-remove:hover{color:var(--red);}
+    .cart-summary{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px;margin-top:14px;}
+    .cart-total{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+    .cart-total-lbl{font-size:14px;font-weight:500;}
+    .cart-total-val{font-size:22px;font-weight:600;color:var(--charcoal);}
+    .checkout-btn{width:100%;padding:13px;border:none;border-radius:6px;background:var(--charcoal);color:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+    .checkout-btn:hover{background:var(--green);}
 
-    /* Auth gate */
-    .auth-gate {
-      background: white; border-radius: 20px; padding: 36px 28px;
-      border: 1px solid var(--border); text-align: center; max-width: 400px; margin: 60px auto;
-    }
-    .auth-gate h2 { font-family: 'Cormorant Garamond', serif; font-size: 24px; margin-bottom: 8px; }
-    .auth-gate p { font-size: 13px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+    /* Offers */
+    .offer-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;animation:cardUp 0.3s ease both;}
+    @keyframes cardUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    .offer-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;}
+    .offer-img{width:48px;height:48px;border-radius:6px;object-fit:cover;background:var(--border);flex-shrink:0;}
+    .offer-product-name{font-weight:500;font-size:14px;}
+    .offer-product-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+    .status-pill{margin-left:auto;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:500;flex-shrink:0;}
+    .offer-body{padding:14px 16px;}
+    .offer-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+    .offer-field-lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:3px;}
+    .your-offer{font-size:22px;font-weight:600;color:var(--charcoal);}
+    .offer-save{font-size:11px;color:var(--green);font-weight:500;margin-top:1px;}
+    .counter-box{background:#eef4ff;border-radius:6px;padding:12px 14px;margin-bottom:12px;border:1px solid #b8cfff;}
+    .counter-box-lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#3b6fd4;margin-bottom:5px;font-weight:600;}
+    .counter-box-amt{font-size:20px;font-weight:600;color:#3b6fd4;margin-bottom:3px;}
+    .counter-box-note{font-size:13px;color:#555;font-style:italic;}
+    .offer-actions{display:flex;gap:7px;flex-wrap:wrap;}
+    .action-btn{flex:1;min-width:80px;padding:9px 14px;border-radius:5px;font-family:'Inter',sans-serif;font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;}
+    .btn-pay{background:var(--charcoal);color:#fff;}
+    .btn-pay:hover{background:var(--green);}
+    .btn-accept{background:var(--green-lt);color:var(--green);border:1px solid var(--green)!important;}
+    .btn-accept:hover{background:var(--green);color:#fff;}
+    .btn-decline{background:var(--red-lt);color:var(--red);border:1px solid #fcc!important;}
+    .btn-decline:hover{background:var(--red);color:#fff;}
 
-    /* Tabs */
-    .page-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
-    .page-tab {
-      flex: 1; padding: 13px; text-align: center; font-size: 14px; font-weight: 500;
-      cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all 0.2s;
-    }
-    .page-tab.active { color: var(--clay); border-bottom-color: var(--clay); }
+    /* Orders */
+    .order-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;animation:cardUp 0.3s ease both;}
+    .order-body{padding:16px;}
+    .order-header{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+    .order-img{width:52px;height:52px;border-radius:6px;object-fit:cover;background:var(--border);flex-shrink:0;}
+    .order-title{font-weight:500;font-size:14px;}
+    .order-ref{font-size:11px;color:var(--muted);margin-top:2px;font-family:monospace;}
+    .order-amount{font-size:22px;font-weight:600;color:var(--charcoal);margin-bottom:12px;}
+    .order-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+    .order-field-lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:2px;}
+    .order-field-val{font-size:13px;font-weight:500;}
+    .confirm-btn{width:100%;padding:11px;border:none;border-radius:6px;background:var(--green);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:opacity 0.15s;}
+    .confirm-btn:hover{opacity:0.9;}
+    .confirm-btn:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;}
 
-    /* Filter chips */
-    .filter-bar { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
-    .filter-chip {
-      padding: 7px 18px; border-radius: 100px; border: 1.5px solid var(--border);
-      background: white; font-size: 12px; font-family: 'Outfit', sans-serif;
-      cursor: pointer; transition: all 0.2s; color: var(--charcoal);
-    }
-    .filter-chip.active { background: var(--charcoal); color: white; border-color: var(--charcoal); }
+    /* Pay modal */
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,15,14,0.6);z-index:200;align-items:flex-end;justify-content:center;}
+    .modal-overlay.open{display:flex;}
+    .modal-sheet{background:var(--surface);border-radius:16px 16px 0 0;width:100%;max-width:480px;padding:8px 0 32px;animation:sheetUp 0.28s cubic-bezier(0.34,1.3,0.64,1);}
+    @keyframes sheetUp{from{transform:translateY(100%);}to{transform:translateY(0);}}
+    .modal-drag{width:36px;height:4px;background:var(--border);border-radius:2px;margin:12px auto 18px;}
+    .modal-body{padding:0 22px 6px;}
+    .modal-title{font-family:'Fraunces',serif;font-size:22px;font-weight:600;margin-bottom:5px;letter-spacing:-0.3px;}
+    .modal-sub{font-size:13px;color:var(--muted);margin-bottom:16px;}
+    .pay-summary{background:var(--bg);border-radius:8px;padding:14px;margin-bottom:16px;border:1px solid var(--border);}
+    .pay-summary-lbl{font-size:11px;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;}
+    .pay-summary-title{font-weight:500;font-size:14px;margin-bottom:6px;}
+    .pay-summary-amt{font-size:24px;font-weight:600;color:var(--charcoal);}
+    .pay-summary-note{font-size:12px;color:var(--green);margin-top:4px;font-weight:500;}
+    .pay-btn{width:100%;padding:13px;border:none;border-radius:6px;background:var(--charcoal);color:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+    .pay-btn:hover{background:var(--green);}
 
-    /* Offer card */
-    .offer-card {
-      background: white; border-radius: 16px; border: 1px solid var(--border);
-      margin-bottom: 14px; overflow: hidden; animation: cardUp 0.35s ease both;
-    }
-    @keyframes cardUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-
-    .offer-card-header {
-      padding: 16px 18px; border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 12px;
-    }
-    .offer-img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--cream); flex-shrink: 0; }
-    .offer-product-name { font-weight: 500; font-size: 14px; }
-    .offer-product-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-    .status-badge { margin-left: auto; padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 500; flex-shrink: 0; }
-
-    .offer-body { padding: 16px 18px; }
-    .offer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-    .offer-field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 3px; }
-    .offer-field-val { font-size: 15px; font-weight: 500; }
-
-    /* Your offer amount — buyer's own price */
-    .your-offer-amount { font-size: 26px; font-weight: 600; color: var(--clay); }
-    .offer-savings { font-size: 11px; color: var(--success); margin-top: 2px; font-weight: 500; }
-
-    /* Counter-offer shown to buyer */
-    .counter-box {
-      background: #eef4ff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
-      border: 1px solid #b8cfff;
-    }
-    .counter-box-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #3b6fd4; margin-bottom: 6px; font-weight: 600; }
-    .counter-box-amount { font-size: 22px; font-weight: 600; color: #3b6fd4; margin-bottom: 4px; }
-    .counter-box-note { font-size: 13px; color: #555; font-style: italic; }
-
-    /* Action buttons */
-    .offer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .offer-btn {
-      flex: 1; min-width: 100px; padding: 11px 16px; border-radius: 100px;
-      font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 500;
-      cursor: pointer; border: none; transition: all 0.2s;
-    }
-    .btn-pay    { background: var(--clay); color: white; }
-    .btn-pay:hover { background: var(--clay-light); }
-    .btn-accept { background: var(--success); color: white; }
-    .btn-accept:hover { opacity: 0.88; }
-    .btn-decline { background: #fef0f0; color: var(--error); border: 1.5px solid #fcc !important; }
-    .btn-decline:hover { background: var(--error); color: white; }
-
-    /* Orders section */
-    .order-card {
-      background: white; border-radius: 16px; border: 1px solid var(--border);
-      margin-bottom: 14px; overflow: hidden; animation: cardUp 0.35s ease both;
-    }
-    .order-card-body { padding: 18px 20px; }
-    .order-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-    .order-img { width: 52px; height: 52px; border-radius: 10px; object-fit: cover; background: var(--cream); flex-shrink: 0; }
-    .order-title { font-weight: 500; font-size: 14px; }
-    .order-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
-    .order-amount { font-size: 22px; font-weight: 600; color: var(--clay); margin-bottom: 12px; }
-    .order-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .order-field-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 2px; }
-    .order-field-val { font-size: 13px; font-weight: 500; }
-    .confirm-btn {
-      width: 100%; margin-top: 14px; padding: 12px; border: none; border-radius: 100px;
-      background: var(--success); color: white; font-family: 'Outfit', sans-serif;
-      font-size: 13px; font-weight: 500; cursor: pointer; transition: opacity 0.2s;
-    }
-    .confirm-btn:hover { opacity: 0.88; }
-    .confirm-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
-
-    /* Payment modal */
-    .modal-overlay {
-      display: none; position: fixed; inset: 0;
-      background: rgba(26,26,24,0.65); z-index: 200;
-      backdrop-filter: blur(6px); align-items: flex-end; justify-content: center;
-    }
-    .modal-overlay.open { display: flex; }
-    .modal-sheet {
-      background: white; border-radius: 28px 28px 0 0; width: 100%;
-      max-width: 480px; padding: 8px 0 32px;
-      animation: sheetUp 0.3s cubic-bezier(0.34,1.56,0.64,1);
-    }
-    @keyframes sheetUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
-    .modal-drag { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 14px auto 20px; }
-    .modal-body { padding: 0 24px 8px; }
-    .modal-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; margin-bottom: 6px; }
-    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 18px; line-height: 1.5; }
-    .pay-summary {
-      background: var(--cream); border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
-    }
-    .pay-summary-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
-    .pay-summary-title { font-weight: 500; font-size: 14px; margin-bottom: 6px; }
-    .pay-summary-amount { font-size: 26px; font-weight: 600; color: var(--clay); }
-    .pay-summary-note { font-size: 12px; color: var(--success); margin-top: 4px; }
-    .pay-btn {
-      width: 100%; padding: 14px; border: none; border-radius: 100px;
-      background: var(--clay); color: white; font-family: 'Outfit', sans-serif;
-      font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s;
-    }
-    .pay-btn:hover { background: var(--clay-light); }
-
-    /* Empty state */
-    .empty { text-align: center; padding: 64px 24px; color: var(--muted); }
-    .empty-icon { font-size: 48px; margin-bottom: 16px; }
-    .empty-title { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--charcoal); margin-bottom: 8px; }
+    /* Empty */
+    .empty{text-align:center;padding:60px 24px;color:var(--muted);}
+    .empty-icon{font-size:40px;margin-bottom:14px;}
+    .empty-title{font-family:'Fraunces',serif;font-size:22px;color:var(--charcoal);margin-bottom:8px;}
 
     /* Toast */
-    .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(120px);
-      background: var(--charcoal); color: white; padding: 12px 24px;
-      border-radius: 100px; font-size: 13px; z-index: 999;
-      transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
-      white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-    }
-    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120px);background:var(--charcoal);color:#fff;padding:11px 22px;border-radius:6px;font-size:13px;z-index:999;transition:transform 0.28s cubic-bezier(0.34,1.3,0.64,1);white-space:nowrap;font-family:'Inter',sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.18);}
+    .toast.show{transform:translateX(-50%) translateY(0);}
 
-    @media (max-width: 600px) {
-      .offer-grid, .order-details { grid-template-columns: 1fr; gap: 10px; }
-    }
+    @media(max-width:600px){.offer-grid,.order-grid{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
-
 <nav>
-  <a href="./index.html" class="logo">Unique <em>Thrift</em></a>
-  <div class="nav-links">
-    <a href="./my-offers.html" class="nav-link">My Offers</a>
-    <a href="./index.html" class="nav-link">← Shop</a>
-  </div>
+  <a href="./index.html" class="logo">Unique <span>Thrift</span></a>
+  <a href="./index.html" class="nav-link">← Shop</a>
 </nav>
 
-<!-- AUTH GATE -->
-<div id="authGate" class="auth-gate" style="display:none;">
-  <div style="font-size:48px;margin-bottom:16px;">🔐</div>
-  <h2>Sign in to continue</h2>
-  <p>You need to be logged in to view your purchases and offers.</p>
-  <a href="./index.html" style="display:inline-block;background:var(--charcoal);color:white;padding:13px 28px;border-radius:100px;font-family:'Outfit',sans-serif;font-size:14px;text-decoration:none;">
-    Sign In →
-  </a>
+<div id="authGate" style="display:none;text-align:center;padding:80px 24px;">
+  <div style="font-size:40px;margin-bottom:16px;">🔐</div>
+  <div style="font-family:'Fraunces',serif;font-size:22px;margin-bottom:10px;">Sign in to continue</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:24px;">You need to be logged in to view your purchases.</p>
+  <a href="./index.html" style="display:inline-block;background:var(--charcoal);color:#fff;padding:12px 28px;border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;text-decoration:none;">Sign In →</a>
 </div>
 
-<!-- MAIN CONTENT -->
 <div class="page-wrap" id="mainContent" style="display:none;">
   <div class="page-heading">My Purchases</div>
   <div class="page-sub" id="pageSubtitle"></div>
 
-  <!-- Tabs: Offers | Orders -->
   <div class="page-tabs">
-    <div class="page-tab active" onclick="switchTab('offers', this)">💬 My Offers</div>
-    <div class="page-tab"       onclick="switchTab('orders', this)">📦 My Orders</div>
+    <button class="page-tab active" data-tab="cart"    onclick="switchTab('cart',this)">🛒 Cart <span class="tab-badge" id="cartTabBadge" style="display:none;"></span></button>
+    <button class="page-tab"        data-tab="offers"  onclick="switchTab('offers',this)">💬 Offers <span class="tab-badge" id="offersTabBadge" style="display:none;"></span></button>
+    <button class="page-tab"        data-tab="orders"  onclick="switchTab('orders',this)">📦 Orders</button>
+  </div>
+
+  <!-- CART TAB -->
+  <div id="tabCart">
+    <div id="cartContainer"></div>
+    <div id="cartSummary" style="display:none;">
+      <div class="cart-summary">
+        <div class="cart-total">
+          <span class="cart-total-lbl">Total</span>
+          <span class="cart-total-val" id="cartTotal"></span>
+        </div>
+        <button class="checkout-btn" onclick="checkoutCart()">Checkout with Paystack →</button>
+      </div>
+    </div>
   </div>
 
   <!-- OFFERS TAB -->
-  <div id="tabOffers">
-    <div class="filter-bar">
-      <div class="filter-chip active" data-filter="all"       onclick="applyOfferFilter('all',this)">All</div>
-      <div class="filter-chip"        data-filter="pending"   onclick="applyOfferFilter('pending',this)">⏳ Pending</div>
-      <div class="filter-chip"        data-filter="countered" onclick="applyOfferFilter('countered',this)">↔ Countered</div>
-      <div class="filter-chip"        data-filter="accepted"  onclick="applyOfferFilter('accepted',this)">✅ Accepted</div>
-      <div class="filter-chip"        data-filter="declined"  onclick="applyOfferFilter('declined',this)">❌ Declined</div>
+  <div id="tabOffers" style="display:none;">
+    <div class="filter-bar" style="display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;">
+      <div class="filter-chip active" data-filter="all"       onclick="applyOfferFilter('all',this)" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;color:var(--ink);">All</div>
+      <div class="filter-chip"        data-filter="pending"   onclick="applyOfferFilter('pending',this)" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;color:var(--ink);">Pending</div>
+      <div class="filter-chip"        data-filter="countered" onclick="applyOfferFilter('countered',this)" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;color:var(--ink);">Countered</div>
+      <div class="filter-chip"        data-filter="accepted"  onclick="applyOfferFilter('accepted',this)" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;color:var(--ink);">Accepted</div>
     </div>
     <div id="offersContainer"></div>
   </div>
@@ -235,18 +168,18 @@
   </div>
 </div>
 
-<!-- PAYMENT MODAL (for accepted offers at negotiated price) -->
+<!-- PAY MODAL -->
 <div class="modal-overlay" id="payModal" onclick="if(event.target===this)closePayModal()">
   <div class="modal-sheet">
     <div class="modal-drag"></div>
     <div class="modal-body">
-      <div class="modal-title">Complete Your Purchase</div>
-      <div class="modal-sub">You're paying your accepted offer price — not the listed price.</div>
+      <div class="modal-title">Complete Payment</div>
+      <div class="modal-sub">You're paying your negotiated price.</div>
       <div class="pay-summary">
-        <div class="pay-summary-label">Item</div>
-        <div class="pay-summary-title" id="payProductTitle"></div>
-        <div class="pay-summary-amount" id="payAmount"></div>
-        <div class="pay-summary-note" id="paySavings"></div>
+        <div class="pay-summary-lbl">Item</div>
+        <div class="pay-summary-title" id="payTitle"></div>
+        <div class="pay-summary-amt"   id="payAmt"></div>
+        <div class="pay-summary-note"  id="paySavings"></div>
       </div>
       <button class="pay-btn" onclick="initiateOfferPayment()">Pay with Paystack →</button>
     </div>
@@ -257,385 +190,285 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
-  const PAYSTACK_KEY = 'pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxx';
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const SUPABASE_URL='https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY='sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const PAYSTACK_KEY='pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 
-  let currentUser   = null;
-  let allOffers     = [];
-  let allOrders     = [];
-  let activeOffer   = null;
-  let offerFilter   = 'all';
-  let activeTab     = 'offers';
+  let currentUser=null, cartItems=[], allOffers=[], allOrders=[], _activePayOffer=null;
+  let offerFilter='all';
 
-  // ── INIT ──
-  document.addEventListener('DOMContentLoaded', async () => {
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session) {
-      document.getElementById('authGate').style.display = 'block';
-      return;
-    }
-    currentUser = session.user;
-    document.getElementById('mainContent').style.display = 'block';
-    const name = currentUser.user_metadata?.name || currentUser.email?.split('@')[0];
-    document.getElementById('pageSubtitle').textContent = `Welcome back, ${name}`;
+  document.addEventListener('DOMContentLoaded',async()=>{
+    const {data:{session}}=await sb.auth.getSession();
+    if (!session){document.getElementById('authGate').style.display='block';return;}
+    currentUser=session.user;
+    document.getElementById('mainContent').style.display='block';
+    const name=currentUser.user_metadata?.name||'there';
+    document.getElementById('pageSubtitle').textContent=`Welcome back, ${name}`;
     await loadAll();
+    if (location.hash==='#cart') switchTab('cart',document.querySelector('[data-tab="cart"]'));
+    else if (location.hash==='#offers') switchTab('offers',document.querySelector('[data-tab="offers"]'));
   });
 
-  async function loadAll() {
-    await Promise.all([loadOffers(), loadOrders()]);
+  async function loadAll(){await Promise.all([loadCart(),loadOffers(),loadOrders()]);}
+
+  // ── CART ──
+  async function loadCart(){
+    const {data}=await sb.from('cart').select('*,products(id,title,images,price,quantity_available,allow_negotiation,condition)').eq('user_id',currentUser.id).order('added_at',{ascending:false});
+    cartItems=data||[];
+    const badge=document.getElementById('cartTabBadge');
+    badge.textContent=cartItems.length;
+    badge.style.display=cartItems.length>0?'inline':'none';
+    renderCart();
+  }
+
+  function renderCart(){
+    const c=document.getElementById('cartContainer');
+    const s=document.getElementById('cartSummary');
+    if (!cartItems.length){
+      c.innerHTML=`<div class="empty"><div class="empty-icon">🛒</div><div class="empty-title">Cart is empty</div><p style="font-size:13px;">Add items from the shop.</p><a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--amber);color:#fff;padding:11px 22px;border-radius:6px;font-family:'Inter',sans-serif;font-size:13px;text-decoration:none;">Browse Shop →</a></div>`;
+      s.style.display='none';return;
+    }
+    c.innerHTML=cartItems.map(item=>{
+      const p=item.products||{};
+      const subtotal=p.price*item.quantity;
+      return `
+        <div class="cart-item">
+          <img class="cart-img" src="${p.images?.[0]||'https://placehold.co/64x64/E8E4DD/8A8680?text=?'}" alt="${p.title||''}" onerror="this.src='https://placehold.co/64x64/E8E4DD/8A8680?text=?'" />
+          <div class="cart-info">
+            <div class="cart-title">${p.title||'—'}</div>
+            <div class="cart-meta">${p.condition||''}</div>
+            <div class="cart-price">₦${Number(p.price).toLocaleString()}${item.quantity>1?` × ${item.quantity} = ₦${Number(subtotal).toLocaleString()}`:''}</div>
+            <div class="cart-qty">
+              <button class="qty-btn" onclick="updateCartQty('${item.id}','${item.product_id}',${item.quantity-1},${p.quantity_available||1})">−</button>
+              <input class="qty-val" type="number" value="${item.quantity}" min="1" max="${p.quantity_available||1}" onchange="updateCartQty('${item.id}','${item.product_id}',this.value,${p.quantity_available||1})" />
+              <button class="qty-btn" onclick="updateCartQty('${item.id}','${item.product_id}',${item.quantity+1},${p.quantity_available||1})">+</button>
+            </div>
+          </div>
+          <button class="cart-remove" onclick="removeFromCart('${item.id}')" title="Remove">✕</button>
+        </div>`}).join('');
+    const total=cartItems.reduce((s,i)=>s+(i.products?.price||0)*i.quantity,0);
+    document.getElementById('cartTotal').textContent=`₦${Number(total).toLocaleString()}`;
+    s.style.display='block';
+  }
+
+  async function updateCartQty(itemId,productId,newQty,maxQty){
+    const qty=Math.max(1,Math.min(parseInt(maxQty),parseInt(newQty)));
+    if (isNaN(qty)||qty<1){await removeFromCart(itemId);return;}
+    await sb.from('cart').update({quantity:qty}).eq('id',itemId);
+    await loadCart();
+  }
+
+  async function removeFromCart(itemId){
+    await sb.from('cart').delete().eq('id',itemId);
+    await loadCart();
+    showToast('Removed from cart');
+  }
+
+  async function checkoutCart(){
+    if (!cartItems.length) return;
+    const total=cartItems.reduce((s,i)=>s+(i.products?.price||0)*i.quantity,0);
+    PaystackPop.setup({
+      key:PAYSTACK_KEY, email:currentUser.email,
+      amount:total*100, currency:'NGN',
+      ref:'UT_CART_'+Date.now(),
+      callback:async(res)=>{
+        for (const item of cartItems){
+          await sb.from('orders').insert({
+            product_id:item.product_id, buyer_id:currentUser.id,
+            buyer_name:currentUser.user_metadata?.name||'',
+            buyer_email:currentUser.email,
+            buyer_phone:currentUser.user_metadata?.phone||'',
+            amount:item.products.price*item.quantity,
+            quantity:item.quantity,
+            payment_ref:res.reference,
+            status:'paid', escrow_status:'held',
+            confirm_deadline:new Date(Date.now()+48*60*60*1000).toISOString()
+          });
+        }
+        await sb.from('cart').delete().eq('user_id',currentUser.id);
+        showToast('🎉 Payment successful!');
+        await loadAll();
+        switchTab('orders',document.querySelector('[data-tab="orders"]'));
+      },
+      onClose:()=>showToast('Payment cancelled')
+    }).openIframe();
   }
 
   // ── OFFERS ──
-  async function loadOffers() {
-    const { data, error } = await sb
-      .from('offers')
-      .select('*, products(id, title, images, price, seller_name)')
-      .eq('buyer_id', currentUser.id)
-      .order('created_at', { ascending: false });
-
-    if (error) { showToast('Failed to load offers'); return; }
-    allOffers = data || [];
+  async function loadOffers(){
+    const {data}=await sb.from('offers').select('*,products(id,title,images,price,seller_name)').eq('buyer_id',currentUser.id).order('created_at',{ascending:false});
+    allOffers=data||[];
+    const active=allOffers.filter(o=>o.status==='countered'||o.status==='accepted').length;
+    const badge=document.getElementById('offersTabBadge');
+    badge.textContent=active; badge.style.display=active>0?'inline':'none';
     renderOffers(filterOffers(offerFilter));
   }
 
-  function filterOffers(status) {
-    if (status === 'all') return allOffers;
-    return allOffers.filter(o => {
-      if (status === 'pending') return o.status === 'pending' && new Date(o.expires_at) > new Date();
-      return o.status === status;
+  function filterOffers(status){
+    if(status==='all') return allOffers;
+    return allOffers.filter(o=>{
+      const isExp=new Date(o.expires_at)<new Date()&&o.status==='pending';
+      if(status==='pending') return o.status==='pending'&&!isExp;
+      return o.status===status;
     });
   }
 
-  function applyOfferFilter(status, el) {
-    offerFilter = status;
-    document.querySelectorAll('#tabOffers .filter-chip').forEach(c => c.classList.remove('active'));
-    el.classList.add('active');
+  function applyOfferFilter(status,el){
+    offerFilter=status;
+    document.querySelectorAll('#tabOffers .filter-chip').forEach(c=>{c.style.background='var(--surface)';c.style.color='var(--ink)';c.style.borderColor='var(--border)';});
+    el.style.background='var(--charcoal)';el.style.color='#fff';el.style.borderColor='var(--charcoal)';
     renderOffers(filterOffers(status));
   }
 
-  function renderOffers(offers) {
-    const container = document.getElementById('offersContainer');
-    if (!offers.length) {
-      container.innerHTML = `
-        <div class="empty">
-          <div class="empty-icon">💬</div>
-          <div class="empty-title">No offers yet</div>
-          <p style="font-size:14px;">Browse the shop and make an offer on a negotiable item.</p>
-          <a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--clay);color:white;padding:11px 24px;border-radius:100px;text-decoration:none;font-size:13px;">Browse Shop →</a>
-        </div>`;
-      return;
-    }
-
-    container.innerHTML = offers.map((o, i) => {
-      const product      = o.products || {};
-      const img          = product.images?.[0] || 'https://placehold.co/52x52/f5f0e8/9a9086?text=?';
-      const isExpired    = new Date(o.expires_at) < new Date() && o.status === 'pending';
-      const displayStatus = isExpired ? 'expired' : o.status;
-      const saving       = Math.round(((o.listed_price - o.offer_amount) / o.listed_price) * 100);
-
-      const statusMap = {
-        pending:   { bg:'#fff8e8', color:'#c4622d', label:'⏳ Pending' },
-        countered: { bg:'#eef4ff', color:'#3b6fd4', label:'↔ Counter Received' },
-        accepted:  { bg:'#edf7f2', color:'#4f9d6e', label:'✅ Accepted' },
-        declined:  { bg:'#fef0f0', color:'#d94f4f', label:'❌ Declined' },
-        expired:   { bg:'#f5f5f5', color:'#9a9086', label:'⏰ Expired' },
-        purchased: { bg:'#edf7f2', color:'#4f9d6e', label:'🛍️ Purchased' },
-      };
-      const s = statusMap[displayStatus] || statusMap.pending;
-
+  function renderOffers(offers){
+    const c=document.getElementById('offersContainer');
+    if(!offers.length){c.innerHTML=`<div class="empty"><div class="empty-icon">💬</div><div class="empty-title">No offers here</div><p style="font-size:13px;">Make an offer on a negotiable item in the shop.</p><a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--amber);color:#fff;padding:11px 22px;border-radius:6px;font-family:'Inter',sans-serif;font-size:13px;text-decoration:none;">Browse Shop →</a></div>`;return;}
+    c.innerHTML=offers.map((o,i)=>{
+      const p=o.products||{};
+      const img=p.images?.[0]||'https://placehold.co/48x48/E8E4DD/8A8680?text=?';
+      const isExp=new Date(o.expires_at)<new Date()&&o.status==='pending';
+      const ds=isExp?'expired':o.status;
+      const saving=Math.round(((o.listed_price-o.offer_amount)/o.listed_price)*100);
+      const sm={pending:{bg:'var(--amber-lt)',c:'var(--amber)',l:'⏳ Pending'},countered:{bg:'#eef4ff',c:'#3b6fd4',l:'↔ Countered'},accepted:{bg:'var(--green-lt)',c:'var(--green)',l:'✅ Accepted'},declined:{bg:'var(--red-lt)',c:'var(--red)',l:'❌ Declined'},expired:{bg:'#f5f5f5',c:'var(--muted)',l:'⏰ Expired'},purchased:{bg:'var(--green-lt)',c:'var(--green)',l:'🛍️ Purchased'}};
+      const s=sm[ds]||sm.pending;
       return `
         <div class="offer-card" style="animation-delay:${i*0.04}s;">
-          <div class="offer-card-header">
-            <img class="offer-img" src="${img}" alt="${product.title||''}"
-              onerror="this.src='https://placehold.co/52x52/f5f0e8/9a9086?text=?'" />
-            <div>
-              <div class="offer-product-name">${product.title || '—'}</div>
-              <div class="offer-product-meta">Seller: ${product.seller_name || '—'}</div>
-            </div>
-            <span class="status-badge" style="background:${s.bg};color:${s.color};">${s.label}</span>
+          <div class="offer-header">
+            <img class="offer-img" src="${img}" alt="" onerror="this.src='https://placehold.co/48x48/E8E4DD/8A8680?text=?'" />
+            <div><div class="offer-product-name">${p.title||'—'}</div><div class="offer-product-meta">Seller: ${p.seller_name||'—'}</div></div>
+            <span class="status-pill" style="background:${s.bg};color:${s.c};">${s.l}</span>
           </div>
-
           <div class="offer-body">
             <div class="offer-grid">
-              <div>
-                <div class="offer-field-label">Your Offer</div>
-                <div class="your-offer-amount">₦${Number(o.offer_amount).toLocaleString()}</div>
-                <div class="offer-savings">You save ${saving}%</div>
-              </div>
-              <div>
-                <div class="offer-field-label">Listed Price</div>
-                <div class="offer-field-val" style="color:var(--muted);text-decoration:line-through;">₦${Number(o.listed_price).toLocaleString()}</div>
-              </div>
-              <div>
-                <div class="offer-field-label">Submitted</div>
-                <div style="font-size:13px;">${formatDate(o.created_at)}</div>
-              </div>
-              <div>
-                <div class="offer-field-label">Expires</div>
-                <div style="font-size:13px;${isExpired?'color:var(--error);':''}">${formatDate(o.expires_at)}</div>
-              </div>
+              <div><div class="offer-field-lbl">Your Offer</div><div class="your-offer">₦${Number(o.offer_amount).toLocaleString()}</div><div class="offer-save">You save ${saving}%</div></div>
+              <div><div class="offer-field-lbl">Listed Price</div><div style="font-size:15px;font-weight:500;color:var(--muted);text-decoration:line-through;">₦${Number(o.listed_price).toLocaleString()}</div></div>
             </div>
-
-            ${o.message ? `<div style="background:var(--warm-white);border-radius:10px;padding:10px 14px;font-size:13px;color:#555;font-style:italic;margin-bottom:14px;">"${o.message}"</div>` : ''}
-
-            <!-- COUNTER-OFFER FROM SELLER -->
-            ${o.status === 'countered' && o.counter_amount ? `
+            ${o.message?`<div style="background:var(--bg);border-radius:6px;padding:9px 12px;font-size:13px;color:#555;font-style:italic;margin-bottom:12px;border:1px solid var(--border);">"${o.message}"</div>`:''}
+            ${o.status==='countered'&&o.counter_amount?`
               <div class="counter-box">
-                <div class="counter-box-label">Seller's Counter-Offer</div>
-                <div class="counter-box-amount">₦${Number(o.counter_amount).toLocaleString()}</div>
-                ${o.counter_note ? `<div class="counter-box-note">"${o.counter_note}"</div>` : ''}
-                <div style="margin-top:14px;display:flex;gap:8px;">
-                  <button class="offer-btn btn-accept" onclick="acceptCounter('${o.id}', ${o.counter_amount}, '${(product.title||'').replace(/'/g,"\\'")}', ${o.listed_price})">✓ Accept Counter</button>
-                  <button class="offer-btn btn-decline" onclick="declineOffer('${o.id}')">✗ Decline</button>
+                <div class="counter-box-lbl">Seller's Counter-Offer</div>
+                <div class="counter-box-amt">₦${Number(o.counter_amount).toLocaleString()}</div>
+                ${o.counter_note?`<div class="counter-box-note">"${o.counter_note}"</div>`:''}
+                <div style="margin-top:12px;display:flex;gap:7px;">
+                  <button class="action-btn btn-accept" onclick="acceptCounter('${o.id}',${o.counter_amount},'${(p.title||'').replace(/'/g,"\\'")}',${o.listed_price})">✓ Accept Counter</button>
+                  <button class="action-btn btn-decline" onclick="declineOffer('${o.id}')">✗ Decline</button>
                 </div>
-              </div>` : ''}
-
-            <!-- PAY NOW for accepted offers -->
-            ${o.status === 'accepted' && displayStatus !== 'purchased' ? `
-              <div style="background:#edf7f2;border-radius:12px;padding:14px 16px;margin-bottom:0;">
-                <div style="font-size:13px;color:var(--success);font-weight:500;margin-bottom:10px;">
-                  🎉 Seller accepted your offer! Complete your payment to secure the item.
-                </div>
-                <button class="offer-btn btn-pay" onclick="openPayModal('${o.id}', '${(product.title||'').replace(/'/g,"\\'")}', ${o.offer_amount}, ${o.listed_price}, '${product.images?.[0]||''}')">
-                  Pay ₦${Number(o.offer_amount).toLocaleString()} Now →
-                </button>
-              </div>` : ''}
-
-            ${o.status === 'declined' ? `
-              <div style="padding:8px 0;font-size:13px;color:var(--error);">
-                ❌ This offer was declined. <a href="./index.html" style="color:var(--clay);">Browse more items →</a>
-              </div>` : ''}
-
-            ${displayStatus === 'purchased' ? `
-              <div style="padding:8px 0;font-size:13px;color:var(--success);font-weight:500;">
-                🛍️ Purchased at ₦${Number(o.offer_amount).toLocaleString()} — check My Orders for delivery status.
-              </div>` : ''}
-
-            ${o.status === 'pending' && !isExpired ? `
-              <div style="padding:8px 0;font-size:13px;color:var(--muted);">
-                ⏳ Waiting for seller to respond. Expires ${formatDate(o.expires_at)}.
-              </div>` : ''}
+              </div>`:'' }
+            ${o.status==='accepted'&&ds!=='purchased'?`
+              <div style="background:var(--green-lt);border-radius:6px;padding:12px 14px;margin-bottom:0;">
+                <div style="font-size:13px;color:var(--green);font-weight:500;margin-bottom:10px;">🎉 Seller accepted! Pay to secure the item.</div>
+                <button class="action-btn btn-pay" style="min-width:unset;width:100%;padding:12px;" onclick="openPayModal('${o.id}','${(p.title||'').replace(/'/g,"\\'")}',${o.offer_amount},${o.listed_price})">Pay ₦${Number(o.offer_amount).toLocaleString()} →</button>
+              </div>`:'' }
+            ${o.status==='declined'?`<div style="font-size:13px;color:var(--red);padding:6px 0;">❌ Declined. <a href="./index.html" style="color:var(--amber);">Browse more items →</a></div>`:''}
+            ${ds==='purchased'?`<div style="font-size:13px;color:var(--green);font-weight:500;padding:6px 0;">🛍️ Purchased — check your Orders.</div>`:''}
           </div>
         </div>`;
     }).join('');
+  }
+
+  async function acceptCounter(offerId,counterAmt,title,listedPrice){
+    const {error}=await sb.from('offers').update({status:'accepted',offer_amount:counterAmt,resolved_at:new Date().toISOString()}).eq('id',offerId);
+    if(error){showToast('Failed');return;}
+    showToast('✅ Counter accepted!');
+    await loadOffers();
+    openPayModal(offerId,title,counterAmt,listedPrice);
+  }
+
+  async function declineOffer(offerId){
+    const {error}=await sb.from('offers').update({status:'declined',resolved_at:new Date().toISOString()}).eq('id',offerId);
+    if(error){showToast('Failed');return;}
+    showToast('Offer declined');await loadOffers();
+  }
+
+  // ── PAY MODAL ──
+  function openPayModal(offerId,title,amount,listedPrice){
+    _activePayOffer={offerId,amount,listedPrice};
+    const saving=Math.round(((listedPrice-amount)/listedPrice)*100);
+    document.getElementById('payTitle').textContent=title;
+    document.getElementById('payAmt').textContent=`₦${Number(amount).toLocaleString()}`;
+    document.getElementById('paySavings').textContent=saving>0?`You saved ${saving}%! 🎉`:'';
+    document.getElementById('payModal').classList.add('open');
+    document.body.style.overflow='hidden';
+  }
+
+  function closePayModal(){document.getElementById('payModal').classList.remove('open');document.body.style.overflow='';}
+
+  async function initiateOfferPayment(){
+    if(!_activePayOffer||!currentUser) return;
+    const {offerId,amount}=_activePayOffer;
+    const offer=allOffers.find(o=>o.id===offerId);
+    if(!offer) return;
+    PaystackPop.setup({
+      key:PAYSTACK_KEY, email:currentUser.email,
+      amount:amount*100, currency:'NGN',
+      ref:'UT_OFFER_'+Date.now(),
+      callback:async(res)=>{
+        await sb.from('orders').insert({product_id:offer.product_id,buyer_id:currentUser.id,buyer_name:currentUser.user_metadata?.name||'',buyer_email:currentUser.email,buyer_phone:currentUser.user_metadata?.phone||'',amount,payment_ref:res.reference,status:'paid',escrow_status:'held',offer_id:offerId,confirm_deadline:new Date(Date.now()+48*60*60*1000).toISOString()});
+        await sb.from('offers').update({status:'purchased'}).eq('id',offerId);
+        closePayModal();showToast('🎉 Payment successful!');
+        await loadAll();switchTab('orders',document.querySelector('[data-tab="orders"]'));
+      },
+      onClose:()=>showToast('Payment cancelled')
+    }).openIframe();
   }
 
   // ── ORDERS ──
-  async function loadOrders() {
-    const { data, error } = await sb
-      .from('orders')
-      .select('*, products(title, images, price)')
-      .eq('buyer_id', currentUser.id)
-      .order('created_at', { ascending: false });
-
-    if (error) { showToast('Failed to load orders'); return; }
-    allOrders = data || [];
-    renderOrders(allOrders);
+  async function loadOrders(){
+    const {data}=await sb.from('orders').select('*,products(title,images,price)').eq('buyer_id',currentUser.id).order('created_at',{ascending:false});
+    allOrders=data||[];renderOrders(allOrders);
   }
 
-  function renderOrders(orders) {
-    const container = document.getElementById('ordersContainer');
-    if (!orders.length) {
-      container.innerHTML = `
-        <div class="empty">
-          <div class="empty-icon">📦</div>
-          <div class="empty-title">No orders yet</div>
-          <p style="font-size:14px;">Items you purchase will appear here.</p>
-          <a href="./index.html" style="display:inline-block;margin-top:16px;background:var(--clay);color:white;padding:11px 24px;border-radius:100px;text-decoration:none;font-size:13px;">Browse Shop →</a>
-        </div>`;
-      return;
-    }
-
-    container.innerHTML = orders.map((o, i) => {
-      const product  = o.products || {};
-      const img      = product.images?.[0] || 'https://placehold.co/52x52/f5f0e8/9a9086?text=?';
-      const isNegotiated = o.amount < (product.price || o.amount);
-      const deadline = new Date(o.confirm_deadline);
-      const now      = new Date();
-      const hoursLeft = Math.max(0, Math.round((deadline - now) / 3600000));
-      const confirmed = o.escrow_status === 'released';
-
-      const escrowMap = {
-        held:     { bg:'#fff8e8', color:'#c4622d', label:'In Escrow' },
-        released: { bg:'#edf7f2', color:'#4f9d6e', label:'Completed' },
-        disputed: { bg:'#fef0f0', color:'#d94f4f', label:'Disputed' },
-      };
-      const es = escrowMap[o.escrow_status] || escrowMap.held;
-
+  function renderOrders(orders){
+    const c=document.getElementById('ordersContainer');
+    if(!orders.length){c.innerHTML=`<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">No orders yet</div><p style="font-size:13px;">Items you purchase will appear here.</p></div>`;return;}
+    c.innerHTML=orders.map((o,i)=>{
+      const p=o.products||{};
+      const img=p.images?.[0]||'https://placehold.co/52x52/E8E4DD/8A8680?text=?';
+      const confirmed=o.escrow_status==='released';
+      const deadline=new Date(o.confirm_deadline);
+      const hoursLeft=Math.max(0,Math.round((deadline-new Date())/3600000));
+      const escrowMap={held:{bg:'var(--amber-lt)',c:'var(--amber)',l:'In Escrow'},released:{bg:'var(--green-lt)',c:'var(--green)',l:'Completed'},disputed:{bg:'var(--red-lt)',c:'var(--red)',l:'Disputed'}};
+      const es=escrowMap[o.escrow_status]||escrowMap.held;
       return `
         <div class="order-card" style="animation-delay:${i*0.04}s;">
-          <div class="order-card-body">
+          <div class="order-body">
             <div class="order-header">
-              <img class="order-img" src="${img}" alt="${product.title||''}"
-                onerror="this.src='https://placehold.co/52x52/f5f0e8/9a9086?text=?'" />
-              <div style="flex:1;min-width:0;">
-                <div class="order-title">${product.title || '—'}</div>
-                <div class="order-meta">Ref: ${o.payment_ref || '—'}</div>
-              </div>
-              <span class="status-badge" style="background:${es.bg};color:${es.color};">${es.label}</span>
+              <img class="order-img" src="${img}" alt="" onerror="this.src='https://placehold.co/52x52/E8E4DD/8A8680?text=?'" />
+              <div style="flex:1;min-width:0;"><div class="order-title">${p.title||'—'}</div><div class="order-ref">Ref: ${o.payment_ref||'—'}</div></div>
+              <span class="status-pill" style="background:${es.bg};color:${es.c};">${es.l}</span>
             </div>
-
-            <div class="order-amount">
-              ₦${Number(o.amount).toLocaleString()}
-              ${isNegotiated ? `<span style="font-size:13px;color:var(--success);font-weight:400;margin-left:8px;">Negotiated price</span>` : ''}
+            <div class="order-amount">₦${Number(o.amount).toLocaleString()}${o.offer_id?'<span style="font-size:12px;color:var(--green);font-weight:400;margin-left:8px;">Negotiated</span>':''}</div>
+            <div class="order-grid">
+              <div><div class="order-field-lbl">Ordered</div><div class="order-field-val">${formatDate(o.created_at)}</div></div>
+              <div><div class="order-field-lbl">Payment</div><div class="order-field-val" style="color:var(--green);">${o.status==='paid'?'✅ Paid':o.status}</div></div>
+              <div><div class="order-field-lbl">Escrow</div><div class="order-field-val">${es.l}</div></div>
+              <div><div class="order-field-lbl">Auto-confirm</div><div class="order-field-val" style="font-size:12px;">${confirmed?'Done':hoursLeft>0?`in ${hoursLeft}h`:'Processing'}</div></div>
             </div>
-
-            <div class="order-details">
-              <div>
-                <div class="order-field-label">Ordered</div>
-                <div class="order-field-val">${formatDate(o.created_at)}</div>
-              </div>
-              <div>
-                <div class="order-field-label">Payment</div>
-                <div class="order-field-val" style="color:var(--success);">${o.status === 'paid' ? '✅ Paid' : o.status}</div>
-              </div>
-              <div>
-                <div class="order-field-label">Escrow</div>
-                <div class="order-field-val">${es.label}</div>
-              </div>
-              <div>
-                <div class="order-field-label">Auto-confirm</div>
-                <div class="order-field-val" style="font-size:12px;">
-                  ${confirmed ? 'Confirmed' : hoursLeft > 0 ? `in ${hoursLeft}h` : 'Processing'}
-                </div>
-              </div>
-            </div>
-
-            ${!confirmed && o.status === 'paid' ? `
-              <button class="confirm-btn" onclick="confirmDelivery('${o.id}', this)">
-                ✅ I've received my item — Release Payment
-              </button>
-              <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px;">
-                Payment releases to seller automatically after 48h if you don't confirm.
-              </div>` : ''}
-
-            ${confirmed ? `
-              <div style="margin-top:12px;background:#edf7f2;border-radius:10px;padding:10px 14px;font-size:13px;color:var(--success);font-weight:500;">
-                ✅ Delivery confirmed — payment released to seller.
-              </div>` : ''}
+            ${!confirmed&&o.status==='paid'?`<button class="confirm-btn" onclick="confirmDelivery('${o.id}',this)">✅ I've received this item — Release Payment</button><div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;">Payment auto-releases after 48h if not confirmed.</div>`:''}
+            ${confirmed?`<div style="background:var(--green-lt);border-radius:6px;padding:10px 12px;font-size:13px;color:var(--green);font-weight:500;margin-top:10px;">✅ Confirmed — payment released to seller.</div>`:''}
           </div>
         </div>`;
     }).join('');
   }
 
-  // ── CONFIRM DELIVERY ──
-  async function confirmDelivery(orderId, btn) {
-    btn.disabled = true;
-    btn.textContent = 'Confirming…';
-    const { error } = await sb.from('orders').update({
-      escrow_status: 'released',
-      confirmed_at:  new Date().toISOString()
-    }).eq('id', orderId);
-
-    if (error) { showToast('Failed to confirm. Please try again.'); btn.disabled = false; btn.textContent = '✅ I\'ve received my item — Release Payment'; return; }
-    showToast('✅ Delivery confirmed! Payment released to seller.');
-    await loadOrders();
+  async function confirmDelivery(orderId,btn){
+    btn.disabled=true;btn.textContent='Confirming…';
+    const {error}=await sb.from('orders').update({escrow_status:'released',confirmed_at:new Date().toISOString()}).eq('id',orderId);
+    if(error){showToast('Failed. Please try again.');btn.disabled=false;btn.textContent="✅ I've received this item — Release Payment";return;}
+    showToast('✅ Confirmed! Payment released.');await loadOrders();
   }
 
-  // ── ACCEPT COUNTER-OFFER ──
-  async function acceptCounter(offerId, counterAmount, productTitle, listedPrice) {
-    const { error } = await sb.from('offers').update({
-      status:      'accepted',
-      offer_amount: counterAmount,  // buyer now pays counter amount
-      resolved_at:  new Date().toISOString()
-    }).eq('id', offerId);
-
-    if (error) { showToast('Failed to accept counter-offer'); return; }
-    showToast('✅ Counter-offer accepted!');
-    await loadOffers();
-    // Open pay modal immediately
-    openPayModal(offerId, productTitle, counterAmount, listedPrice, '');
-  }
-
-  async function declineOffer(offerId) {
-    const { error } = await sb.from('offers').update({
-      status:      'declined',
-      resolved_at:  new Date().toISOString()
-    }).eq('id', offerId);
-    if (error) { showToast('Failed to decline'); return; }
-    showToast('Offer declined');
-    await loadOffers();
-  }
-
-  // ── PAYMENT MODAL ──
-  let _activePayOffer = null;
-
-  function openPayModal(offerId, title, amount, listedPrice, img) {
-    _activePayOffer = { offerId, amount, listedPrice };
-    const saving = Math.round(((listedPrice - amount) / listedPrice) * 100);
-    document.getElementById('payProductTitle').textContent = title;
-    document.getElementById('payAmount').textContent       = `₦${Number(amount).toLocaleString()}`;
-    document.getElementById('paySavings').textContent      = saving > 0 ? `You saved ${saving}% on this item 🎉` : '';
-    document.getElementById('payModal').classList.add('open');
-    document.body.style.overflow = 'hidden';
-  }
-
-  function closePayModal() {
-    document.getElementById('payModal').classList.remove('open');
-    document.body.style.overflow = '';
-  }
-
-  async function initiateOfferPayment() {
-    if (!_activePayOffer || !currentUser) return;
-    const { offerId, amount } = _activePayOffer;
-    const offer = allOffers.find(o => o.id === offerId);
-    if (!offer) return;
-
-    const handler = PaystackPop.setup({
-      key:      PAYSTACK_KEY,
-      email:    currentUser.email,
-      amount:   amount * 100,
-      currency: 'NGN',
-      ref:      'UT_OFFER_' + Date.now(),
-      callback: async (res) => {
-        // Create order at negotiated price
-        await sb.from('orders').insert({
-          product_id:       offer.product_id,
-          buyer_id:         currentUser.id,
-          buyer_name:       currentUser.user_metadata?.name  || '',
-          buyer_email:      currentUser.email,
-          buyer_phone:      currentUser.user_metadata?.phone || '',
-          amount:           amount,
-          payment_ref:      res.reference,
-          status:           'paid',
-          escrow_status:    'held',
-          offer_id:         offerId,
-          confirm_deadline: new Date(Date.now() + 48*60*60*1000).toISOString()
-        });
-        // Mark offer as purchased
-        await sb.from('offers').update({ status: 'purchased' }).eq('id', offerId);
-        closePayModal();
-        showToast('🎉 Payment successful! Check My Orders.');
-        await loadAll();
-      },
-      onClose: () => showToast('Payment cancelled')
-    });
-    handler.openIframe();
-  }
-
-  // ── TAB SWITCH ──
-  function switchTab(tab, el) {
-    activeTab = tab;
-    document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+  function switchTab(tab,el){
+    document.querySelectorAll('.page-tab').forEach(t=>t.classList.remove('active'));
     el.classList.add('active');
-    document.getElementById('tabOffers').style.display = tab === 'offers' ? 'block' : 'none';
-    document.getElementById('tabOrders').style.display = tab === 'orders' ? 'block' : 'none';
+    document.getElementById('tabCart').style.display=tab==='cart'?'block':'none';
+    document.getElementById('tabOffers').style.display=tab==='offers'?'block':'none';
+    document.getElementById('tabOrders').style.display=tab==='orders'?'block':'none';
   }
 
-  // ── UTILS ──
-  function formatDate(iso) {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleDateString('en-NG', { day:'numeric', month:'short', year:'numeric' });
-  }
-
-  function showToast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 3200);
-  }
+  function formatDate(iso){if(!iso)return'—';return new Date(iso).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'});}
+  function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200);}
 </script>
 <script src="https://js.paystack.co/v1/inline.js"></script>
 </body>

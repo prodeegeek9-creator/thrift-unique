@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Items — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;0,700;1,300;1,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root{--bg:#FAFAF9;--surface:#FFFFFF;--border:#E8E4DD;--charcoal:#0F0F0E;--ink:#2C2C2A;--muted:#8A8680;--green:#1A6B4A;--green-lt:#EAF3EE;--amber:#E8944A;--amber-lt:#FDF3E9;--red:#C94040;--red-lt:#FDEAEA;}
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;}
+
+    nav{background:var(--charcoal);padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+    .logo{font-family:'Fraunces',serif;font-size:20px;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-0.5px;}
+    .logo span{color:var(--amber);font-style:italic;}
+    .nav-right{display:flex;gap:8px;align-items:center;}
+    .nav-link{color:rgba(255,255,255,0.55);font-size:13px;padding:6px 12px;border-radius:6px;border:none;background:none;cursor:pointer;font-family:'Inter',sans-serif;transition:all 0.15s;text-decoration:none;}
+    .nav-link:hover{color:#fff;background:rgba(255,255,255,0.07);}
+    .nav-btn{font-family:'Inter',sans-serif;font-size:13px;font-weight:500;padding:7px 16px;border-radius:6px;cursor:pointer;transition:all 0.15s;text-decoration:none;border:none;background:var(--amber);color:#fff;}
+    .nav-btn:hover{opacity:0.9;}
+
+    .page-wrap{max-width:860px;margin:0 auto;padding:36px 24px 80px;}
+    .page-heading{font-family:'Fraunces',serif;font-size:30px;font-weight:700;letter-spacing:-0.5px;margin-bottom:6px;}
+    .page-sub{font-size:14px;color:var(--muted);margin-bottom:28px;font-weight:300;}
+
+    /* Page tabs */
+    .page-tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:24px;}
+    .page-tab{padding:12px 20px;font-size:14px;font-weight:500;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all 0.15s;background:none;border-left:none;border-right:none;border-top:none;font-family:'Inter',sans-serif;}
+    .page-tab.active{color:var(--green);border-bottom-color:var(--green);}
+
+    /* Stats row */
+    .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;}
+    .stat-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;}
+    .stat-num{font-size:26px;font-weight:600;font-family:'Fraunces',serif;color:var(--charcoal);}
+    .stat-lbl{font-size:11px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:0.5px;}
+
+    /* Filter bar */
+    .filter-bar{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;}
+    .filter-chip{padding:6px 14px;border-radius:5px;border:1px solid var(--border);background:var(--surface);font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;color:var(--ink);}
+    .filter-chip.active{background:var(--charcoal);color:#fff;border-color:var(--charcoal);}
+
+    /* Listing card */
+    .listing-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:10px;display:flex;align-items:center;gap:14px;padding:14px;transition:box-shadow 0.15s;}
+    .listing-card:hover{box-shadow:0 4px 16px rgba(15,15,14,0.06);}
+    .listing-img{width:60px;height:60px;border-radius:6px;object-fit:cover;background:var(--border);flex-shrink:0;}
+    .listing-info{flex:1;min-width:0;}
+    .listing-title{font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .listing-meta{font-size:12px;color:var(--muted);margin-top:3px;}
+    .listing-price{font-size:15px;font-weight:600;color:var(--charcoal);flex-shrink:0;}
+    .badge{display:inline-block;padding:3px 9px;border-radius:4px;font-size:11px;font-weight:500;}
+    .badge.pending{background:var(--amber-lt);color:var(--amber);}
+    .badge.approved{background:var(--green-lt);color:var(--green);}
+    .badge.rejected{background:var(--red-lt);color:var(--red);}
+
+    /* Offer card */
+    .offer-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden;animation:cardUp 0.3s ease both;}
+    @keyframes cardUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    .offer-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;}
+    .offer-img{width:48px;height:48px;border-radius:6px;object-fit:cover;background:var(--border);flex-shrink:0;}
+    .offer-product-name{font-weight:500;font-size:14px;}
+    .offer-product-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+    .status-pill{margin-left:auto;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:500;flex-shrink:0;}
+    .offer-body{padding:14px 16px;}
+    .offer-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;}
+    .offer-field-lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:3px;}
+    .offer-amount{font-size:20px;font-weight:600;color:var(--charcoal);}
+    .offer-save{font-size:11px;color:var(--muted);margin-top:1px;}
+    .offer-msg{background:var(--bg);border-radius:6px;padding:9px 12px;font-size:13px;color:#555;font-style:italic;margin-bottom:12px;border:1px solid var(--border);}
+    .counter-shown{background:#eef4ff;border-radius:6px;padding:10px 12px;margin-bottom:12px;border:1px solid #b8cfff;}
+    .counter-shown-lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#3b6fd4;margin-bottom:3px;}
+    .counter-shown-val{font-size:16px;font-weight:600;color:#3b6fd4;}
+    .offer-actions{display:flex;gap:7px;flex-wrap:wrap;}
+    .action-btn{flex:1;min-width:80px;padding:9px 14px;border-radius:5px;font-family:'Inter',sans-serif;font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;}
+    .btn-accept{background:var(--green-lt);color:var(--green);border:1px solid var(--green)!important;}
+    .btn-accept:hover{background:var(--green);color:#fff;}
+    .btn-counter{background:#eef4ff;color:#3b6fd4;border:1px solid #b8cfff!important;}
+    .btn-counter:hover{background:#3b6fd4;color:#fff;}
+    .btn-decline{background:var(--red-lt);color:var(--red);border:1px solid #fcc!important;}
+    .btn-decline:hover{background:var(--red);color:#fff;}
+
+    /* Counter modal */
+    .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,15,14,0.6);z-index:200;align-items:flex-end;justify-content:center;}
+    .modal-backdrop.open{display:flex;}
+    .modal-sheet{background:var(--surface);border-radius:16px 16px 0 0;width:100%;max-width:520px;padding:8px 0 32px;animation:sheetUp 0.28s cubic-bezier(0.34,1.3,0.64,1);}
+    @keyframes sheetUp{from{transform:translateY(100%);}to{transform:translateY(0);}}
+    .modal-drag{width:36px;height:4px;background:var(--border);border-radius:2px;margin:12px auto 18px;}
+    .modal-body{padding:0 22px 6px;}
+    .modal-title{font-family:'Fraunces',serif;font-size:22px;font-weight:600;margin-bottom:5px;letter-spacing:-0.3px;}
+    .modal-sub{font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.5;}
+    .form-group{margin-bottom:12px;}
+    .form-label{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px;}
+    .form-input{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;outline:none;transition:border-color 0.15s;background:var(--bg);color:var(--ink);}
+    .form-input:focus{border-color:var(--green);}
+    .counter-input{width:100%;padding:13px 14px 13px 28px;border:1.5px solid var(--border);border-radius:8px;font-family:'Inter',sans-serif;font-size:20px;font-weight:500;outline:none;transition:border-color 0.15s;}
+    .counter-input:focus{border-color:var(--amber);}
+    .counter-prefix{position:absolute;left:13px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--muted);}
+    .modal-btns{display:flex;flex-direction:column;gap:8px;}
+    .modal-btn-send{padding:13px;border:none;border-radius:6px;background:var(--charcoal);color:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+    .modal-btn-send:hover{background:var(--green);}
+    .modal-btn-cancel{padding:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Inter',sans-serif;font-size:14px;cursor:pointer;transition:border-color 0.15s;}
+    .modal-btn-cancel:hover{border-color:var(--charcoal);}
+
+    /* Empty */
+    .empty{text-align:center;padding:60px 24px;color:var(--muted);}
+    .empty-icon{font-size:40px;margin-bottom:14px;}
+    .empty-title{font-family:'Fraunces',serif;font-size:22px;color:var(--charcoal);margin-bottom:8px;}
+
+    /* Toast */
+    .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120px);background:var(--charcoal);color:#fff;padding:11px 22px;border-radius:6px;font-size:13px;z-index:999;transition:transform 0.28s cubic-bezier(0.34,1.3,0.64,1);white-space:nowrap;font-family:'Inter',sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.18);}
+    .toast.show{transform:translateX(-50%) translateY(0);}
+
+    @media(max-width:600px){
+      .stats-row{grid-template-columns:1fr 1fr;}
+      .offer-grid{grid-template-columns:1fr 1fr;}
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="./index.html" class="logo">Unique <span>Thrift</span></a>
+  <div class="nav-right">
+    <a href="./account.html" class="nav-link">My Account</a>
+    <a href="./my-purchases.html" class="nav-link">Purchases</a>
+    <a href="./sell.html" class="nav-btn">+ New Listing</a>
+  </div>
+</nav>
+
+<!-- AUTH / SELLER GATE -->
+<div id="authGate" style="display:none;text-align:center;padding:80px 24px;">
+  <div style="font-size:40px;margin-bottom:16px;">🔐</div>
+  <div style="font-family:'Fraunces',serif;font-size:22px;margin-bottom:10px;">Seller access only</div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:24px;">Enable your seller account from My Account to access this page.</p>
+  <a href="./account.html#seller" style="display:inline-block;background:var(--charcoal);color:#fff;padding:12px 28px;border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;text-decoration:none;margin-right:10px;">Enable Seller Account →</a>
+  <a href="./index.html" style="display:inline-block;border:1px solid var(--border);color:var(--ink);padding:12px 28px;border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;text-decoration:none;">Back to Shop</a>
+</div>
+
+<div class="page-wrap" id="mainContent" style="display:none;">
+  <div class="page-heading">My Items</div>
+  <div class="page-sub" id="pageSubtitle"></div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="stat-box"><div class="stat-num" id="statLive">—</div><div class="stat-lbl">Live Listings</div></div>
+    <div class="stat-box"><div class="stat-num" id="statPending">—</div><div class="stat-lbl">Under Review</div></div>
+    <div class="stat-box"><div class="stat-num" id="statOffers">—</div><div class="stat-lbl">Open Offers</div></div>
+    <div class="stat-box"><div class="stat-num" id="statSold">—</div><div class="stat-lbl">Sold</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="page-tabs">
+    <button class="page-tab active" data-tab="listings" onclick="switchTab('listings',this)">My Listings</button>
+    <button class="page-tab"        data-tab="offers"   onclick="switchTab('offers',this)">My Offers <span id="offersBadge" style="display:none;background:var(--amber);color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:5px;"></span></button>
+  </div>
+
+  <!-- LISTINGS TAB -->
+  <div id="tabListings">
+    <div class="filter-bar">
+      <div class="filter-chip active" data-filter="all"      onclick="applyListingFilter('all',this)">All</div>
+      <div class="filter-chip"        data-filter="approved" onclick="applyListingFilter('approved',this)">Live</div>
+      <div class="filter-chip"        data-filter="pending"  onclick="applyListingFilter('pending',this)">Under Review</div>
+      <div class="filter-chip"        data-filter="rejected" onclick="applyListingFilter('rejected',this)">Rejected</div>
+    </div>
+    <div id="listingsContainer"></div>
+  </div>
+
+  <!-- OFFERS TAB -->
+  <div id="tabOffers" style="display:none;">
+    <div class="filter-bar">
+      <div class="filter-chip active" data-filter="pending"   onclick="applyOfferFilter('pending',this)">Pending</div>
+      <div class="filter-chip"        data-filter="countered" onclick="applyOfferFilter('countered',this)">Countered</div>
+      <div class="filter-chip"        data-filter="accepted"  onclick="applyOfferFilter('accepted',this)">Accepted</div>
+      <div class="filter-chip"        data-filter="all"       onclick="applyOfferFilter('all',this)">All</div>
+    </div>
+    <div id="offersContainer"></div>
+  </div>
+</div>
+
+<!-- COUNTER-OFFER MODAL -->
+<div class="modal-backdrop" id="counterModal" onclick="if(event.target===this)closeCounter()">
+  <div class="modal-sheet">
+    <div class="modal-drag"></div>
+    <div class="modal-body">
+      <div class="modal-title">Send Counter-Offer</div>
+      <div class="modal-sub" id="counterContext"></div>
+      <div class="form-group">
+        <label class="form-label">Your Counter Price (₦)</label>
+        <div style="position:relative;">
+          <span class="counter-prefix">₦</span>
+          <input type="number" class="counter-input" id="counterAmt" placeholder="0" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note to buyer (optional)</label>
+        <textarea class="form-input" id="counterNote" placeholder="e.g. Best I can do — barely used" style="resize:none;min-height:70px;"></textarea>
+      </div>
+      <div class="modal-btns">
+        <button class="modal-btn-send" onclick="sendCounter()">Send Counter →</button>
+        <button class="modal-btn-cancel" onclick="closeCounter()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL='https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY='sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+  let currentUser=null, allListings=[], allOffers=[], activeOfferId=null;
+  let listingFilter='all', offerFilter='pending';
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const {data:{session}}=await sb.auth.getSession();
+    if (!session) { document.getElementById('authGate').style.display='block'; return; }
+    currentUser=session.user;
+
+    // Check seller status
+    const {data:sp}=await sb.from('seller_profiles').select('is_seller').eq('id',currentUser.id).single();
+    if (!sp?.is_seller) { document.getElementById('authGate').style.display='block'; return; }
+
+    document.getElementById('mainContent').style.display='block';
+    const name=currentUser.user_metadata?.name||currentUser.email?.split('@')[0];
+    document.getElementById('pageSubtitle').textContent=`Everything you're selling, ${name}`;
+    await loadAll();
+
+    // Deep link to offers tab
+    if (location.hash==='#offers') switchTab('offers', document.querySelector('[data-tab="offers"]'));
+  });
+
+  async function loadAll() {
+    await Promise.all([loadListings(), loadOffers()]);
+  }
+
+  // ── LISTINGS ──
+  async function loadListings() {
+    const {data}=await sb.from('products').select('*').eq('seller_id',currentUser.id).order('created_at',{ascending:false});
+    allListings=data||[];
+    const live=allListings.filter(p=>p.status==='approved').length;
+    const pend=allListings.filter(p=>p.status==='pending').length;
+    const sold=allListings.filter(p=>p.status==='sold').length;
+    document.getElementById('statLive').textContent=live;
+    document.getElementById('statPending').textContent=pend;
+    document.getElementById('statSold').textContent=sold;
+    renderListings(filterListings(listingFilter));
+  }
+
+  function filterListings(status) {
+    if (status==='all') return allListings;
+    return allListings.filter(p=>p.status===status);
+  }
+
+  function applyListingFilter(status,el) {
+    listingFilter=status;
+    document.querySelectorAll('#tabListings .filter-chip').forEach(c=>c.classList.remove('active'));
+    el.classList.add('active');
+    renderListings(filterListings(status));
+  }
+
+  function renderListings(listings) {
+    const c=document.getElementById('listingsContainer');
+    if (!listings.length) {
+      c.innerHTML=`<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nothing here</div><p style="font-size:13px;">Your listings will appear here.</p><a href="./sell.html" style="display:inline-block;margin-top:16px;background:var(--amber);color:#fff;padding:11px 22px;border-radius:6px;font-family:'Inter',sans-serif;font-size:13px;text-decoration:none;">+ List an Item</a></div>`;
+      return;
+    }
+    c.innerHTML=listings.map(p=>`
+      <div class="listing-card">
+        <img class="listing-img" src="${p.images?.[0]||'https://placehold.co/60x60/E8E4DD/8A8680?text=?'}" alt="${p.title}" onerror="this.src='https://placehold.co/60x60/E8E4DD/8A8680?text=?'" />
+        <div class="listing-info">
+          <div class="listing-title">${p.title}</div>
+          <div class="listing-meta">${p.category||'—'} · ${p.condition||'—'} · ${formatDate(p.created_at)}</div>
+          <div style="margin-top:5px;"><span class="badge ${p.status}">${p.status==='approved'?'Live':p.status==='pending'?'Under Review':'Rejected'}</span>
+          ${p.allow_negotiation?'<span style="font-size:11px;color:var(--amber);margin-left:6px;">Negotiable</span>':''}</div>
+        </div>
+        <div class="listing-price">₦${Number(p.price).toLocaleString()}</div>
+      </div>`).join('');
+  }
+
+  // ── OFFERS ──
+  async function loadOffers() {
+    const {data:prods}=await sb.from('products').select('id').eq('seller_id',currentUser.id);
+    if (!prods||!prods.length) { allOffers=[]; renderOffers([]); document.getElementById('statOffers').textContent=0; return; }
+    const ids=prods.map(p=>p.id);
+    const {data}=await sb.from('offers').select('*,products(title,images,price)').in('product_id',ids).order('created_at',{ascending:false});
+    allOffers=data||[];
+    const open=allOffers.filter(o=>o.status==='pending'&&new Date(o.expires_at)>new Date()).length;
+    document.getElementById('statOffers').textContent=open;
+    if (open>0) { document.getElementById('offersBadge').textContent=open; document.getElementById('offersBadge').style.display='inline'; }
+    renderOffers(filterOffers(offerFilter));
+  }
+
+  function filterOffers(status) {
+    if (status==='all') return allOffers;
+    return allOffers.filter(o=>{
+      const isExp=new Date(o.expires_at)<new Date()&&o.status==='pending';
+      if (status==='pending') return o.status==='pending'&&!isExp;
+      return o.status===status;
+    });
+  }
+
+  function applyOfferFilter(status,el) {
+    offerFilter=status;
+    document.querySelectorAll('#tabOffers .filter-chip').forEach(c=>c.classList.remove('active'));
+    el.classList.add('active');
+    renderOffers(filterOffers(status));
+  }
+
+  function renderOffers(offers) {
+    const c=document.getElementById('offersContainer');
+    if (!offers.length) {
+      c.innerHTML=`<div class="empty"><div class="empty-icon">🤝</div><div class="empty-title">No offers here</div><p style="font-size:13px;">Offers from buyers on your listings appear here.</p></div>`;
+      return;
+    }
+    c.innerHTML=offers.map((o,i)=>{
+      const product=o.products||{};
+      const img=product.images?.[0]||'https://placehold.co/48x48/E8E4DD/8A8680?text=?';
+      const discount=Math.round(((o.listed_price-o.offer_amount)/o.listed_price)*100);
+      const isExp=new Date(o.expires_at)<new Date()&&o.status==='pending';
+      const ds=isExp?'expired':o.status;
+      const sm={pending:{bg:'var(--amber-lt)',c:'var(--amber)',l:'Pending'},countered:{bg:'#eef4ff',c:'#3b6fd4',l:'Countered'},accepted:{bg:'var(--green-lt)',c:'var(--green)',l:'Accepted'},declined:{bg:'var(--red-lt)',c:'var(--red)',l:'Declined'},expired:{bg:'#f5f5f5',c:'var(--muted)',l:'Expired'},purchased:{bg:'var(--green-lt)',c:'var(--green)',l:'Purchased'}};
+      const s=sm[ds]||sm.pending;
+      const canAct=o.status==='pending'&&!isExp;
+      return `
+        <div class="offer-card" style="animation-delay:${i*0.04}s;">
+          <div class="offer-header">
+            <img class="offer-img" src="${img}" alt="" onerror="this.src='https://placehold.co/48x48/E8E4DD/8A8680?text=?'" />
+            <div>
+              <div class="offer-product-name">${product.title||'—'}</div>
+              <div class="offer-product-meta">Listed at ₦${Number(o.listed_price).toLocaleString()}</div>
+            </div>
+            <span class="status-pill" style="background:${s.bg};color:${s.c};">${s.l}</span>
+          </div>
+          <div class="offer-body">
+            <div class="offer-grid">
+              <div><div class="offer-field-lbl">Buyer's Offer</div><div class="offer-amount">₦${Number(o.offer_amount).toLocaleString()}</div><div class="offer-save">${discount}% below listed</div></div>
+              <div><div class="offer-field-lbl">From</div><div style="font-size:13px;font-weight:500;">${o.buyer_name}</div><div style="font-size:11px;color:var(--muted);">${o.buyer_email}</div>${o.buyer_phone?`<div style="font-size:11px;color:var(--muted);">${o.buyer_phone}</div>`:''}</div>
+              <div><div class="offer-field-lbl">Received</div><div style="font-size:13px;">${formatDate(o.created_at)}</div><div style="font-size:11px;color:var(--muted);">Expires ${formatDate(o.expires_at)}</div></div>
+            </div>
+            ${o.message?`<div class="offer-msg">"${o.message}"</div>`:''}
+            ${o.counter_amount?`<div class="counter-shown"><div class="counter-shown-lbl">Your Counter-Offer</div><div class="counter-shown-val">₦${Number(o.counter_amount).toLocaleString()}</div>${o.counter_note?`<div style="font-size:12px;color:#555;margin-top:3px;">${o.counter_note}</div>`:''}</div>`:''}
+            ${canAct?`<div class="offer-actions"><button class="action-btn btn-accept" onclick="resolveOffer('${o.id}','accepted')">✓ Accept</button><button class="action-btn btn-counter" onclick="openCounter('${o.id}')">↔ Counter</button><button class="action-btn btn-decline" onclick="resolveOffer('${o.id}','declined')">✗ Decline</button></div>`:''}
+            ${o.status==='accepted'?`<div style="font-size:13px;color:var(--green);font-weight:500;padding:6px 0;">✅ Accepted — buyer notified to complete payment</div>`:''}
+            ${o.status==='countered'?`<div style="padding:6px 0;"><div style="font-size:13px;color:#3b6fd4;margin-bottom:8px;">↔ Waiting for buyer to respond to your counter.</div><div class="offer-actions"><button class="action-btn btn-accept" onclick="resolveOffer('${o.id}','accepted')">✓ Accept Anyway</button><button class="action-btn btn-decline" onclick="resolveOffer('${o.id}','declined')">✗ Decline</button></div></div>`:''}
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── COUNTER MODAL ──
+  function openCounter(offerId) {
+    activeOfferId=offerId;
+    const offer=allOffers.find(o=>o.id===offerId);
+    if (!offer) return;
+    document.getElementById('counterContext').textContent=`Buyer offered ₦${Number(offer.offer_amount).toLocaleString()} for "${offer.products?.title}". Enter the price you'll accept.`;
+    document.getElementById('counterAmt').value='';
+    document.getElementById('counterNote').value='';
+    document.getElementById('counterModal').classList.add('open');
+    document.body.style.overflow='hidden';
+  }
+
+  function closeCounter() {
+    document.getElementById('counterModal').classList.remove('open');
+    document.body.style.overflow='';
+    activeOfferId=null;
+  }
+
+  async function sendCounter() {
+    const amount=Number(document.getElementById('counterAmt').value);
+    const note=document.getElementById('counterNote').value.trim();
+    if (!amount||amount<=0) { showToast('Please enter a counter amount'); return; }
+    const offer=allOffers.find(o=>o.id===activeOfferId);
+    if (offer&&amount>=offer.listed_price) { showToast('Counter must be below listed price'); return; }
+    if (offer&&amount<=offer.offer_amount) { showToast("Counter should be above buyer's offer"); return; }
+    const {error}=await sb.from('offers').update({status:'countered',counter_amount:amount,counter_note:note||null,countered_at:new Date().toISOString()}).eq('id',activeOfferId);
+    if (error) { showToast('Failed to send counter'); return; }
+    closeCounter();
+    showToast('↔ Counter-offer sent!');
+    await loadOffers();
+  }
+
+  async function resolveOffer(offerId,status) {
+    const {error}=await sb.from('offers').update({status,resolved_at:new Date().toISOString()}).eq('id',offerId);
+    if (error) { showToast('Failed to update offer'); return; }
+    showToast(status==='accepted'?'✅ Offer accepted — buyer notified':'❌ Offer declined');
+    const activeTab=document.querySelector('#tabOffers .filter-chip.active');
+    offerFilter=activeTab?.dataset.filter||'pending';
+    await loadOffers();
+  }
+
+  // ── TAB SWITCH ──
+  function switchTab(tab,el) {
+    document.querySelectorAll('.page-tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('tabListings').style.display=tab==='listings'?'block':'none';
+    document.getElementById('tabOffers').style.display=tab==='offers'?'block':'none';
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-NG',{day:'numeric',month:'short',year:'numeric'});
+  }
+
+  function showToast(msg) {
+    const t=document.getElementById('toast');
+    t.textContent=msg; t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),3200);
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Account — Unique Thrift</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;0,700;1,300;1,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:#FAFAF9; --surface:#FFFFFF; --border:#E8E4DD;
+      --charcoal:#0F0F0E; --ink:#2C2C2A; --muted:#8A8680;
+      --green:#1A6B4A; --green-lt:#EAF3EE;
+      --amber:#E8944A; --amber-lt:#FDF3E9;
+      --red:#C94040; --red-lt:#FDEAEA;
+    }
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;}
+
+    nav{background:var(--charcoal);padding:0 24px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+    .logo{font-family:'Fraunces',serif;font-size:20px;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-0.5px;}
+    .logo span{color:var(--amber);font-style:italic;}
+    .nav-link{color:rgba(255,255,255,0.55);font-size:13px;padding:6px 12px;border-radius:6px;border:none;background:none;cursor:pointer;font-family:'Inter',sans-serif;transition:all 0.15s;text-decoration:none;}
+    .nav-link:hover{color:#fff;background:rgba(255,255,255,0.07);}
+
+    .page-wrap{max-width:680px;margin:0 auto;padding:40px 24px 80px;}
+    .page-heading{font-family:'Fraunces',serif;font-size:30px;font-weight:700;letter-spacing:-0.5px;margin-bottom:6px;}
+    .page-sub{font-size:14px;color:var(--muted);margin-bottom:36px;font-weight:300;}
+
+    .card{background:var(--surface);border-radius:10px;border:1px solid var(--border);padding:24px;margin-bottom:16px;}
+    .card-title{font-size:15px;font-weight:600;margin-bottom:4px;}
+    .card-sub{font-size:13px;color:var(--muted);margin-bottom:20px;font-weight:300;}
+
+    .form-group{margin-bottom:14px;}
+    .form-label{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px;}
+    .form-input{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;outline:none;transition:border-color 0.15s;background:var(--bg);color:var(--ink);}
+    .form-input:focus{border-color:var(--green);background:var(--surface);}
+    .form-input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed;}
+    .form-hint{font-size:11px;color:var(--muted);margin-top:4px;}
+
+    /* Toggle */
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:16px;}
+    .toggle-label{font-size:14px;font-weight:500;}
+    .toggle-sub{font-size:12px;color:var(--muted);margin-top:2px;font-weight:300;}
+    .toggle-switch{position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;flex-shrink:0;}
+    .toggle-switch input{opacity:0;width:0;height:0;}
+    .toggle-track{position:absolute;inset:0;background:var(--border);border-radius:100px;transition:0.2s;}
+    .toggle-track::after{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:white;border-radius:50%;transition:0.2s;}
+    input:checked + .toggle-track{background:var(--green);}
+    input:checked + .toggle-track::after{transform:translateX(20px);}
+
+    /* Seller section */
+    .seller-gate{margin-top:18px;border-top:1px solid var(--border);padding-top:18px;}
+    .seller-gate.hidden{display:none;}
+
+    /* Bank verify */
+    .verify-row{display:flex;gap:8px;align-items:flex-end;}
+    .verify-row .form-group{flex:1;margin-bottom:0;}
+    .verify-btn{
+      padding:11px 16px;border:none;border-radius:6px;background:var(--charcoal);
+      color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:500;
+      cursor:pointer;transition:all 0.15s;white-space:nowrap;flex-shrink:0;height:42px;
+    }
+    .verify-btn:hover{background:var(--green);}
+    .verify-btn:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;}
+    .verified-badge{display:inline-flex;align-items:center;gap:5px;background:var(--green-lt);color:var(--green);font-size:12px;font-weight:500;padding:6px 10px;border-radius:5px;margin-top:6px;}
+
+    /* Banks dropdown */
+    .form-select{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;outline:none;transition:border-color 0.15s;background:var(--bg);color:var(--ink);appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238A8680' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;cursor:pointer;}
+    .form-select:focus{border-color:var(--green);}
+
+    /* Save btn */
+    .save-btn{width:100%;padding:13px;border:none;border-radius:6px;background:var(--green);color:#fff;font-family:'Inter',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:opacity 0.15s;margin-top:4px;}
+    .save-btn:hover{opacity:0.9;}
+    .save-btn:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;}
+
+    /* Status message */
+    .status-msg{font-size:13px;padding:10px 12px;border-radius:6px;margin-top:10px;display:none;}
+    .status-msg.success{background:var(--green-lt);color:var(--green);}
+    .status-msg.error{background:var(--red-lt);color:var(--red);}
+
+    .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120px);background:var(--charcoal);color:#fff;padding:11px 22px;border-radius:6px;font-size:13px;z-index:999;transition:transform 0.28s cubic-bezier(0.34,1.3,0.64,1);white-space:nowrap;font-family:'Inter',sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.18);}
+    .toast.show{transform:translateX(-50%) translateY(0);}
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="./index.html" class="logo">Unique <span>Thrift</span></a>
+  <a href="./index.html" class="nav-link">← Back to Shop</a>
+</nav>
+
+<div class="page-wrap">
+  <div class="page-heading">My Account</div>
+  <div class="page-sub">Manage your profile and seller settings</div>
+
+  <!-- AUTH GATE -->
+  <div id="authGate" style="display:none;text-align:center;padding:60px 0;">
+    <div style="font-size:40px;margin-bottom:16px;">🔐</div>
+    <div style="font-family:'Fraunces',serif;font-size:22px;margin-bottom:10px;">Sign in to continue</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:24px;">You need to be logged in to manage your account.</p>
+    <a href="./index.html" style="display:inline-block;background:var(--charcoal);color:#fff;padding:12px 28px;border-radius:6px;font-family:'Inter',sans-serif;font-size:14px;text-decoration:none;">Sign In →</a>
+  </div>
+
+  <div id="mainContent" style="display:none;">
+
+    <!-- PROFILE CARD -->
+    <div class="card">
+      <div class="card-title">Profile</div>
+      <div class="card-sub">Your account information</div>
+      <div class="form-group">
+        <label class="form-label">Full Name</label>
+        <input type="text" class="form-input" id="profileName" placeholder="Your full name" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-input" id="profileEmail" readonly />
+        <div class="form-hint">Email cannot be changed</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">WhatsApp / Phone</label>
+        <input type="tel" class="form-input" id="profilePhone" placeholder="+234 800 000 0000" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">State</label>
+        <select class="form-select" id="profileState">
+          <option value="">Select state</option>
+          <option>Abia</option><option>Adamawa</option><option>Akwa Ibom</option>
+          <option>Anambra</option><option>Bauchi</option><option>Bayelsa</option>
+          <option>Benue</option><option>Borno</option><option>Cross River</option>
+          <option>Delta</option><option>Ebonyi</option><option>Edo</option>
+          <option>Ekiti</option><option>Enugu</option><option>FCT — Abuja</option>
+          <option>Gombe</option><option>Imo</option><option>Jigawa</option>
+          <option>Kaduna</option><option>Kano</option><option>Katsina</option>
+          <option>Kebbi</option><option>Kogi</option><option>Kwara</option>
+          <option>Lagos</option><option>Nasarawa</option><option>Niger</option>
+          <option>Ogun</option><option>Ondo</option><option>Osun</option>
+          <option>Oyo</option><option>Plateau</option><option>Rivers</option>
+          <option>Sokoto</option><option>Taraba</option><option>Yobe</option>
+          <option>Zamfara</option>
+        </select>
+      </div>
+      <button class="save-btn" onclick="saveProfile()">Save Profile</button>
+      <div class="status-msg" id="profileStatus"></div>
+    </div>
+
+    <!-- SELLER CARD -->
+    <div class="card" id="sellerCard">
+      <div class="toggle-row">
+        <div>
+          <div class="card-title">Seller Account</div>
+          <div class="toggle-sub">Enable to list items and receive payments</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="sellerToggle" onchange="onSellerToggle(this.checked)" />
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+
+      <!-- Bank details — shown when seller is enabled -->
+      <div class="seller-gate hidden" id="sellerGate">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:16px;font-weight:300;line-height:1.6;">
+          Add your bank account so we can transfer your earnings after a buyer confirms delivery.
+          We verify your account name with your bank before saving.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label">Bank</label>
+          <select class="form-select" id="bankCode" onchange="resetVerification()">
+            <option value="">Select your bank</option>
+            <option value="044">Access Bank</option>
+            <option value="023">Citibank</option>
+            <option value="063">Diamond Bank</option>
+            <option value="050">Ecobank</option>
+            <option value="070">Fidelity Bank</option>
+            <option value="011">First Bank</option>
+            <option value="214">First City Monument Bank (FCMB)</option>
+            <option value="058">Guaranty Trust Bank (GTB)</option>
+            <option value="030">Heritage Bank</option>
+            <option value="301">Jaiz Bank</option>
+            <option value="082">Keystone Bank</option>
+            <option value="526">Moniepoint</option>
+            <option value="076">Polaris Bank</option>
+            <option value="101">Providus Bank</option>
+            <option value="125">Rubies Bank</option>
+            <option value="100">Suntrust Bank</option>
+            <option value="232">Sterling Bank</option>
+            <option value="100004">OPay</option>
+            <option value="100003">PalmPay</option>
+            <option value="035">Wema Bank</option>
+            <option value="057">Zenith Bank</option>
+            <option value="033">UBA</option>
+            <option value="032">Union Bank</option>
+            <option value="035A">ALAT by Wema</option>
+            <option value="000014">Kuda Bank</option>
+          </select>
+        </div>
+
+        <div class="verify-row">
+          <div class="form-group">
+            <label class="form-label">Account Number</label>
+            <input type="text" class="form-input" id="accountNumber" placeholder="10-digit account number" maxlength="10" oninput="resetVerification()" />
+          </div>
+          <button class="verify-btn" id="verifyBtn" onclick="verifyBankAccount()">Verify</button>
+        </div>
+
+        <div id="verifiedBadge" style="display:none;">
+          <div class="verified-badge">✓ <span id="verifiedName"></span></div>
+        </div>
+        <div id="verifyError" style="display:none;font-size:12px;color:var(--red);margin-top:6px;padding:8px 10px;background:var(--red-lt);border-radius:5px;"></div>
+
+        <div class="form-group" style="margin-top:14px;">
+          <label class="form-label">Account Name <span style="color:var(--muted);">(auto-filled after verification)</span></label>
+          <input type="text" class="form-input" id="accountName" readonly placeholder="Verify account number to fill" />
+        </div>
+
+        <button class="save-btn" id="saveSellerBtn" onclick="saveSellerProfile()" disabled>Save Bank Details</button>
+        <div class="status-msg" id="sellerStatus"></div>
+      </div>
+    </div>
+
+    <!-- DANGER ZONE -->
+    <div class="card">
+      <div class="card-title" style="color:var(--red);">Sign Out</div>
+      <div class="card-sub">Sign out from this device</div>
+      <button onclick="signOut()" style="padding:11px 20px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Inter',sans-serif;font-size:14px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)';" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--ink)';">Sign Out</button>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
+  // Your Cloudflare Worker proxy endpoint for bank verification
+  const WORKER_VERIFY = '/api/verify-bank';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let currentUser = null;
+  let sellerProfile = null;
+  let verified = false;
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const { data:{ session } } = await sb.auth.getSession();
+    if (!session) { document.getElementById('authGate').style.display='block'; return; }
+    currentUser = session.user;
+    document.getElementById('mainContent').style.display = 'block';
+    await loadProfile();
+    // Allow deep link to seller section
+    if (location.hash === '#seller') {
+      document.getElementById('sellerCard').scrollIntoView({ behavior:'smooth' });
+    }
+  });
+
+  async function loadProfile() {
+    const meta = currentUser.user_metadata || {};
+    document.getElementById('profileName').value  = meta.name  || '';
+    document.getElementById('profileEmail').value = currentUser.email || '';
+    document.getElementById('profilePhone').value = meta.phone || '';
+    document.getElementById('profileState').value = meta.state || '';
+
+    // Load seller profile
+    const { data } = await sb.from('seller_profiles').select('*').eq('id', currentUser.id).single();
+    sellerProfile = data;
+    if (data?.is_seller) {
+      document.getElementById('sellerToggle').checked = true;
+      document.getElementById('sellerGate').classList.remove('hidden');
+      // Pre-fill saved bank details
+      if (data.bank_code)       document.getElementById('bankCode').value       = data.bank_code;
+      if (data.account_number)  document.getElementById('accountNumber').value  = data.account_number;
+      if (data.account_name) {
+        document.getElementById('accountName').value = data.account_name;
+        showVerifiedBadge(data.account_name);
+        document.getElementById('saveSellerBtn').disabled = false;
+      }
+    }
+  }
+
+  // ── PROFILE ──
+  async function saveProfile() {
+    const name  = document.getElementById('profileName').value.trim();
+    const phone = document.getElementById('profilePhone').value.trim();
+    const state = document.getElementById('profileState').value;
+    if (!name||!phone||!state) { showStatus('profileStatus','Please fill all fields','error'); return; }
+    const { error } = await sb.auth.updateUser({ data:{ name, phone, state } });
+    if (error) { showStatus('profileStatus', error.message, 'error'); return; }
+    showStatus('profileStatus', '✓ Profile saved', 'success');
+    showToast('Profile updated ✓');
+  }
+
+  // ── SELLER TOGGLE ──
+  function onSellerToggle(checked) {
+    const gate = document.getElementById('sellerGate');
+    if (checked) gate.classList.remove('hidden');
+    else gate.classList.add('hidden');
+  }
+
+  // ── BANK VERIFICATION ──
+  function resetVerification() {
+    verified = false;
+    document.getElementById('verifiedBadge').style.display = 'none';
+    document.getElementById('verifyError').style.display   = 'none';
+    document.getElementById('accountName').value = '';
+    document.getElementById('saveSellerBtn').disabled = true;
+  }
+
+  function showVerifiedBadge(name) {
+    document.getElementById('verifiedName').textContent  = name;
+    document.getElementById('verifiedBadge').style.display = 'block';
+    document.getElementById('verifyError').style.display   = 'none';
+  }
+
+  async function verifyBankAccount() {
+    const bankCode = document.getElementById('bankCode').value;
+    const accNum   = document.getElementById('accountNumber').value.trim();
+    const errEl    = document.getElementById('verifyError');
+    errEl.style.display = 'none';
+
+    if (!bankCode) { errEl.textContent='Please select a bank'; errEl.style.display='block'; return; }
+    if (accNum.length !== 10) { errEl.textContent='Account number must be 10 digits'; errEl.style.display='block'; return; }
+
+    const btn = document.getElementById('verifyBtn');
+    btn.disabled = true; btn.textContent = 'Verifying…';
+
+    try {
+      const res  = await fetch(WORKER_VERIFY, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ account_number: accNum, bank_code: bankCode })
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.account_name) {
+        errEl.textContent = json.message || 'Could not verify account. Check the details and try again.';
+        errEl.style.display = 'block';
+        btn.disabled=false; btn.textContent='Verify';
+        return;
+      }
+
+      verified = true;
+      document.getElementById('accountName').value = json.account_name;
+      showVerifiedBadge(json.account_name);
+      document.getElementById('saveSellerBtn').disabled = false;
+    } catch (e) {
+      errEl.textContent = 'Verification failed. Please try again.';
+      errEl.style.display = 'block';
+    }
+
+    btn.disabled=false; btn.textContent='Verify';
+  }
+
+  // ── SAVE SELLER PROFILE ──
+  async function saveSellerProfile() {
+    if (!verified && !sellerProfile?.account_name) {
+      showStatus('sellerStatus','Please verify your bank account first','error'); return;
+    }
+    const bankCode  = document.getElementById('bankCode').value;
+    const accNum    = document.getElementById('accountNumber').value.trim();
+    const accName   = document.getElementById('accountName').value.trim();
+    const btn       = document.getElementById('saveSellerBtn');
+    btn.disabled=true; btn.textContent='Saving…';
+
+    const { error } = await sb.from('seller_profiles').upsert({
+      id:             currentUser.id,
+      is_seller:      true,
+      bank_code:      bankCode,
+      account_number: accNum,
+      account_name:   accName,
+      enabled_at:     sellerProfile?.enabled_at || new Date().toISOString()
+    });
+
+    btn.disabled=false; btn.textContent='Save Bank Details';
+    if (error) { showStatus('sellerStatus', error.message,'error'); return; }
+    showStatus('sellerStatus','✓ Seller account saved','success');
+    showToast('Seller account enabled ✓');
+  }
+
+  function showStatus(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className = `status-msg ${type}`;
+    el.style.display = 'block';
+    setTimeout(()=>el.style.display='none', 4000);
+  }
+
+  async function signOut() {
+    await sb.auth.signOut();
+    window.location.href = './index.html';
+  }
+
+  function showToast(msg) {
+    const t=document.getElementById('toast');
+    t.textContent=msg; t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),3000);
+  }
+</script>
+</body>
+</html>
