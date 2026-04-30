@@ -677,8 +677,8 @@
 
   function updateNavForUser() {
     const area = document.getElementById('navAuthArea');
-    document.getElementById('navPurchases').style.display = 'inline-block';
-    document.getElementById('navAccount').style.display   = 'inline-block';
+    document.getElementById('navPurchases').style.display = 'none';
+    document.getElementById('navAccount').style.display   = 'none';
     document.getElementById('navSellGuest').style.display = 'none';
     area.innerHTML = `<a href="account.html" class="nav-btn nav-btn-ghost">My Account</a>`;
   }
