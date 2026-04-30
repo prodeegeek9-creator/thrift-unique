@@ -146,15 +146,18 @@
       transition: border-color 0.15s;
     }
     .filter-select:focus { border-color: var(--green); }
-    .cat-chips { display: flex; gap: 5px; padding: 8px 0; flex-shrink: 0; padding-left: 20px; }
-    .cat-chip {
-      white-space: nowrap; padding: 5px 12px; border-radius: 4px;
-      border: 1px solid var(--border); background: var(--surface); font-size: 12px;
-      cursor: pointer; transition: all 0.15s; color: var(--ink); font-family: 'Inter', sans-serif;
-    }
-    .cat-chip:hover { border-color: var(--charcoal); }
-    .cat-chip.active { background: var(--charcoal); color: #fff; border-color: var(--charcoal); }
     .filter-count { font-size: 12px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 16px; flex-shrink: 0; }
+    .search-bar { background: var(--cream); border-bottom: 1px solid var(--border); padding: 10px 24px; }
+    .search-wrapper { position: relative; max-width: 100%; }
+    .search-wrapper svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); }
+    .search-input {
+      width: 100%; box-sizing: border-box;
+      padding: 10px 14px 10px 38px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 14px; font-family: 'Inter', sans-serif;
+      background: #fff; color: var(--ink);
+    }
+    .search-input:focus { outline: none; border-color: var(--charcoal); }
 
     /* ── PRODUCTS SECTION ── */
     .products-section { max-width: 1400px; margin: 0 auto; padding: 28px 24px 80px; }
@@ -419,19 +422,28 @@
       </select>
     </div>
     <div class="filter-group" style="border-right:none;">
-      <div class="cat-chips">
-        <div class="cat-chip active" onclick="filterByCategory('',this)">All</div>
-        <div class="cat-chip" onclick="filterByCategory('clothing',this)">Clothing</div>
-        <div class="cat-chip" onclick="filterByCategory('shoes',this)">Shoes</div>
-        <div class="cat-chip" onclick="filterByCategory('bags',this)">Bags</div>
-        <div class="cat-chip" onclick="filterByCategory('accessories',this)">Accessories</div>
-        <div class="cat-chip" onclick="filterByCategory('electronics',this)">Electronics</div>
-        <div class="cat-chip" onclick="filterByCategory('furniture',this)">Furniture</div>
-        <div class="cat-chip" onclick="filterByCategory('books',this)">Books</div>
-        <div class="cat-chip" onclick="filterByCategory('other',this)">Other</div>
-      </div>
+      <span class="filter-label">Category</span>
+      <select class="filter-select" id="categoryFilter" onchange="filterByCategory(this.value)">
+        <option value="">All Categories</option>
+        <option value="clothing">Clothing</option>
+        <option value="shoes">Shoes</option>
+        <option value="bags">Bags</option>
+        <option value="accessories">Accessories</option>
+        <option value="electronics">Electronics</option>
+        <option value="furniture">Furniture</option>
+        <option value="books">Books</option>
+        <option value="other">Other</option>
+      </select>
     </div>
     <div class="filter-count" id="filterCount"></div>
+  </div>
+</div>
+
+<!-- SEARCH BAR -->
+<div class="search-bar">
+  <div class="search-wrapper">
+    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input type="text" class="search-input" id="searchInput" placeholder="Search items…" oninput="filterProducts()" />
   </div>
 </div>
 
@@ -767,10 +779,12 @@
   function filterProducts() {
     const state = document.getElementById('stateFilter').value;
     const city  = document.getElementById('cityFilter').value;
+    const q     = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
     filtered = allProducts.filter(p =>
       (!activeCategory || p.category===activeCategory) &&
       (!state || p.seller_location===state) &&
-      (!city  || p.seller_city===city)
+      (!city  || p.seller_city===city) &&
+      (!q || (p.title||'').toLowerCase().includes(q) || (p.description||'').toLowerCase().includes(q))
     );
     renderProducts(filtered);
     updateFilterCount(filtered.length);
@@ -781,9 +795,8 @@
     document.getElementById('sectionTitle').textContent = parts.length ? parts.join(' ') : 'Latest Finds';
   }
 
-  function filterByCategory(cat,el) {
-    document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('active'));
-    el.classList.add('active'); activeCategory=cat; filterProducts();
+  function filterByCategory(cat) {
+    activeCategory = cat; filterProducts();
   }
 
   function sortProducts(by) {
