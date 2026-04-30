@@ -158,6 +158,13 @@
       background: #fff; color: var(--ink);
     }
     .search-input:focus { outline: none; border-color: var(--charcoal); }
+    .search-placeholder {
+      position: absolute; left: 38px; top: 50%; transform: translateY(-50%);
+      color: #9ca3af; font-size: 14px; pointer-events: none;
+      font-family: 'Inter', sans-serif;
+      transition: opacity 0.4s ease;
+    }
+    .search-placeholder.fade { opacity: 0; }
 
     /* ── PRODUCTS SECTION ── */
     .products-section { max-width: 1400px; margin: 0 auto; padding: 28px 24px 80px; }
@@ -443,7 +450,10 @@
 <div class="search-bar">
   <div class="search-wrapper">
     <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input type="text" class="search-input" id="searchInput" placeholder="Search items…" oninput="filterProducts()" />
+    <input type="text" class="search-input" id="searchInput" oninput="filterProducts()"
+      onfocus="document.getElementById('searchPlaceholder').style.opacity='0'"
+      onblur="if(!this.value)document.getElementById('searchPlaceholder').style.opacity='1'" />
+    <span class="search-placeholder" id="searchPlaceholder">Search bags…</span>
   </div>
 </div>
 
@@ -1096,6 +1106,20 @@
         idx = (idx + 1) % words.length;
         el.textContent = words[idx];
         el.classList.remove('fade');
+      }, 400);
+    }, 2800);
+
+    const searchTerms = ['Search bags…', 'Search clothes…', 'Search shoes…', 'Search electronics…', 'Search furniture…', 'Search accessories…'];
+    let sIdx = 0;
+    const sp = document.getElementById('searchPlaceholder');
+    setInterval(() => {
+      const input = document.getElementById('searchInput');
+      if (document.activeElement === input || input.value) return;
+      sp.classList.add('fade');
+      setTimeout(() => {
+        sIdx = (sIdx + 1) % searchTerms.length;
+        sp.textContent = searchTerms[sIdx];
+        sp.classList.remove('fade');
       }, 400);
     }, 2800);
   })();
