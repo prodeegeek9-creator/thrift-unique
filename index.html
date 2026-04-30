@@ -85,15 +85,22 @@
     .hero-tag {
       display: inline-block; margin-bottom: 20px;
       background: rgba(232,148,74,0.15); border: 1px solid rgba(232,148,74,0.3);
-      color: var(--amber); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+      font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
       padding: 5px 14px; border-radius: 4px; font-weight: 500;
     }
+    .hero-tag-fixed { color: var(--amber); }
+    .hero-tag-rotate {
+      color: #fff;
+      display: inline-block;
+      transition: opacity 0.4s ease;
+    }
+    .hero-tag-rotate.fade { opacity: 0; }
     .hero h1 {
       font-family: 'Fraunces', serif; font-size: clamp(36px, 6vw, 64px);
       color: #fff; line-height: 1.08; margin-bottom: 20px; font-weight: 700; letter-spacing: -1px;
     }
     .hero h1 em { font-style: italic; color: var(--amber); font-weight: 300; }
-    .hero p { font-size: 15px; color: rgba(255,255,255,0.5); font-weight: 300; line-height: 1.7; margin-bottom: 32px; max-width: 420px; }
+    .hero p { font-size: 15px; color: rgba(255,255,255,0.82); font-weight: 300; line-height: 1.7; margin-bottom: 32px; max-width: 420px; }
     .hero-btns { display: flex; gap: 10px; flex-wrap: wrap; }
     .btn-primary {
       background: var(--amber); color: #fff; padding: 13px 28px;
@@ -372,7 +379,7 @@
 <!-- HERO -->
 <section class="hero" id="top">
   <div class="hero-content">
-    <div class="hero-tag">✦ Curated Second-Hand</div>
+    <div class="hero-tag"><span class="hero-tag-fixed">✦ Curated </span><span class="hero-tag-rotate" id="heroTagRotate">Second-Hand</span></div>
     <h1>One person's past,<br><em>your next favourite</em></h1>
     <p>Discover unique pieces from verified sellers across Nigeria. Vetted, priced right, ready to go.</p>
     <div class="hero-btns">
@@ -1064,5 +1071,20 @@
 </script>
 <script src="https://js.paystack.co/v1/inline.js"></script>
 <script src="./chat.js"></script>
+<script>
+  (function() {
+    const words = ['Second-Hand', 'Brand New', 'Fairly Used', 'Pre-Loved', 'Vintage Picks', 'Unique Finds'];
+    let idx = 0;
+    const el = document.getElementById('heroTagRotate');
+    setInterval(() => {
+      el.classList.add('fade');
+      setTimeout(() => {
+        idx = (idx + 1) % words.length;
+        el.textContent = words[idx];
+        el.classList.remove('fade');
+      }, 400);
+    }, 2800);
+  })();
+</script>
 </body>
 </html>
