@@ -680,7 +680,7 @@
     document.getElementById('navPurchases').style.display = 'inline-block';
     document.getElementById('navAccount').style.display   = 'inline-block';
     document.getElementById('navSellGuest').style.display = 'none';
-    area.innerHTML = `<button class="nav-btn nav-btn-ghost" onclick="authSignOut()">Sign Out</button>`;
+    area.innerHTML = `<a href="account.html" class="nav-btn nav-btn-ghost">My Account</a>`;
   }
 
   async function authSignOut() {
