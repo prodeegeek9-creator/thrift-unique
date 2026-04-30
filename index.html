@@ -76,11 +76,17 @@
       position: relative; overflow: hidden;
       padding: 64px 24px;
     }
-    .hero-video {
+    .hero-video-wrap {
       position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover; opacity: 0.38;
-      pointer-events: none;
+      overflow: hidden; pointer-events: none; opacity: 0.38;
+    }
+    .hero-video-wrap iframe {
+      position: absolute; top: 50%; left: 50%;
+      /* 16:9 cover trick — always fills the container */
+      width: max(100%, 177.78vh);
+      height: max(100%, 56.25vw);
+      transform: translate(-50%, -50%);
+      border: none;
     }
     .hero-content { position: relative; z-index: 1; max-width: 560px; }
     .hero-tag {
@@ -372,10 +378,8 @@
 
 <!-- HERO -->
 <section class="hero" id="top">
-  <video class="hero-video" autoplay muted loop playsinline
-         poster="https://images.unsplash.com/photo-1558769132-cb1aea458c5e?w=1200&q=60">
-    <source src="https://videos.pexels.com/video-files/3967165/3967165-hd_1920_1080_25fps.mp4" type="video/mp4" />
-  </video>
+  <!-- Replace HERO_VIDEO_ID with any YouTube video ID showing a market/thrift transaction -->
+  <div class="hero-video-wrap" id="ytHeroWrap"></div>
   <div class="hero-content">
     <div class="hero-tag">✦ Curated Second-Hand</div>
     <h1>One person's past,<br><em>your next favourite</em></h1>
@@ -1061,9 +1065,22 @@
   function openModal(id) { document.getElementById(id).classList.add('open'); document.body.style.overflow='hidden'; }
   function closeModal(id) { document.getElementById(id).classList.remove('open'); document.body.style.overflow=''; }
 
-  // Slow-motion hero video
-  const heroVid = document.querySelector('.hero-video');
-  if (heroVid) { heroVid.playbackRate = 0.5; heroVid.addEventListener('canplay', () => { heroVid.playbackRate = 0.5; }); }
+  // Hero background video via YouTube IFrame API (slow-motion, muted, looping)
+  // Swap HERO_VIDEO_ID for any YouTube video ID, e.g. a Pexels market clip uploaded to YouTube
+  var HERO_VIDEO_ID = 'HERO_VIDEO_ID';
+  window.onYouTubeIframeAPIReady = function() {
+    new YT.Player('ytHeroWrap', {
+      videoId: HERO_VIDEO_ID,
+      playerVars: { autoplay:1, mute:1, controls:0, loop:1, playlist:HERO_VIDEO_ID,
+                    rel:0, modestbranding:1, iv_load_policy:3, playsinline:1 },
+      events: { onReady: function(e) { e.target.mute(); e.target.setPlaybackRate(0.5); } }
+    });
+  };
+  (function() {
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+  })();
 
   function showToast(msg) {
     const t=document.getElementById('toast');
