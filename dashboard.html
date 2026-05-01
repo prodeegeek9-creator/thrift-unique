@@ -1189,16 +1189,16 @@
                 <div class="product-cell">
                   <img class="product-thumb" src="${p.images?.[0] || 'https://placehold.co/44x44/f5f0e8/9a9086?text=?'}" alt="" />
                   <div>
-                    <div class="product-name">${p.title}</div>
-                    <div class="product-meta">${p.condition || 'Used'}</div>
+                    <div class="product-name">${escapeHtml(p.title)}</div>
+                    <div class="product-meta">${escapeHtml(p.condition || 'Used')}</div>
                   </div>
                 </div>
               </td>
               <td>${p.category || '—'}</td>
               <td>₦${Number(p.price).toLocaleString()}</td>
               <td>
-                <div class="product-name">${p.seller_name || '—'}</div>
-                <div class="product-meta">${p.seller_email || ''}</div>
+                <div class="product-name">${escapeHtml(p.seller_name || '—')}</div>
+                <div class="product-meta">${escapeHtml(p.seller_email || '')}</div>
               </td>
               <td>${formatDate(p.created_at)}</td>
               <td><span class="badge ${p.status}">${p.status}</span></td>
@@ -1229,13 +1229,13 @@
     ).join('') || '<div style="color:var(--muted);font-size:13px;grid-column:1/-1">No images</div>';
 
     document.getElementById('modalDetails').innerHTML = `
-      <div class="detail-row"><span class="detail-key">Category</span><span class="detail-val">${p.category}</span></div>
-      <div class="detail-row"><span class="detail-key">Condition</span><span class="detail-val">${p.condition}</span></div>
+      <div class="detail-row"><span class="detail-key">Category</span><span class="detail-val">${escapeHtml(p.category)}</span></div>
+      <div class="detail-row"><span class="detail-key">Condition</span><span class="detail-val">${escapeHtml(p.condition)}</span></div>
       <div class="detail-row"><span class="detail-key">Price</span><span class="detail-val">₦${Number(p.price).toLocaleString()}</span></div>
-      <div class="detail-row"><span class="detail-key">Seller</span><span class="detail-val">${p.seller_name}</span></div>
-      <div class="detail-row"><span class="detail-key">Email</span><span class="detail-val">${p.seller_email}</span></div>
-      <div class="detail-row"><span class="detail-key">Phone</span><span class="detail-val">${p.seller_phone}</span></div>
-      <div class="detail-row"><span class="detail-key">Location</span><span class="detail-val">${p.seller_location || '—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Seller</span><span class="detail-val">${escapeHtml(p.seller_name)}</span></div>
+      <div class="detail-row"><span class="detail-key">Email</span><span class="detail-val">${escapeHtml(p.seller_email)}</span></div>
+      <div class="detail-row"><span class="detail-key">Phone</span><span class="detail-val">${escapeHtml(p.seller_phone)}</span></div>
+      <div class="detail-row"><span class="detail-key">Location</span><span class="detail-val">${escapeHtml(p.seller_location || '—')}</span></div>
       <div class="detail-row"><span class="detail-key">Description</span><span class="detail-val" style="font-size:12px;color:#555;">${escapeHtml(p.description)}</span></div>
     `;
 
@@ -1394,15 +1394,17 @@
     });
 
     sessionList.innerHTML = Object.values(sessions).map(s => `
-      <div onclick="openSession('${s.session_id}', '${s.name.replace(/'/g,"\'")}', '${s.email}', '${s.product.replace(/'/g,"\'")}' )"
+      <div onclick="openSession(this.dataset.sid,this.dataset.name,this.dataset.email,this.dataset.product)"
+        data-sid="${escapeHtml(s.session_id)}" data-name="${escapeHtml(s.name)}"
+        data-email="${escapeHtml(s.email)}" data-product="${escapeHtml(s.product)}"
         style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;${activeSessionId === s.session_id ? 'background:var(--cream);' : ''}"
-        onmouseover="this.style.background='var(--cream)'" onmouseout="this.style.background='${activeSessionId === s.session_id ? 'var(--cream)' : 'white'}'">
+        onmouseover="this.style.background='var(--cream)'" onmouseout="this.style.background='white'">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <div style="font-weight:500;font-size:13px;">${s.name}</div>
+          <div style="font-weight:500;font-size:13px;">${escapeHtml(s.name)}</div>
           <div style="font-size:11px;color:var(--muted);">${formatDate(s.lastTime)}</div>
         </div>
-        ${s.product ? `<div style="font-size:11px;color:var(--clay);margin-bottom:4px;">Re: ${s.product}</div>` : ''}
-        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.lastMessage}</div>
+        ${s.product ? `<div style="font-size:11px;color:var(--clay);margin-bottom:4px;">Re: ${escapeHtml(s.product)}</div>` : ''}
+        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.lastMessage)}</div>
       </div>
     `).join('');
   }
@@ -1442,7 +1444,7 @@
           ${m.sender === 'buyer'
             ? 'background:white;border:1px solid var(--border);border-bottom-left-radius:4px;'
             : 'background:var(--charcoal);color:white;border-bottom-right-radius:4px;'}">
-          ${m.message}
+          ${escapeHtml(m.message)}
         </div>
         <div style="font-size:10px;color:var(--muted);margin-top:3px;padding:0 4px;">${formatTime(m.created_at)}</div>
       </div>
@@ -1479,15 +1481,17 @@
     }
 
     sessionList.innerHTML = msgs.map(m => `
-      <div onclick="openOfflineMessage('${m.id}', '${(m.sender_name||'').replace(/'/g,"\'")}', '${(m.sender_email||'').replace(/'/g,"\'")}', '${(m.message||'').replace(/'/g,"\'").replace(/\n/g,' ')}')"
+      <div onclick="openOfflineMessage(this.dataset.id,this.dataset.name,this.dataset.email,this.dataset.message)"
+        data-id="${escapeHtml(m.id)}" data-name="${escapeHtml(m.sender_name||'')}"
+        data-email="${escapeHtml(m.sender_email||'')}" data-message="${escapeHtml(m.message||'')}"
         style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;"
         onmouseover="this.style.background='var(--cream)'" onmouseout="this.style.background='white'">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <div style="font-weight:500;font-size:13px;">${m.sender_name || 'Anonymous'}</div>
+          <div style="font-weight:500;font-size:13px;">${escapeHtml(m.sender_name || 'Anonymous')}</div>
           <div style="font-size:11px;color:var(--muted);">${formatDate(m.created_at)}</div>
         </div>
-        <div style="font-size:11px;color:var(--clay);margin-bottom:4px;">${m.products?.title || 'General enquiry'}</div>
-        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${m.message}</div>
+        <div style="font-size:11px;color:var(--clay);margin-bottom:4px;">${escapeHtml(m.products?.title || 'General enquiry')}</div>
+        <div style="font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.message)}</div>
       </div>
     `).join('');
   }
@@ -1505,12 +1509,12 @@
     container.innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:flex-start;">
         <div style="max-width:80%;padding:12px 16px;border-radius:14px;border-bottom-left-radius:4px;font-size:13px;line-height:1.6;background:white;border:1px solid var(--border);">
-          ${message}
+          ${escapeHtml(message)}
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-top:3px;padding:0 4px;">${name}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;padding:0 4px;">${escapeHtml(name)}</div>
       </div>
       <div style="text-align:center;font-size:12px;color:var(--muted);padding:8px;">
-        Reply via email: <a href="mailto:${email}" style="color:var(--clay);">${email}</a>
+        Reply via email: <a href="mailto:${escapeHtml(email)}" style="color:var(--clay);">${escapeHtml(email)}</a>
       </div>`;
     container.scrollTop = container.scrollHeight;
   }
@@ -1639,7 +1643,7 @@
           <div style="padding:16px 20px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--border);">
             <img src="${img}" style="width:56px;height:56px;border-radius:10px;object-fit:cover;flex-shrink:0;" />
             <div style="flex:1;min-width:0;">
-              <div style="font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${product.title || '—'}</div>
+              <div style="font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(product.title || '—')}</div>
               <div style="font-size:12px;color:var(--muted);margin-top:2px;">Listed at ₦${Number(o.listed_price).toLocaleString()}</div>
             </div>
             <span style="background:${sc.bg};color:${sc.color};font-size:11px;font-weight:500;padding:4px 12px;border-radius:100px;white-space:nowrap;flex-shrink:0;">${displayStatus}</span>
@@ -1654,9 +1658,9 @@
             </div>
             <div>
               <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">From</div>
-              <div style="font-size:13px;font-weight:500;">${o.buyer_name}</div>
-              <div style="font-size:11px;color:var(--muted);">${o.buyer_email}</div>
-              ${o.buyer_phone ? `<div style="font-size:11px;color:var(--muted);">${o.buyer_phone}</div>` : ''}
+              <div style="font-size:13px;font-weight:500;">${escapeHtml(o.buyer_name)}</div>
+              <div style="font-size:11px;color:var(--muted);">${escapeHtml(o.buyer_email)}</div>
+              ${o.buyer_phone ? `<div style="font-size:11px;color:var(--muted);">${escapeHtml(o.buyer_phone)}</div>` : ''}
             </div>
             <div>
               <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Received</div>
@@ -1667,14 +1671,14 @@
 
           ${o.message ? `
             <div style="margin:0 20px 12px;background:var(--warm-white);border-radius:10px;padding:10px 14px;font-size:13px;color:#555;font-style:italic;">
-              "${o.message}"
+              "${escapeHtml(o.message)}"
             </div>` : ''}
 
           ${o.counter_amount ? `
             <div style="margin:0 20px 12px;background:#eef4ff;border-radius:10px;padding:10px 14px;font-size:13px;">
               <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Your Counter-Offer</div>
               <strong>₦${Number(o.counter_amount).toLocaleString()}</strong>
-              ${o.counter_note ? ` — ${o.counter_note}` : ''}
+              ${o.counter_note ? ` — ${escapeHtml(o.counter_note)}` : ''}
             </div>` : ''}
 
           <!-- Actions -->
@@ -1704,8 +1708,8 @@
     activeCounterOfferId = offerId;
 
     document.getElementById('counterOfferContext').innerHTML = `
-      <strong>${offer.products?.title}</strong><br>
-      Buyer: ${offer.buyer_name} (${offer.buyer_email})<br>
+      <strong>${escapeHtml(offer.products?.title)}</strong><br>
+      Buyer: ${escapeHtml(offer.buyer_name)} (${escapeHtml(offer.buyer_email)})<br>
       Their offer: <strong style="color:var(--clay);">₦${Number(offer.offer_amount).toLocaleString()}</strong>
       &nbsp;·&nbsp; Listed: ₦${Number(offer.listed_price).toLocaleString()}`;
 
