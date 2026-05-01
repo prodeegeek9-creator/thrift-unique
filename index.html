@@ -53,6 +53,21 @@
     .nav-btn-ghost:hover { background: rgba(255,255,255,0.14); color: #fff; }
     .nav-btn-primary { background: var(--amber); color: #fff; }
     .nav-btn-primary:hover { opacity: 0.9; }
+    .nav-dropdown { position: relative; display: inline-block; }
+    .nav-dropdown-menu {
+      display: none; position: absolute; right: 0; top: calc(100% + 8px);
+      background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.14); z-index: 1000; overflow: hidden;
+    }
+    .nav-dropdown-menu.open { display: block; }
+    .nav-dropdown-item {
+      display: block; padding: 10px 16px; font-size: 13px; color: var(--ink);
+      text-decoration: none; cursor: pointer; font-family: 'Inter', sans-serif;
+      transition: background 0.12s; border: none; background: none; width: 100%; text-align: left;
+    }
+    .nav-dropdown-item:hover { background: var(--cream); }
+    .nav-dropdown-item.danger { color: var(--red); }
+    .nav-dropdown-item.danger:hover { background: #fff0f0; }
     .nav-icon-btn {
       position: relative; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1);
       color: rgba(255,255,255,0.8); width: 36px; height: 36px; border-radius: 6px;
@@ -710,8 +725,23 @@
     document.getElementById('navPurchases').style.display = 'none';
     document.getElementById('navAccount').style.display   = 'none';
     document.getElementById('navSellGuest').style.display = 'none';
-    area.innerHTML = `<a href="account.html" class="nav-btn nav-btn-ghost">My Account</a>`;
+    area.innerHTML = `
+      <div class="nav-dropdown" id="accountDropdown">
+        <button class="nav-btn nav-btn-ghost" onclick="toggleAccountMenu(event)">My Account ▾</button>
+        <div class="nav-dropdown-menu" id="accountMenu">
+          <a href="./my-purchases.html" class="nav-dropdown-item">My Purchases</a>
+          <button class="nav-dropdown-item danger" onclick="authSignOut()">Sign Out</button>
+        </div>
+      </div>`;
   }
+
+  function toggleAccountMenu(e) {
+    e.stopPropagation();
+    document.getElementById('accountMenu')?.classList.toggle('open');
+  }
+  document.addEventListener('click', () => {
+    document.getElementById('accountMenu')?.classList.remove('open');
+  });
 
   async function authSignOut() {
     await sb.auth.signOut();
