@@ -453,7 +453,7 @@
     <input type="text" class="search-input" id="searchInput" oninput="filterProducts()"
       onfocus="document.getElementById('searchPlaceholder').style.opacity='0'"
       onblur="if(!this.value)document.getElementById('searchPlaceholder').style.opacity='1'" />
-    <span class="search-placeholder" id="searchPlaceholder">Search bags…</span>
+    <span class="search-placeholder" id="searchPlaceholder">Search <span id="searchRotate" style="transition:opacity 0.4s ease;display:inline-block;">bags</span></span>
   </div>
 </div>
 
@@ -1109,17 +1109,17 @@
       }, 400);
     }, 2800);
 
-    const searchTerms = ['Search bags…', 'Search clothes…', 'Search shoes…', 'Search electronics…', 'Search furniture…', 'Search accessories…'];
+    const searchTerms = ['bags', 'clothes', 'shoes', 'electronics', 'furniture', 'accessories'];
     let sIdx = 0;
-    const sp = document.getElementById('searchPlaceholder');
+    const sr = document.getElementById('searchRotate');
     setInterval(() => {
       const input = document.getElementById('searchInput');
       if (document.activeElement === input || input.value) return;
-      sp.classList.add('fade');
+      sr.style.opacity = '0';
       setTimeout(() => {
         sIdx = (sIdx + 1) % searchTerms.length;
-        sp.textContent = searchTerms[sIdx];
-        sp.classList.remove('fade');
+        sr.textContent = searchTerms[sIdx];
+        sr.style.opacity = '1';
       }, 400);
     }, 2800);
   })();
