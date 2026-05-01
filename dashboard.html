@@ -1021,24 +1021,43 @@
 <script>
   const SUPABASE_URL = 'https://gkjafimeduwdvpuknzuy.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_0_3aVoO9ilHRPYpHvXEjMA_SxEWzHBY';
-  // Service role key for owner writes — paste yours here
-  const SUPABASE_SERVICE_KEY = 'PASTE_YOUR_SERVICE_ROLE_KEY_HERE';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const sbAdmin = window.supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  // ── OWNER CREDENTIALS (change these) ──
-  const OWNER_EMAIL = 'owner@uniquethrift.com';
-  const OWNER_PASSWORD = 'UniqueThrift2026!';
+  // ── ADMIN API HELPER ──
+  function adminFetch(endpoint, body) {
+    const token = sessionStorage.getItem('ut_owner_token') || '';
+    return fetch(`/api/admin/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(body)
+    });
+  }
+
+  // ── XSS HELPER ──
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   let allOrders = [];
   let activeProductModal = null;
 
   // ── LOGIN ──
-  function login() {
+  async function login() {
     const email = document.getElementById('loginEmail').value.trim();
-    const pass = document.getElementById('loginPassword').value;
-    if (email === OWNER_EMAIL && pass === OWNER_PASSWORD) {
-      sessionStorage.setItem('ut_owner', '1');
+    const pass  = document.getElementById('loginPassword').value;
+    const res   = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass })
+    });
+    if (res.ok) {
+      const { token } = await res.json();
+      sessionStorage.setItem('ut_owner_token', token);
       showDashboard();
     } else {
       document.getElementById('loginError').classList.add('show');
@@ -1046,7 +1065,7 @@
   }
 
   function logout() {
-    sessionStorage.removeItem('ut_owner');
+    sessionStorage.removeItem('ut_owner_token');
     document.getElementById('dashboard').classList.remove('show');
     document.getElementById('loginScreen').style.display = 'flex';
   }
@@ -1058,8 +1077,8 @@
     loadAllData();
   }
 
-  // Auto-login if session exists
-  if (sessionStorage.getItem('ut_owner')) showDashboard();
+  // Auto-login if session token exists
+  if (sessionStorage.getItem('ut_owner_token')) showDashboard();
 
   // Enter key on login
   document.addEventListener('keydown', e => {
@@ -1217,7 +1236,7 @@
       <div class="detail-row"><span class="detail-key">Email</span><span class="detail-val">${p.seller_email}</span></div>
       <div class="detail-row"><span class="detail-key">Phone</span><span class="detail-val">${p.seller_phone}</span></div>
       <div class="detail-row"><span class="detail-key">Location</span><span class="detail-val">${p.seller_location || '—'}</span></div>
-      <div class="detail-row"><span class="detail-key">Description</span><span class="detail-val" style="font-size:12px;color:#555;">${p.description}</span></div>
+      <div class="detail-row"><span class="detail-key">Description</span><span class="detail-val" style="font-size:12px;color:#555;">${escapeHtml(p.description)}</span></div>
     `;
 
     const verdict = p.ai_verdict;
@@ -1251,12 +1270,8 @@
   });
 
   async function updateStatus(id, status) {
-    const { error } = await sb
-      .from('products')
-      .update({ status, reviewed_at: new Date().toISOString() })
-      .eq('id', id);
-
-    if (error) { showToast('Error updating status'); return; }
+    const res = await adminFetch('update-product-status', { id, status });
+    if (!res.ok) { showToast('Error updating status'); return; }
     showToast(status === 'approved' ? '✅ Product approved and now live!' : '❌ Product rejected');
 
     // Reload everything and re-render active page
@@ -1442,12 +1457,7 @@
     if (!text || !activeSessionId) return;
     input.value = '';
 
-    await sb.from('chat_messages').insert({
-      session_id: activeSessionId,
-      sender: 'owner',
-      sender_name: 'Unique Thrift',
-      message: text
-    });
+    await adminFetch('send-message', { session_id: activeSessionId, message: text });
 
     await renderConversation(activeSessionId);
   }
@@ -1510,9 +1520,7 @@
     document.getElementById('ownerStatusLabel').textContent = isOnline ? 'Online' : 'Offline';
     document.getElementById('ownerStatusLabel').style.color = isOnline ? 'var(--success)' : 'var(--muted)';
 
-    await sb.from('owner_status')
-      .update({ is_online: isOnline, last_seen: new Date().toISOString() })
-      .eq('id', 1);
+    await adminFetch('owner-status', { is_online: isOnline });
 
     showToast(isOnline ? '🟢 You are now online' : '⚫ You are now offline');
 
@@ -1521,7 +1529,7 @@
       if (window._ownerPing) clearInterval(window._ownerPing);
       window._ownerPing = setInterval(async () => {
         if (document.getElementById('ownerOnlineToggle').checked) {
-          await sb.from('owner_status').update({ last_seen: new Date().toISOString() }).eq('id', 1);
+          await adminFetch('owner-status', {});
         }
       }, 120000);
     }
@@ -1721,14 +1729,8 @@
       showToast('Counter must be below listed price'); return;
     }
 
-    const { error } = await sb.from('offers').update({
-      status:        'countered',
-      counter_amount: amount,
-      counter_note:   note || null,
-      countered_at:   new Date().toISOString()
-    }).eq('id', activeCounterOfferId);
-
-    if (error) { showToast('Failed to send counter'); return; }
+    const res = await adminFetch('counter-offer', { id: activeCounterOfferId, counter_amount: amount, counter_note: note || null });
+    if (!res.ok) { showToast('Failed to send counter'); return; }
 
     document.getElementById('counterModal').classList.remove('open');
     showToast('↔ Counter-offer sent to buyer!');
@@ -1737,12 +1739,8 @@
   }
 
   async function resolveOffer(offerId, status) {
-    const { error } = await sb.from('offers').update({
-      status,
-      resolved_at: new Date().toISOString()
-    }).eq('id', offerId);
-
-    if (error) { showToast('Failed to update offer'); return; }
+    const res = await adminFetch('resolve-offer', { id: offerId, status });
+    if (!res.ok) { showToast('Failed to update offer'); return; }
 
     const msgs = {
       accepted: '✅ Offer accepted — buyer notified!',
