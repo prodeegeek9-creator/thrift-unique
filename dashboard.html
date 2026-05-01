@@ -1251,7 +1251,7 @@
   });
 
   async function updateStatus(id, status) {
-    const { error } = await sb
+    const { error } = await sbAdmin
       .from('products')
       .update({ status, reviewed_at: new Date().toISOString() })
       .eq('id', id);
@@ -1442,7 +1442,7 @@
     if (!text || !activeSessionId) return;
     input.value = '';
 
-    await sb.from('chat_messages').insert({
+    await sbAdmin.from('chat_messages').insert({
       session_id: activeSessionId,
       sender: 'owner',
       sender_name: 'Unique Thrift',
@@ -1521,7 +1521,7 @@
       if (window._ownerPing) clearInterval(window._ownerPing);
       window._ownerPing = setInterval(async () => {
         if (document.getElementById('ownerOnlineToggle').checked) {
-          await sb.from('owner_status').update({ last_seen: new Date().toISOString() }).eq('id', 1);
+          await sbAdmin.from('owner_status').update({ last_seen: new Date().toISOString() }).eq('id', 1);
         }
       }, 120000);
     }
@@ -1721,7 +1721,7 @@
       showToast('Counter must be below listed price'); return;
     }
 
-    const { error } = await sb.from('offers').update({
+    const { error } = await sbAdmin.from('offers').update({
       status:        'countered',
       counter_amount: amount,
       counter_note:   note || null,
@@ -1737,7 +1737,7 @@
   }
 
   async function resolveOffer(offerId, status) {
-    const { error } = await sb.from('offers').update({
+    const { error } = await sbAdmin.from('offers').update({
       status,
       resolved_at: new Date().toISOString()
     }).eq('id', offerId);
