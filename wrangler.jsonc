@@ -1,8 +1,17 @@
 {
-  "name": "thrift-unique",
-  "main": "worker.js",
+  "name": "unique-thrift",
+  "main": "worker/index.js",
   "compatibility_date": "2026-04-30",
   "assets": {
-    "directory": "./"
+    // The built bundle, not the repo root. Serving "./" would publish src/,
+    // the migrations and anything else sitting in the working tree.
+    "directory": "./dist",
+    "binding": "ASSETS",
+
+    // Client-side routing: /dashboard/orders is a route in the bundle, not a
+    // file on disk, so an unmatched path has to answer with the document
+    // rather than a 404. The Worker still sees /api/* and /p/* first — see
+    // worker/index.js.
+    "not_found_handling": "single-page-application"
   }
 }

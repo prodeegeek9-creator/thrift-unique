@@ -8,6 +8,8 @@ import Login from './pages/Login.jsx';
 import Onboarding from './pages/Onboarding.jsx';
 import ConnectChannels from './pages/ConnectChannels.jsx';
 import NotFound from './pages/NotFound.jsx';
+import Product from './pages/public/Product.jsx';
+import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
 import Listings from './pages/seller/Listings.jsx';
@@ -32,6 +34,12 @@ import More from './pages/seller/More.jsx';
 export default function App() {
   return (
     <Routes>
+      {/* The only two public documents. Not a storefront: one item at a time,
+          reached by a link somebody was sent, with no cart and nothing to
+          browse. See pages/public/Product.jsx. */}
+      <Route path="/p/:code" element={<Product />} />
+      <Route path="/confirm/:token" element={<ConfirmReceipt />} />
+
       <Route path="/login" element={<Login />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/connect" element={<ConnectChannels />} />
