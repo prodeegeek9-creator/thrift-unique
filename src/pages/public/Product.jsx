@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { supabase } from '../../lib/supabase.js';
+import { fetchPublicProduct } from '../../lib/products.js';
 import { formatNaira } from '../../lib/money.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
@@ -38,13 +38,13 @@ export default function Product() {
   useEffect(() => {
     let active = true;
     (async () => {
-      const { data, error } = await supabase.rpc('public_product', { code });
+      const row = await fetchPublicProduct(code).catch(() => null);
       if (!active) return;
-      if (error || !data?.length) {
+      if (!row) {
         setState('missing');
         return;
       }
-      setProduct(data[0]);
+      setProduct(row);
       setState('ready');
     })();
     return () => {

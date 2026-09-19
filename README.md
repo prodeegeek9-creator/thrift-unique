@@ -28,6 +28,9 @@ src/
     Login, Onboarding, ConnectChannels, NotFound
   lib/           supabase.js, AuthContext, TenantContext, ToastContext,
                  features.js, money.js, privacy.js, whatsapp.js
+                 products.js, orders.js, payouts.js, contacts.js, disputes.js,
+                 analytics.js, staff.js, channels.js, billing.js,
+                 dashboard.js, tenants.js, queryKeys.js — the data layer
   index.css      Tailwind + the design tokens
   App.jsx        Routes
   main.jsx       React root + providers
@@ -121,6 +124,47 @@ status renders straight from a row:
 
 `escrow_status = 'none'` is a real state, not a null: Starter takes no hold at
 all.
+
+## The data layer
+
+One module per domain under `src/lib/`, and **no `supabase.from()` in a page**.
+A screen asks `fetchOrders(tenantId, { filter })`; it does not know what a
+column is called.
+
+| | |
+|---|---|
+| `products.js` | listings, counts, per-channel publish state |
+| `orders.js` | orders, order detail, and the escrow timeline |
+| `payouts.js` | available balance, pending escrow, payout history |
+| `contacts.js` | buyers, via the `buyer_summary` view |
+| `disputes.js` | raise and list |
+| `analytics.js` | sales trend and channel attribution |
+| `staff.js` | the three roles |
+| `channels.js` | connection state via `channel_status()` |
+| `billing.js` | usage counters, plan feature columns |
+| `dashboard.js` | Overview tiles, recent orders, the upgrade nudge |
+| `tenants.js` | store settings, share links, tenant branding |
+| `queryKeys.js` | every TanStack Query key, tenant-scoped |
+
+Three rules hold across all of them.
+
+**Every query filters `tenant_id` explicitly**, and that is required for
+correctness, not just defence. RLS returns rows for *every* tenant the signed-in
+person belongs to, so a seller running two stores would otherwise see both
+catalogues merged into one grid. The policy decides what they may see; the
+filter decides which store they are looking at.
+
+**Never `select('*')`.** Each module names its columns, and the list for a grid
+is not the list for an editor — descriptions are the longest column on
+`products` and no card displays one.
+
+**Totals are computed from rows, never stored.** A balance kept on the tenant
+drifts the first time something is deleted or a webhook is replayed, and the
+only person who notices is a seller disputing a payout.
+
+Query keys are tenant-scoped from the first segment, so switching stores in the
+sidebar cannot show the previous store's listings for a frame — the cache
+simply has no entry to show.
 
 ## Tenancy is three layers, and two of them are not in this bundle
 
@@ -304,7 +348,8 @@ yet.
   deliberate findings listed above ✅
 - Tenant #1 seeded: `unique-thrift`, Business tier, 0% commission, owner
   account confirmed and signing in ✅
-- Every seller page is a scaffold. No data layer yet.
+- Data layer complete: one module per domain, verified against the live schema ✅
+- Every seller page is still a scaffold — the modules exist, the screens do not
 - `worker/` is a shell: static assets and the SPA fallback, no routes.
 - `/confirm/:token` is a placeholder.
 
