@@ -242,6 +242,16 @@ defaults hand `anon` SELECT **and INSERT** on every table and leave RLS as the
 only thing in the way. Two layers instead of one: a grant that does not exist
 cannot be reached by a policy mistake.
 
+### The first tenant
+
+A tenant is provisioned by the Worker after the bot collects a business name
+and a tier, and there is deliberately no self-serve tenant creation from the
+browser — so with no Worker yet, the first one goes in by hand.
+`supabase/seed/first_tenant.sql` does it: the owner's auth user, the store, the
+membership and the flags in one pass. It is not a migration and does not live
+in `migrations/`, because it is one person's account with one password and
+should run exactly once.
+
 ### Advisor findings that are meant to stay
 
 - `public_product()` executable by `anon` — the entire point of it; a shared
@@ -292,15 +302,17 @@ yet.
   payout to themselves ✅
 - Grants cut back to match the policies; advisors clean apart from the
   deliberate findings listed above ✅
+- Tenant #1 seeded: `unique-thrift`, Business tier, 0% commission, owner
+  account confirmed and signing in ✅
 - Every seller page is a scaffold. No data layer yet.
 - `worker/` is a shell: static assets and the SPA fallback, no routes.
 - `/confirm/:token` is a placeholder.
 
 ## Next steps
 
-1. Fill `.env` with the publishable key and confirm sign-in works end to end.
-   There are no users and no tenants yet, so the first run needs a tenant
-   provisioned by hand until the Worker can do it.
+1. Fill `.env` with the publishable key and open the dashboard. Every screen is
+   a scaffold, so what this proves is the chain underneath: sign-in →
+   `TenantContext` → RLS → the right store.
 2. Phase 2 — the data layer: `lib/products.js`, `lib/orders.js`,
    `lib/payouts.js`, one module per domain, no `supabase.from()` in a page.
 3. Phase 3 — `worker/` for real: signed sessions, the Paystack webhook,
