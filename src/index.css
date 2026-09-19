@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The values behind every token in tailwind.config.js.
+ *
+ * Colours are space-separated channel triplets rather than hex so that
+ * Tailwind's slash-opacity syntax keeps working (`bg-green/10`). The two
+ * tokens that carry their own alpha — line and overlay — are whole colours
+ * instead, since an alpha that is already baked in cannot also be varied.
+ *
+ * Adding a colour means adding a variable here AND a token in
+ * tailwind.config.js. Never a hex literal in a component: tenant branding
+ * re-points these at runtime, and a literal is a colour that will not follow.
+ */
+:root {
+  /* Surfaces — carried over from the live marketplace, which already ships
+     this cream-on-white palette. */
+  --c-bg: 250 248 245;          /* #FAF8F5 */
+  --c-surface: 255 255 255;     /* #FFFFFF */
+  --c-surface-2: 247 245 241;   /* #F7F5F1 */
+  --c-line: #EAE4DC;
+  --c-overlay: rgba(42, 31, 26, 0.04);
+
+  /* The sidebar and the dark hero cards. The live site's nav is a dark brown
+     (#2C1810); the dashboard mockups are a dark forest green. This is the one
+     token that genuinely changes rather than ports. */
+  --c-sidebar: 18 48 30;        /* #12301E */
+  --c-sidebar-2: 28 66 43;      /* #1C422B — hover and raised panels */
+  --c-sidebar-text: 214 223 216;/* #D6DFD8 — resting nav label */
+
+  /* The active nav pill. Warm gold, deliberately not --c-amber. */
+  --c-gold: 200 154 74;         /* #C89A4A */
+
+  /* Type */
+  --c-ink: 42 31 26;            /* #2A1F1A — headings */
+  --c-text: 61 50 44;           /* #3D322C — body */
+  --c-muted: 138 128 120;       /* #8A8078 — secondary, labels, timestamps */
+
+  /* Status. Three colours and their tints, and that is the whole system:
+     green = active / paid / released, amber = processing / under review,
+     red = open dispute / failed. */
+  --c-green: 92 122 62;         /* #5C7A3E */
+  --c-green-lt: 237 242 232;    /* #EDF2E8 */
+  --c-amber: 212 82 42;         /* #D4522A */
+  --c-amber-lt: 250 240 234;    /* #FAF0EA */
+  --c-red: 201 64 64;           /* #C94040 */
+  --c-red-lt: 253 234 234;      /* #FDEAEA */
+
+  /* Tier badges. Kept away from the status hues on purpose — a "Growth+" pill
+     beside a locked nav item must not read as a success state. */
+  --c-tier-growth: 74 103 84;      /* #4A6754 */
+  --c-tier-growth-lt: 232 239 234; /* #E8EFEA */
+  --c-tier-business: 122 106 84;   /* #7A6A54 */
+  --c-tier-business-lt: 243 239 232; /* #F3EFE8 */
+
+  /* Chart series. A separate ramp from the status colours on purpose: green,
+     amber and red mean settled / in flight / wrong everywhere else in the
+     product, and a channel that happened to be "series 3" wearing red would
+     read as a failure.
+
+     Assigned in fixed order, never cycled — a sixth channel would fold into
+     "Direct" rather than getting a generated hue, because a generated hue is
+     indistinguishable from an existing one under colour-vision deficiency.
+
+     Validated against the cream surface rather than chosen by eye: worst
+     adjacent pair is Facebook↔Instagram at ΔE 13.0 under deuteranopia (target
+     ≥8) and 16.3 for normal vision (floor ≥15), and all five clear 3:1
+     contrast. Re-run the check before changing any of them. */
+  --c-series-whatsapp: 27 127 90;   /* #1B7F5A */
+  --c-series-instagram: 74 58 167;  /* #4A3AA7 */
+  --c-series-facebook: 42 120 214;  /* #2A78D6 */
+  --c-series-tiktok: 181 64 126;    /* #B5407E */
+  --c-series-direct: 168 120 31;    /* #A8781F */
+
+  --shadow-card: 0 1px 2px rgba(42, 31, 26, 0.04), 0 1px 3px rgba(42, 31, 26, 0.06);
+  --shadow-pop: 0 8px 24px rgba(42, 31, 26, 0.14);
+}
+
+/* No dark theme.
+ *
+ * Every mockup is light, and a dark palette nobody designed would be a
+ * guess shipped as a feature. The indirection above is what makes adding one
+ * cheap later: a second block here, a ThemeContext to flip an attribute on
+ * <html>, and no component touched. Until then there is nothing to toggle. */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans antialiased;
+    min-height: 100dvh;
+  }
+
+  /* Headings carry their colour here rather than inheriting, which is right
+     for the 95% of them that sit on a light surface — but it means a heading
+     inside a dark card does NOT pick up the parent's `text-white`. An element
+     selector loses to inheritance only when there is no element rule at all;
+     here there is one, so it wins over the inherited value.
+
+     Any heading on `bg-sidebar` therefore needs `text-white` on itself. This
+     was caught by a screenshot showing a store name in near-black on dark
+     green — the build was perfectly happy with it. */
+  h1, h2, h3 {
+    @apply font-display text-ink;
+  }
+
+  /* The dashboard's own scroll containers, not the page. Left alone on
+     mobile, where the platform's overlay scrollbars are already right. */
+  @media (min-width: 640px) {
+    .scroll-thin {
+      scrollbar-width: thin;
+      scrollbar-color: var(--c-line) transparent;
+    }
+  }
+}
+
+@layer components {
+  /* A card. Used often enough, and with a shadow specific enough, to be worth
+     naming once rather than repeating four utilities everywhere. */
+  .card {
+    @apply bg-surface border border-line rounded-card shadow-card;
+  }
+}

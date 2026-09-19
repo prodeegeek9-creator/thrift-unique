@@ -1,8 +1,34 @@
 {
+  // Must match the existing Cloudflare Worker, which is `thrift-unique`.
+  // Renaming it here does not rename the Worker — it points the deploy at a
+  // different one, which is how a green build ends up serving nothing at the
+  // URL people actually use.
   "name": "thrift-unique",
-  "main": "worker.js",
+  "main": "worker/index.js",
   "compatibility_date": "2026-04-30",
+
+  // Workers Builds runs this before deploying. The old setup served the repo
+  // root and needed no build; this one serves dist/, which does not exist
+  // until Vite has run.
+  //
+  // The bundle inlines VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY at build
+  // time, so both have to be set as build environment variables on the
+  // Cloudflare project — not as Worker secrets, which are only readable at
+  // request time and would arrive far too late.
+  "build": {
+    "command": "npm ci && npm run build"
+  },
+
   "assets": {
-    "directory": "./"
+    // The built bundle, not the repo root. Serving "./" would publish src/,
+    // the migrations and anything else sitting in the working tree.
+    "directory": "./dist",
+    "binding": "ASSETS",
+
+    // Client-side routing: /dashboard/orders is a route in the bundle, not a
+    // file on disk, so an unmatched path has to answer with the document
+    // rather than a 404. The Worker still sees /api/* and /p/* first — see
+    // worker/index.js.
+    "not_found_handling": "single-page-application"
   }
 }

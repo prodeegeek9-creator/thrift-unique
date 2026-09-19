@@ -1,0 +1,7 @@
+node_modules
+dist
+.env
+.env.local
+# Local state from `wrangler dev`, which is how worker/ gets exercised without
+# deploying. Regenerated on each run.
+.wrangler

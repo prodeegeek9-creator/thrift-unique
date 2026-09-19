@@ -1,0 +1,15 @@
+-- A column default is evaluated as the role doing the INSERT, exactly like an
+-- RLS policy expression is evaluated as the role doing the SELECT. Revoking
+-- EXECUTE from `authenticated` in 0007 therefore did not lock the function
+-- down -- it broke every product insert with
+-- "permission denied for function gen_public_code".
+--
+-- Same shape as the mistake in 0004/0005, in a different disguise. The rule
+-- worth remembering: if a function's name appears in a policy, a column
+-- default, a generated column or a trigger's WHEN clause, then the role that
+-- touches the table needs EXECUTE on it. "Who calls this function" is not
+-- answered by reading the function.
+--
+-- anon keeps nothing: 0006 revoked every table privilege from it, so it cannot
+-- insert a product and has no way to reach this default.
+grant execute on function public.gen_public_code() to authenticated;
