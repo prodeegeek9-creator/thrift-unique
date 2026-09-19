@@ -213,13 +213,46 @@ loses.
 
 ## The database
 
-Built from nothing, in order:
+Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 
 | | |
 |---|---|
 | `0001_tenancy.sql` | tenants, members, feature flags, scope helpers, RLS |
 | `0002_catalog_and_orders.sql` | products, buyers, orders, offers, the Contacts view, `public_product()` |
 | `0003_channels_payouts_disputes.sql` | publishing, OAuth connections, payouts, disputes |
+| `0004_function_grants.sql` | revoke the default PUBLIC `EXECUTE` on every function |
+| `0005_revoke_anon_execute.sql` | and the *explicit* `anon` grant, which 0004 missed |
+| `0006_table_grants.sql` | table privileges cut back to match the policies |
+
+Three of those six exist because of a trap worth knowing about. A new function
+in `public` ends up with **two** separate `EXECUTE` grants: the `PUBLIC` one
+Postgres adds, and an explicit one Supabase's default privileges give `anon`.
+`revoke ... from public` removes only the first. So 0004 looked right, passed a
+local test, and changed nothing that mattered — `seed_tenant_features()` stayed
+callable without signing in, and it is `SECURITY DEFINER`, it writes, and it
+takes the plan tier as an argument.
+
+The local test passed precisely *because* it was local: a stub database with
+hand-made `anon` and `authenticated` roles has only the PUBLIC grant. The
+explicit ones exist only on a real project. Supabase's database linter is what
+caught it — run `get_advisors` after every schema change, not just at the end.
+
+0006 then cut the table grants back to match the policies, because Supabase's
+defaults hand `anon` SELECT **and INSERT** on every table and leave RLS as the
+only thing in the way. Two layers instead of one: a grant that does not exist
+cannot be reached by a policy mistake.
+
+### Advisor findings that are meant to stay
+
+- `public_product()` executable by `anon` — the entire point of it; a shared
+  product link has no session behind it.
+- `channel_status()`, `current_tenant_ids()`, `has_tenant_role()` executable by
+  `authenticated` — the last two are named inside every RLS policy, and a
+  policy is evaluated with the caller's own privileges. Revoke them and every
+  screen fails with `permission denied for function`.
+- `channel_connections` has RLS on and no policy — deliberate. Every column on
+  it that matters is a credential; the dashboard reads `channel_status()`.
+- `rls_auto_enable()` is Supabase's own event-trigger function, not ours.
 
 Two tables from the old site are deliberately absent. No `cart`, because there
 is no storefront to put one on. No web `chat_messages`, because the
@@ -253,24 +286,25 @@ yet.
 - `StatusPill` covering every enum ✅
 - Login against Supabase auth ✅
 - `/p/:code` reads `public_product()` and deep-links into the bot ✅
-- Full schema written for a fresh database ✅
-- **Migrations not yet run — the Supabase project does not exist yet.** The
-  org has hit its two-project free limit; see *Next steps*.
+- Full schema **applied** to project `vhmyzawgtstjtavwzpzn` ✅
+- Tenant isolation verified end to end against real `auth.uid()`: a seller sees
+  only their own rows, cannot write into another tenant, and cannot insert a
+  payout to themselves ✅
+- Grants cut back to match the policies; advisors clean apart from the
+  deliberate findings listed above ✅
 - Every seller page is a scaffold. No data layer yet.
 - `worker/` is a shell: static assets and the SPA fallback, no routes.
 - `/confirm/:token` is a placeholder.
 
 ## Next steps
 
-1. Create the Supabase project. Blocked: the only organisation reachable from
-   tooling (`lindaokike@gmail.com's Org`) already has two active free projects
-   (`Prepbeta`, `automate-naija-prod`). Pause one, upgrade the org, or create
-   the project in the other organisation and supply its ref.
-2. Run `0001`–`0003`, then fill `.env` and confirm login works end to end.
-3. Phase 2 — the data layer: `lib/products.js`, `lib/orders.js`,
+1. Fill `.env` with the publishable key and confirm sign-in works end to end.
+   There are no users and no tenants yet, so the first run needs a tenant
+   provisioned by hand until the Worker can do it.
+2. Phase 2 — the data layer: `lib/products.js`, `lib/orders.js`,
    `lib/payouts.js`, one module per domain, no `supabase.from()` in a page.
-4. Phase 3 — `worker/` for real: signed sessions, the Paystack webhook,
+3. Phase 3 — `worker/` for real: signed sessions, the Paystack webhook,
    commission, escrow hold/release, and the signed confirm-receipt link.
-5. Submit the Meta App Review and the TikTok audit. One-time platform-level
+4. Submit the Meta App Review and the TikTok audit. One-time platform-level
    gates with multi-week lead times, and both block phase 5.
-6. Phase 4 — WAHA session layer and `infra/waha/`.
+5. Phase 4 — WAHA session layer and `infra/waha/`.
