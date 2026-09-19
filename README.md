@@ -44,9 +44,38 @@ supabase/
 
 ```
 npm install
-cp .env.example .env      # fill in the new project's URL and anon key
 npm run dev
 ```
+
+`.env.production` already carries the Supabase URL and publishable key, so a
+clone builds with no setup. Both are public by construction — Vite inlines them
+into the bundle, so anyone who opens the dashboard has them already, and RLS is
+what protects the data behind the key rather than its secrecy. Put a `.env` next
+to it to point at a different project locally; it is gitignored.
+
+The service-role key is not in either file and never will be. It belongs on the
+Worker, via `wrangler secret put`, where the browser cannot reach it.
+
+## Deploying
+
+Cloudflare Workers Builds, from `main`. `wrangler.jsonc` carries the build
+command, because the old setup served the repo root and needed no build at all
+while this one serves `dist/`.
+
+Two things there are easy to get wrong, and both are commented in the file:
+
+- **The Worker's `name` must stay `thrift-unique`.** Changing it does not
+  rename anything — it points the deploy at a different Worker, which is how a
+  green build ends up serving nothing at the URL people actually use.
+- **`VITE_*` variables are read at build time**, so they belong in the
+  Cloudflare project's *build* environment variables, not in Worker secrets,
+  which are only readable at request time. Setting them there overrides
+  `.env.production`, which is how a branch would point at a different Supabase
+  project.
+
+A build missing either variable fails outright rather than producing a bundle
+that points every request at `undefined` — that failure mode ships a dashboard
+which loads, looks perfectly normal and never shows a row.
 
 ## There is no storefront, and that is a decision
 
