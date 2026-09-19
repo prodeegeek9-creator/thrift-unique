@@ -61,6 +61,14 @@ export default {
         red: channel('--c-red'),
         'red-lt': channel('--c-red-lt'),
 
+        // Chart series. A separate ramp from status — see index.css for why,
+        // and for the validation numbers.
+        'series-whatsapp': channel('--c-series-whatsapp'),
+        'series-instagram': channel('--c-series-instagram'),
+        'series-facebook': channel('--c-series-facebook'),
+        'series-tiktok': channel('--c-series-tiktok'),
+        'series-direct': channel('--c-series-direct'),
+
         // Tier badges. Distinct from status on purpose: "Growth+" next to a
         // locked nav item must not read as "this succeeded".
         'tier-growth': channel('--c-tier-growth'),

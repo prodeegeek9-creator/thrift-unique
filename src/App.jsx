@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth.jsx';
 import RequireFeature from './components/RequireFeature.jsx';
@@ -18,13 +19,18 @@ import OrderDetail from './pages/seller/OrderDetail.jsx';
 import Payouts from './pages/seller/Payouts.jsx';
 import Contacts from './pages/seller/Contacts.jsx';
 import Disputes from './pages/seller/Disputes.jsx';
-import Analytics from './pages/seller/Analytics.jsx';
 import Team from './pages/seller/Team.jsx';
 import Channels from './pages/seller/Channels.jsx';
 import Billing from './pages/seller/Billing.jsx';
 import Settings from './pages/seller/Settings.jsx';
 import Help from './pages/seller/Help.jsx';
 import More from './pages/seller/More.jsx';
+
+// Lazy: it is the only screen that pulls in Recharts, and that library is
+// roughly half the bundle. It is also Business-tier, so RequireFeature renders
+// the upsell instead — a Starter seller who opens /dashboard/analytics never
+// downloads the chunk at all.
+const Analytics = lazy(() => import('./pages/seller/Analytics.jsx'));
 
 // Note the shape of the guarded routes: RequireFeature wraps the *element*,
 // not the route, so the path still resolves and the URL stays put. A Starter
@@ -78,7 +84,9 @@ export default function App() {
           path="analytics"
           element={
             <RequireFeature flag="analytics">
-              <Analytics />
+              <Suspense fallback={<div className="h-96 animate-pulse rounded-card bg-surface-2" />}>
+                <Analytics />
+              </Suspense>
             </RequireFeature>
           }
         />

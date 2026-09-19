@@ -54,6 +54,25 @@
   --c-tier-business: 122 106 84;   /* #7A6A54 */
   --c-tier-business-lt: 243 239 232; /* #F3EFE8 */
 
+  /* Chart series. A separate ramp from the status colours on purpose: green,
+     amber and red mean settled / in flight / wrong everywhere else in the
+     product, and a channel that happened to be "series 3" wearing red would
+     read as a failure.
+
+     Assigned in fixed order, never cycled — a sixth channel would fold into
+     "Direct" rather than getting a generated hue, because a generated hue is
+     indistinguishable from an existing one under colour-vision deficiency.
+
+     Validated against the cream surface rather than chosen by eye: worst
+     adjacent pair is Facebook↔Instagram at ΔE 13.0 under deuteranopia (target
+     ≥8) and 16.3 for normal vision (floor ≥15), and all five clear 3:1
+     contrast. Re-run the check before changing any of them. */
+  --c-series-whatsapp: 27 127 90;   /* #1B7F5A */
+  --c-series-instagram: 74 58 167;  /* #4A3AA7 */
+  --c-series-facebook: 42 120 214;  /* #2A78D6 */
+  --c-series-tiktok: 181 64 126;    /* #B5407E */
+  --c-series-direct: 168 120 31;    /* #A8781F */
+
   --shadow-card: 0 1px 2px rgba(42, 31, 26, 0.04), 0 1px 3px rgba(42, 31, 26, 0.06);
   --shadow-pop: 0 8px 24px rgba(42, 31, 26, 0.14);
 }
@@ -75,6 +94,15 @@
     min-height: 100dvh;
   }
 
+  /* Headings carry their colour here rather than inheriting, which is right
+     for the 95% of them that sit on a light surface — but it means a heading
+     inside a dark card does NOT pick up the parent's `text-white`. An element
+     selector loses to inheritance only when there is no element rule at all;
+     here there is one, so it wins over the inherited value.
+
+     Any heading on `bg-sidebar` therefore needs `text-white` on itself. This
+     was caught by a screenshot showing a store name in near-black on dark
+     green — the build was perfectly happy with it. */
   h1, h2, h3 {
     @apply font-display text-ink;
   }

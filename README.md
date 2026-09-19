@@ -166,6 +166,26 @@ Query keys are tenant-scoped from the first segment, so switching stores in the
 sidebar cannot show the previous store's listings for a frame — the cache
 simply has no entry to show.
 
+## Charts
+
+Series colours are a **separate ramp from the status colours**, defined as
+`--c-series-*` in `index.css`. Green, amber and red already mean settled / in
+flight / wrong everywhere else in the product, so a channel that happened to be
+"series 4" wearing red would read as a failure.
+
+The ramp was validated rather than chosen: worst adjacent pair is
+Facebook↔Instagram at ΔE 13.0 under deuteranopia (target ≥8) and 16.3 for
+normal vision (floor ≥15), with all five clearing 3:1 contrast on the cream
+surface. **Re-run the check before changing any of them** — the first two
+palettes tried looked fine and failed.
+
+Channel attribution is a **stacked bar, not the donut in the mockups**. A donut
+asks the reader to compare arc lengths around a circle, which is the comparison
+people are worst at, and Instagram at 30% against Facebook at 19% is close
+enough to be a coin flip. One straight axis, numbers written out beside every
+channel, and the legend doubles as the table so identity never rests on colour
+alone.
+
 ## Tenancy is three layers, and two of them are not in this bundle
 
 `TenantContext` resolves which business you are acting as, once, from
@@ -349,7 +369,9 @@ yet.
 - Tenant #1 seeded: `unique-thrift`, Business tier, 0% commission, owner
   account confirmed and signing in ✅
 - Data layer complete: one module per domain, verified against the live schema ✅
-- Every seller page is still a scaffold — the modules exist, the screens do not
+- All 14 seller screens built and rendered against a mocked API ✅
+- Analytics code-split: Recharts is ~40% of the bundle and a Business-tier
+  screen, so a Starter seller never downloads it ✅
 - `worker/` is a shell: static assets and the SPA fallback, no routes.
 - `/confirm/:token` is a placeholder.
 
