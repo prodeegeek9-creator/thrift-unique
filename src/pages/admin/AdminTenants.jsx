@@ -77,11 +77,7 @@ export default function AdminTenants() {
                       {formatNaira(t.stats.gmv)}
                     </td>
                     <td className="px-4 py-3">
-                      {/* Whether a store can actually receive listings. A tenant
-                          with no WAHA session is onboarded but mute. */}
-                      <span className={t.waha_session ? 'text-green' : 'text-muted'}>
-                        {t.waha_session ? 'Linked' : 'Not linked'}
-                      </span>
+                      <WhatsappCell tenant={t} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-muted">{dateOnly(t.created_at)}</td>
                   </tr>
@@ -92,5 +88,32 @@ export default function AdminTenants() {
         )}
       </div>
     </>
+  );
+}
+
+// Whether a store can actually reach anybody.
+//
+// "Has a session" and "that session works" are different questions, and only
+// the second one matters: a seller whose phone was unlinked from WhatsApp's
+// Linked Devices list still has a session row and reaches nobody. This is the
+// one place on the platform where that shows up before the seller complains,
+// so a dead session reads as a problem rather than as a tick.
+function WhatsappCell({ tenant }) {
+  if (!tenant.waha_session) {
+    return <span className="text-muted">Not linked</span>;
+  }
+
+  if (tenant.waha_status === 'WORKING') {
+    return <span className="text-green">Working</span>;
+  }
+
+  if (tenant.waha_status === 'SCAN_QR_CODE' || tenant.waha_status === 'STARTING') {
+    return <span className="text-amber">Pairing</span>;
+  }
+
+  return (
+    <span className="font-medium text-red" title={tenant.waha_status ?? 'No status reported'}>
+      {tenant.waha_status === 'FAILED' ? 'Logged out' : 'Not working'}
+    </span>
   );
 }

@@ -61,7 +61,7 @@ export async function handleAdmin(request, env, path) {
 
 async function overview(cfg) {
   const [tenants, orders, held, disputes] = await Promise.all([
-    db(cfg).select('tenants', 'select=id,tier,status'),
+    db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
@@ -99,13 +99,29 @@ async function overview(cfg) {
       overdue: held.filter((o) => o.confirm_deadline && new Date(o.confirm_deadline) < now).length,
     },
     openDisputes: disputes.length,
+
+    // WhatsApp, across the platform.
+    //
+    // `broken` is the number that matters and the reason this is counted at
+    // all: a seller whose phone was unlinked from WhatsApp's own Linked
+    // Devices list still has a session and reaches nobody, and nothing else
+    // in the system notices. They will not report it as an outage — they will
+    // report that sales went quiet, weeks later.
+    whatsapp: {
+      linked: tenants.filter((t) => t.waha_session).length,
+      working: tenants.filter((t) => t.waha_status === 'WORKING').length,
+      broken: tenants.filter(
+        (t) => t.waha_session && !['WORKING', 'STARTING', 'SCAN_QR_CODE'].includes(t.waha_status)
+      ).length,
+    },
   });
 }
 
 async function listTenants(cfg) {
   const tenants = await db(cfg).select(
     'tenants',
-    'select=id,slug,name,tier,status,commission_pct,whatsapp_number,waha_session,created_at' +
+    'select=id,slug,name,tier,status,commission_pct,whatsapp_number,waha_session,' +
+      'waha_status,created_at' +
       '&order=created_at.desc&limit=200'
   );
 

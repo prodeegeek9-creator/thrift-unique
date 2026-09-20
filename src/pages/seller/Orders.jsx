@@ -11,6 +11,7 @@ import { formatNaira } from '../../lib/money.js';
 import { maskPhone, shortName } from '../../lib/privacy.js';
 import { dateTime } from '../../lib/time.js';
 import { keys } from '../../lib/queryKeys.js';
+import { firstImage } from '../../lib/images.js';
 
 const CHIPS = [
   { id: 'all', label: 'All' },
@@ -88,8 +89,8 @@ export default function Orders() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-2">
-                        {o.product?.images?.[0] ? (
-                          <img src={o.product.images[0]} alt="" className="h-8 w-8 rounded object-cover" />
+                        {firstImage(o.product) ? (
+                          <img src={firstImage(o.product)} alt="" className="h-8 w-8 rounded object-cover" />
                         ) : (
                           <span className="grid h-8 w-8 place-items-center rounded bg-surface-2 text-muted">
                             <Icon name="listings" className="h-3.5 w-3.5" />

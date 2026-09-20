@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import TierBadge from '../../components/ui/TierBadge.jsx';
+import WhatsappLink from '../../components/WhatsappLink.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { fetchChannels, whatsappState } from '../../lib/channels.js';
 import { keys } from '../../lib/queryKeys.js';
@@ -28,6 +29,12 @@ export default function Channels() {
   return (
     <>
       <PageHeader title="Channels" subtitle="Where your listings get posted." />
+
+      {/* First, above everything: on Starter this is the only channel there
+          is, and on every tier it is the one that can break silently. */}
+      <div className="mb-4">
+        <WhatsappLink />
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="card divide-y divide-line">

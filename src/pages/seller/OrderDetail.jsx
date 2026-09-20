@@ -8,6 +8,7 @@ import { formatNaira, sellerProceeds } from '../../lib/money.js';
 import { maskPhone } from '../../lib/privacy.js';
 import { dateTime } from '../../lib/time.js';
 import { keys } from '../../lib/queryKeys.js';
+import { firstImage } from '../../lib/images.js';
 
 const CONDITION = {
   brand_new: 'Brand new',
@@ -70,8 +71,8 @@ export default function OrderDetail() {
         <div className="space-y-4 md:col-span-3">
           <div className="card p-4">
             <div className="flex items-center gap-3">
-              {order.product?.images?.[0] ? (
-                <img src={order.product.images[0]} alt="" className="h-16 w-16 rounded-lg object-cover" />
+              {firstImage(order.product) ? (
+                <img src={firstImage(order.product)} alt="" className="h-16 w-16 rounded-lg object-cover" />
               ) : (
                 <span className="grid h-16 w-16 place-items-center rounded-lg bg-surface-2 text-muted">
                   <Icon name="listings" className="h-5 w-5" />

@@ -54,7 +54,10 @@ export function TenantProvider({ children }) {
         .select(
           'role, tenant:tenants!inner(' +
             'id, slug, name, tier, status, logo_url, brand_color, ' +
-            'whatsapp_number, commission_pct, created_at' +
+            // waha_status, but not waha_session: the Channels screen has to
+            // show whether the seller's WhatsApp is actually working, and a
+            // status is a state rather than an identifier.
+            'whatsapp_number, waha_status, commission_pct, created_at' +
           ')'
         )
         .eq('user_id', user.id);

@@ -4,6 +4,7 @@ import { fetchPublicProduct } from '../../lib/products.js';
 import { formatNaira } from '../../lib/money.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
+import { firstImage } from '../../lib/images.js';
 
 // One item. Not a shop.
 //
@@ -73,9 +74,9 @@ export default function Product() {
 
   return (
     <Frame wide>
-      {product.images?.[0] ? (
+      {firstImage(product) ? (
         <img
-          src={product.images[0]}
+          src={firstImage(product)}
           alt={product.title}
           className="aspect-square w-full rounded-card object-cover"
         />

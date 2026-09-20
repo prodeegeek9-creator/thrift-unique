@@ -12,6 +12,7 @@ import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
 import { renderProductPage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
+import { handleWaha } from './routes/waha.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -81,13 +82,18 @@ async function api(request, env, path) {
     return json({ error: 'Method not allowed' }, 405);
   }
 
+  // WhatsApp: the listing bot's webhook, and the session a seller links by
+  // scanning a QR code.
+  if (path.startsWith('/api/waha')) {
+    return handleWaha(request, env, path);
+  }
+
   // Not built yet, and saying so is better than a 404 that reads like a typo.
   //
-  // WAHA and the Meta/TikTok OAuth flows each need credentials and an
-  // external account to test against, so they are deliberately absent rather
-  // than written blind — see the README.
+  // The Meta and TikTok OAuth flows need an app review and an audit before
+  // they can be tested against anything real, so they are deliberately absent
+  // rather than written blind — see the README.
   if (
-    path.startsWith('/api/waha/') ||
     path.startsWith('/api/oauth/') ||
     path.startsWith('/api/publish/') ||
     path.startsWith('/api/tenants/')
