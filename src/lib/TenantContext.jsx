@@ -9,7 +9,7 @@ import { hasFeature } from './features.js';
 // whole rule: a tenant id the client chooses is not tenancy, it is a request,
 // and a request is exactly what an attacker also gets to make. The database
 // decides independently through current_tenant_ids() in its RLS policies, and
-// the Worker decides a third time in worker/lib/guard.js for the writes that
+// the Worker decides a third time, in worker/lib/orders.js, for the writes that
 // run under the service key. Three layers, because the two that live in this
 // bundle are both editable by whoever is holding the laptop.
 //

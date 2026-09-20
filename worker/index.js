@@ -4,41 +4,88 @@
 // service key, Paystack, WAHA, the Meta and TikTok OAuth tokens, escrow
 // release, tenant provisioning. The bundle in dist/ talks to this and to
 // Supabase-through-RLS, and to nothing else.
-//
-// Routes land here in phase 3. Today this is the shell: static assets, the
-// SPA fallback, and the two public paths that need an answer before the
-// dashboard is worth deploying.
+
+import { ConfigError } from './lib/env.js';
+import { json } from './lib/http.js';
+import { handlePaystackWebhook } from './routes/paystack.js';
+import { getConfirmable, confirmReceipt } from './routes/confirm.js';
+import { renderProductPage } from './routes/storefront.js';
+import { releaseExpiredHolds } from './routes/escrow.js';
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const path = url.pathname;
 
-    if (url.pathname.startsWith('/api/')) {
-      return json({ error: 'Not implemented' }, 501);
+    try {
+      if (path.startsWith('/api/')) {
+        return await api(request, env, path);
+      }
+
+      // A shared product link. The document is the same bundle everyone else
+      // gets; what makes it worth rendering here is the link preview.
+      const shared = path.match(/^\/p\/([A-Za-z0-9]{4,10})\/?$/);
+      if (shared) {
+        return await renderProductPage(request, env, shared[1]);
+      }
+
+      // Everything else: a real file if there is one, index.html if not.
+      // not_found_handling in wrangler.jsonc does the second part.
+      return await env.ASSETS.fetch(request);
+    } catch (err) {
+      // A missing secret is a deployment problem, not a bad request, and
+      // saying so plainly saves a long hunt through logs.
+      if (err instanceof ConfigError) {
+        console.error('config:', err.message);
+        return json({ error: 'Server is not configured' }, 503);
+      }
+      console.error('unhandled:', err?.stack || err);
+      return json({ error: 'Something went wrong' }, 500);
     }
+  },
 
-    // A shared product link. The document is the same bundle everyone else
-    // gets; what makes it worth rendering at the edge is the link preview —
-    // a forwarded WhatsApp Status or a Facebook post has to show the photo
-    // and the price, not the bare URL.
-    //
-    // Two things happen here once this is built: the og: tags are injected
-    // from the product row, and the blanket noindex in index.html is replaced,
-    // because that default exists to keep the *dashboard* out of search and
-    // would otherwise take the public pages with it.
-    if (url.pathname.startsWith('/p/')) {
-      return env.ASSETS.fetch(request);
-    }
-
-    // Everything else: a real file if there is one, index.html if there is
-    // not. not_found_handling in wrangler.jsonc does the second part.
-    return env.ASSETS.fetch(request);
+  // The escrow deadline sweep. Schedule it in wrangler.jsonc — without a
+  // trigger, held funds never release on their own and every order waits on a
+  // buyer who may never come back.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      releaseExpiredHolds(env).then((r) =>
+        console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`)
+      )
+    );
   },
 };
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
+async function api(request, env, path) {
+  const method = request.method;
+
+  if (method === 'OPTIONS') return new Response(null, { status: 204 });
+
+  if (path === '/api/paystack/webhook' && method === 'POST') {
+    return handlePaystackWebhook(request, env);
+  }
+
+  const confirm = path.match(/^\/api\/confirm\/(.+)$/);
+  if (confirm) {
+    const token = confirm[1];
+    if (method === 'GET') return getConfirmable(token, env);
+    if (method === 'POST') return confirmReceipt(token, env);
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  // Not built yet, and saying so is better than a 404 that reads like a typo.
+  //
+  // WAHA and the Meta/TikTok OAuth flows each need credentials and an
+  // external account to test against, so they are deliberately absent rather
+  // than written blind — see the README.
+  if (
+    path.startsWith('/api/waha/') ||
+    path.startsWith('/api/oauth/') ||
+    path.startsWith('/api/publish/') ||
+    path.startsWith('/api/tenants/')
+  ) {
+    return json({ error: 'Not implemented yet' }, 501);
+  }
+
+  return json({ error: 'Not found' }, 404);
 }
