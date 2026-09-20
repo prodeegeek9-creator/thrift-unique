@@ -1,0 +1,370 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import worker from '../index.js';
+import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
+
+// The operator console is the one place in the system that reads across
+// tenants. Every RLS policy is strictly tenant-scoped with no admin exception,
+// so requireOperator() is the entire privilege boundary — which makes these
+// the most load-bearing tests in the repo.
+
+const OWNER = { id: 'user-owner', email: 'owner@platform.test' };
+const SUPPORT = { id: 'user-support', email: 'support@platform.test' };
+const SELLER = { id: 'user-seller', email: 'seller@store.test' };
+
+const TOKENS = {
+  'tok-owner': OWNER,
+  'tok-support': SUPPORT,
+  'tok-seller': SELLER,
+};
+
+const TENANT = 'aaaaaaaa-0000-0000-0000-00000000000a';
+const ORDER = 'bbbbbbbb-0000-0000-0000-00000000000b';
+const DISPUTE = 'cccccccc-0000-0000-0000-00000000000c';
+
+function seed() {
+  return {
+    platform_admins: [
+      { user_id: OWNER.id, level: 'owner' },
+      { user_id: SUPPORT.id, level: 'support' },
+      // SELLER is deliberately absent.
+    ],
+    tenants: [
+      { id: TENANT, slug: 'store', name: 'Store', tier: 'growth', status: 'active', commission_pct: 8 },
+    ],
+    tenant_features: [{ tenant_id: TENANT, flag: 'analytics', enabled: false }],
+    tenant_members: [],
+    products: [],
+    buyers: [],
+    orders: [
+      { id: ORDER, tenant_id: TENANT, order_code: 'UT-2001', amount: 35000, commission: 2800,
+        status: 'escrow', escrow_status: 'held', confirmed_at: null, payment_ref: 'REF-9',
+        confirm_deadline: new Date(Date.now() + 86_400_000).toISOString() },
+    ],
+    disputes: [
+      { id: DISPUTE, tenant_id: TENANT, order_id: ORDER, reason: 'Item not as described',
+        status: 'open', outcome: null, created_at: new Date().toISOString() },
+    ],
+    payouts: [],
+    payout_items: [],
+    operator_audit: [],
+  };
+}
+
+function call(path, { token, method = 'GET', body } = {}) {
+  return new Request(`https://example.com${path}`, {
+    method,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+function ctx(extra = {}) {
+  const sb = makeFakeSupabase(seed());
+  const restore = installFetch({ supabase: sb, tokens: TOKENS, ...extra });
+  return { sb, restore };
+}
+
+// ── the boundary ─────────────────────────────────────────────────────────────
+
+test('no token, a forged token, and a real seller are all refused', async () => {
+  const { sb, restore } = ctx();
+  try {
+    for (const token of [undefined, 'nonsense', 'tok-seller']) {
+      const res = await worker.fetch(call('/api/admin/overview', { token }), env(), {});
+      assert.equal(res.status, 403, `token ${token} got through`);
+
+      const body = await res.json();
+      // Same wording every time: an answer that distinguishes "bad token" from
+      // "not an operator" tells an attacker which half to work on.
+      assert.equal(body.error, 'Not authorised');
+    }
+  } finally { restore(); }
+});
+
+test('a signed-in seller cannot reach the console even with a valid token', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(call('/api/admin/tenants', { token: 'tok-seller' }), env(), {});
+    assert.equal(res.status, 403);
+  } finally { restore(); }
+});
+
+test('support can look, but cannot move money or change a plan', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const look = await worker.fetch(call('/api/admin/overview', { token: 'tok-support' }), env(), {});
+    assert.equal(look.status, 200, 'support should be able to read');
+
+    // Owner-level: releasing funds.
+    const release = await worker.fetch(
+      call(`/api/admin/escrow/${ORDER}/release`, { token: 'tok-support', method: 'POST', body: {} }),
+      env(), {}
+    );
+    assert.equal(release.status, 403);
+    assert.equal(sb.tables.orders[0].escrow_status, 'held', 'support released a hold');
+    assert.equal(sb.tables.payouts.length, 0);
+
+    // Owner-level: changing what a tenant gets.
+    const flag = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/flags`, {
+        token: 'tok-support', method: 'POST', body: { flag: 'analytics', enabled: true },
+      }),
+      env(), {}
+    );
+    assert.equal(flag.status, 403);
+    assert.equal(sb.tables.tenant_features[0].enabled, false, 'support changed a flag');
+  } finally { restore(); }
+});
+
+test('support CAN resolve a dispute — that is the level\'s job', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-support', method: 'POST', body: { outcome: 'no_action', resolution: 'Buyer withdrew' },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal(sb.tables.disputes[0].status, 'resolved');
+    assert.equal(sb.tables.disputes[0].resolved_by, SUPPORT.id);
+  } finally { restore(); }
+});
+
+// ── owner actions ────────────────────────────────────────────────────────────
+
+test('an owner can flip a flag, and it is audited', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/flags`, {
+        token: 'tok-owner', method: 'POST', body: { flag: 'analytics', enabled: true },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal(sb.tables.tenant_features[0].enabled, true);
+
+    const entry = sb.tables.operator_audit.at(-1);
+    assert.equal(entry.action, 'flag.set');
+    assert.equal(entry.actor, OWNER.id);
+    assert.equal(entry.subject, 'analytics');
+    assert.deepEqual(entry.detail, { enabled: true });
+  } finally { restore(); }
+});
+
+test('a flag that has no row yet is created rather than silently ignored', async () => {
+  const { sb, restore } = ctx();
+  try {
+    await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/flags`, {
+        token: 'tok-owner', method: 'POST', body: { flag: 'ai_match', enabled: true },
+      }),
+      env(), {}
+    );
+    const row = sb.tables.tenant_features.find((f) => f.flag === 'ai_match');
+    assert.ok(row, 'no row was inserted');
+    assert.equal(row.enabled, true);
+  } finally { restore(); }
+});
+
+test('a malformed flag request changes nothing', async () => {
+  const { sb, restore } = ctx();
+  try {
+    for (const body of [{}, { flag: 'analytics' }, { flag: 5, enabled: true }, { flag: 'x', enabled: 'yes' }]) {
+      const res = await worker.fetch(
+        call(`/api/admin/tenants/${TENANT}/flags`, { token: 'tok-owner', method: 'POST', body }),
+        env(), {}
+      );
+      assert.equal(res.status, 400, `accepted ${JSON.stringify(body)}`);
+    }
+    assert.equal(sb.tables.tenant_features[0].enabled, false);
+    assert.equal(sb.tables.operator_audit.length, 0, 'a rejected request was audited');
+  } finally { restore(); }
+});
+
+test('suspending a tenant is recorded, and a bogus status is refused', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const bad = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/status`, {
+        token: 'tok-owner', method: 'POST', body: { status: 'deleted' },
+      }),
+      env(), {}
+    );
+    assert.equal(bad.status, 400);
+    assert.equal(sb.tables.tenants[0].status, 'active');
+
+    const ok = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/status`, {
+        token: 'tok-owner', method: 'POST', body: { status: 'suspended' },
+      }),
+      env(), {}
+    );
+    assert.equal(ok.status, 200);
+    assert.equal(sb.tables.tenants[0].status, 'suspended');
+    assert.equal(sb.tables.operator_audit.at(-1).action, 'tenant.status');
+  } finally { restore(); }
+});
+
+test('forcing a release pays once, and a second press pays nothing', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const first = await worker.fetch(
+      call(`/api/admin/escrow/${ORDER}/release`, {
+        token: 'tok-owner', method: 'POST', body: { reason: 'Buyer confirmed by phone' },
+      }),
+      env(), {}
+    );
+    assert.equal((await first.json()).released, true);
+    assert.equal(sb.tables.orders[0].escrow_status, 'released');
+    assert.equal(sb.tables.payouts.length, 1);
+    assert.equal(sb.tables.payouts[0].amount, 32200, '35000 less the 2800 charged');
+
+    const second = await worker.fetch(
+      call(`/api/admin/escrow/${ORDER}/release`, { token: 'tok-owner', method: 'POST', body: {} }),
+      env(), {}
+    );
+    assert.equal((await second.json()).already, true);
+    assert.equal(sb.tables.payouts.length, 1, 'a second release paid again');
+
+    const entry = sb.tables.operator_audit.find((e) => e.action === 'escrow.release');
+    assert.equal(entry.detail.reason, 'Buyer confirmed by phone');
+    assert.equal(entry.subject, 'UT-2001');
+  } finally { restore(); }
+});
+
+// ── disputes ─────────────────────────────────────────────────────────────────
+
+test('resolving for the seller releases the hold', async () => {
+  const { sb, restore } = ctx();
+  try {
+    await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-owner', method: 'POST', body: { outcome: 'released', resolution: 'Tracking shows delivered' },
+      }),
+      env(), {}
+    );
+
+    assert.equal(sb.tables.orders[0].escrow_status, 'released');
+    assert.equal(sb.tables.payouts.length, 1);
+    assert.equal(sb.tables.disputes[0].outcome, 'released');
+  } finally { restore(); }
+});
+
+test('resolving for the buyer reverses the hold and pays nobody', async () => {
+  const { sb, restore } = ctx();
+  try {
+    await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-owner', method: 'POST', body: { outcome: 'refunded', resolution: 'Never arrived' },
+      }),
+      env(), {}
+    );
+
+    assert.equal(sb.tables.orders[0].escrow_status, 'refunded');
+    assert.equal(sb.tables.orders[0].status, 'refunded');
+    assert.equal(sb.tables.payouts.length, 0, 'a refund paid the seller');
+
+    // The payment reference is carried into the audit row, because returning
+    // the money to the card is a separate deliberate step and whoever does it
+    // needs the reference.
+    const entry = sb.tables.operator_audit.at(-1);
+    assert.equal(entry.detail.payment_ref, 'REF-9');
+    assert.equal(entry.detail.moved, 'refunded');
+  } finally { restore(); }
+});
+
+test('an already-resolved dispute is not resolved twice', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const body = { outcome: 'released', resolution: 'first' };
+    await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, { token: 'tok-owner', method: 'POST', body }),
+      env(), {}
+    );
+    const again = await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-owner', method: 'POST', body: { outcome: 'refunded', resolution: 'second' },
+      }),
+      env(), {}
+    );
+
+    assert.equal((await again.json()).already, true);
+    assert.equal(sb.tables.disputes[0].outcome, 'released', 'outcome was overwritten');
+    assert.equal(sb.tables.payouts.length, 1);
+  } finally { restore(); }
+});
+
+test('a bogus outcome is refused', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-owner', method: 'POST', body: { outcome: 'pay_me' },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 400);
+    assert.equal(sb.tables.disputes[0].status, 'open');
+  } finally { restore(); }
+});
+
+// ── reads ────────────────────────────────────────────────────────────────────
+
+test('the overview counts overdue holds, which is how a stuck sweep shows up', async () => {
+  const sb = makeFakeSupabase({
+    ...seed(),
+    orders: [
+      { id: 'o1', tenant_id: TENANT, amount: 1000, commission: 80, status: 'completed', escrow_status: 'released' },
+      { id: 'o2', tenant_id: TENANT, amount: 2000, commission: 160, status: 'escrow', escrow_status: 'held',
+        confirm_deadline: new Date(Date.now() - 86_400_000).toISOString() },
+      { id: 'o3', tenant_id: TENANT, amount: 3000, commission: 240, status: 'escrow', escrow_status: 'held',
+        confirm_deadline: new Date(Date.now() + 86_400_000).toISOString() },
+    ],
+  });
+  const restore = installFetch({ supabase: sb, tokens: TOKENS });
+  try {
+    const res = await worker.fetch(call('/api/admin/overview', { token: 'tok-owner' }), env(), {});
+    const body = await res.json();
+
+    assert.equal(body.escrow.held, 2);
+    assert.equal(body.escrow.amount, 5000);
+    assert.equal(body.escrow.overdue, 1, 'an overdue hold went uncounted');
+    assert.equal(body.gmv, 1000, 'only settled orders count toward GMV');
+
+    // Settled commission only. A hold can still be refunded, and counting it
+    // as revenue would make the platform's earnings drop when a dispute is
+    // resolved — a number nobody can reconcile against a bank statement.
+    assert.equal(body.commission, 80, 'escrow commission counted as earned');
+    assert.equal(body.escrow.commissionPending, 400, 'pending commission not reported');
+  } finally { restore(); }
+});
+
+test('a tenant view never returns the Paystack subaccount', async () => {
+  const sb = makeFakeSupabase({
+    ...seed(),
+    tenants: [{ id: TENANT, slug: 'store', name: 'Store', tier: 'growth', status: 'active',
+                commission_pct: 8, paystack_subaccount: 'ACCT_secret' }],
+  });
+  const restore = installFetch({ supabase: sb, tokens: TOKENS });
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}`, { token: 'tok-owner' }), env(), {}
+    );
+    const text = await res.text();
+    assert.equal(text.includes('ACCT_secret'), false, 'a credential reached the console');
+  } finally { restore(); }
+});
+
+test('/me reports the level the console should draw for', async () => {
+  const { restore } = ctx();
+  try {
+    for (const [token, level] of [['tok-owner', 'owner'], ['tok-support', 'support']]) {
+      const res = await worker.fetch(call('/api/admin/me', { token }), env(), {});
+      assert.equal((await res.json()).level, level);
+    }
+  } finally { restore(); }
+});

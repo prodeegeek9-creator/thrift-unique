@@ -34,9 +34,12 @@ src/
   index.css      Tailwind + the design tokens
   App.jsx        Routes
   main.jsx       React root + providers
+    admin/       AdminRoutes (lazy), Overview, Tenants, TenantDetail,
+                 Escrow, Disputes, Audit — the platform console
 worker/          Cloudflare Worker — the one origin that holds secrets
-  lib/           env, supabase (service key), money, sign, paystack, orders
-  routes/        paystack webhook, confirm, escrow sweep, storefront OG
+  lib/           env, supabase (service key), money, sign, paystack, orders,
+                 operator — the cross-tenant privilege boundary
+  routes/        paystack webhook, confirm, escrow sweep, storefront OG, admin
   test/          `npm test` — node:test, no network, no wrangler
 supabase/
   migrations/    The schema, from nothing, in order
@@ -414,12 +417,42 @@ typo.
 
 ## Two consoles, not one
 
-The ten screens in the spec are all seller-facing, but multi-tenancy needs a
-second console. Sellers get `/dashboard/*`. The platform gets `/admin/*` —
-tenant provisioning, WAHA session-pool health, the escrow release queue,
-dispute routing, commission reconciliation, feature-flag overrides, an audit
-log. It is a whole route tree and its own lazy chunk, and it is not designed
-yet.
+The ten screens in the spec are all seller-facing. Multi-tenancy needs a second
+console: sellers get `/dashboard/*`, the platform gets `/admin/*`.
+
+**The authorisation model is the interesting part.** Every RLS policy in the
+database is strictly tenant-scoped, and none of them has an
+`or is_platform_admin()` escape hatch — deliberately. An admin exception in a
+policy is a hole in *every* policy at once, and one mistake in that predicate
+would open the whole platform to any seller.
+
+So cross-tenant reading does not happen through RLS at all. It happens in the
+Worker, under the service key, behind a single check in `worker/lib/operator.js`
+which:
+
+1. resolves the caller by asking Supabase who their token belongs to — not by
+   decoding the JWT here, which would mean trusting a signature we never verified
+2. looks them up in `platform_admins`, a table with RLS on and **no policy at
+   all**, so no client role can read it
+
+The browser is never asked whether it is an admin. It is told what it may see,
+and a client that lies about step 1 fails step 1. `RequireOperator` in the
+bundle only avoids drawing a console to somebody whose every request would 403 —
+editing it in devtools gets you an empty shell.
+
+**Two levels.** `support` can look and can resolve disputes; `owner` can also
+move money and change what a tenant pays. "Can read every customer's orders" and
+"can release forty thousand naira" should not be the same grant.
+
+**Everything an operator changes is audited**, and `operator_audit` rejects
+UPDATE and DELETE at the database — even under the service key. A record that
+can be tidied afterwards is not evidence of anything.
+
+**Refunds stop at the state change.** Resolving a dispute for the buyer reverses
+the hold and records the decision; returning money to their card is a separate
+deliberate step, because a refund is irreversible and should not fire from a
+console click. The payment reference is carried into the audit row so whoever
+does it has it to hand.
 
 ## Status
 
@@ -450,7 +483,8 @@ yet.
   edge-rendered link previews, with 17 tests covering the money paths ✅
 - WAHA and the Meta/TikTok OAuth flows answer 501 — they need credentials and a
   real account to test against.
-- No platform-operator console yet.
+- Platform console at `/admin`: overview, stores, release queue, disputes,
+  audit log — 16 tests over the privilege boundary ✅
 
 ## Next steps
 

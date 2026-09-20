@@ -112,11 +112,28 @@ export function makeFakeSupabase(seed = {}) {
 
 // Installs a global fetch that routes Supabase and Paystack to fakes and
 // refuses anything else, so a test cannot silently reach the network.
-export function installFetch({ supabase, paystackAmountKobo = null, paystackStatus = 'success' }) {
+//
+// `tokens` maps a bearer token to the user Supabase would resolve it to.
+// Anything not in the map gets a 401, which is how requireOperator learns a
+// token is forged — it never parses one itself.
+export function installFetch({
+  supabase,
+  paystackAmountKobo = null,
+  paystackStatus = 'success',
+  tokens = {},
+}) {
   const real = globalThis.fetch;
 
   globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
+
+    if (url === `${SUPABASE_URL}/auth/v1/user`) {
+      const auth = init?.headers?.Authorization ?? '';
+      const user = tokens[auth.replace(/^Bearer /, '')];
+      return user
+        ? new Response(JSON.stringify(user), { status: 200 })
+        : new Response(JSON.stringify({ msg: 'invalid token' }), { status: 401 });
+    }
 
     if (url.startsWith(SUPABASE_URL)) return supabase.handler(url, init);
 
