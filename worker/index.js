@@ -8,6 +8,7 @@
 import { ConfigError } from './lib/env.js';
 import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
+import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
 import { renderProductPage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
@@ -63,6 +64,13 @@ async function api(request, env, path) {
 
   if (path === '/api/paystack/webhook' && method === 'POST') {
     return handlePaystackWebhook(request, env);
+  }
+
+  // The operator console. Every route under here reads across tenants, which
+  // nothing else in the system may do — the privilege comes from one check in
+  // lib/operator.js and nowhere else.
+  if (path.startsWith('/api/admin')) {
+    return handleAdmin(request, env, path);
   }
 
   const confirm = path.match(/^\/api\/confirm\/(.+)$/);

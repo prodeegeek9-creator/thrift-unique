@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth.jsx';
 import RequireFeature from './components/RequireFeature.jsx';
 import RequireStaffRole from './components/RequireStaffRole.jsx';
+import RequireOperator from './components/RequireOperator.jsx';
 import SellerShell from './components/layout/SellerShell.jsx';
 
 import Login from './pages/Login.jsx';
@@ -31,6 +32,11 @@ import More from './pages/seller/More.jsx';
 // the upsell instead — a Starter seller who opens /dashboard/analytics never
 // downloads the chunk at all.
 const Analytics = lazy(() => import('./pages/seller/Analytics.jsx'));
+
+// Same reasoning, stronger: the platform console is six screens that exactly
+// one person on the platform can open. RequireOperator resolves before this
+// does, so a seller who types /admin never downloads the chunk at all.
+const AdminRoutes = lazy(() => import('./pages/admin/AdminRoutes.jsx'));
 
 // Note the shape of the guarded routes: RequireFeature wraps the *element*,
 // not the route, so the path still resolves and the URL stays put. A Starter
@@ -110,6 +116,21 @@ export default function App() {
         <Route path="help" element={<Help />} />
         <Route path="more" element={<More />} />
       </Route>
+
+      {/* The platform side. Every route under here reads across tenants,
+          which nothing else in the system may do — the actual boundary is in
+          the Worker, and this only avoids drawing a console to somebody whose
+          every request would 403. */}
+      <Route
+        path="/admin/*"
+        element={
+          <RequireOperator>
+            <Suspense fallback={<div className="min-h-dvh bg-bg" />}>
+              <AdminRoutes />
+            </Suspense>
+          </RequireOperator>
+        }
+      />
 
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<NotFound />} />
