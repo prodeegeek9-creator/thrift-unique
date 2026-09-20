@@ -19,6 +19,17 @@
     "command": "npm ci && npm run build"
   },
 
+  // The escrow deadline sweep. Without a trigger, a hold whose buyer never
+  // replies never releases -- which is the failure that makes sellers stop
+  // trusting escrow and go back to asking for bank transfers.
+  //
+  // Hourly rather than daily: the window is measured in days, so the extra
+  // precision is not the point. The point is that a stuck sweep is noticed
+  // within the hour instead of the next morning.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+
   "assets": {
     // The built bundle, not the repo root. Serving "./" would publish src/,
     // the migrations and anything else sitting in the working tree.

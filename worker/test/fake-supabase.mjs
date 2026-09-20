@@ -1,0 +1,154 @@
+// A PostgREST stand-in, just wide enough for the queries the Worker makes.
+//
+// Not a general Postgres: it understands `col=eq.value` filters, `select=`,
+// `limit=` and `order=`, because that is the whole surface worker/lib/supabase.js
+// uses. Anything broader would be a second database to keep correct.
+//
+// The point is to exercise the real handlers — signature checks, idempotency,
+// the payout write — against something that behaves like the live one for the
+// cases that matter, without a network.
+
+export const SUPABASE_URL = 'https://test.supabase.co';
+export const SERVICE_KEY = 'service-key-for-tests';
+
+export function makeFakeSupabase(seed = {}) {
+  const tables = {
+    tenants: [],
+    tenant_features: [],
+    products: [],
+    buyers: [],
+    orders: [],
+    payouts: [],
+    payout_items: [],
+    ...structuredClone(seed),
+  };
+
+  // Unique constraints the schema actually declares, so a test can prove a
+  // replay collides rather than silently inserting twice.
+  const unique = { orders: 'payment_ref', payouts: 'reference' };
+
+  let nextId = 1;
+  const calls = [];
+
+  function parse(qs) {
+    const p = new URLSearchParams(qs);
+    const filters = [];
+    let select = null;
+    let limit = null;
+
+    for (const [k, v] of p) {
+      if (k === 'select') select = v;
+      else if (k === 'limit') limit = Number(v);
+      else if (k === 'order' || k === 'on_conflict') continue;
+      else {
+        const m = /^(eq|lt|gt|in)\.(.*)$/s.exec(v);
+        if (m) filters.push({ col: k, op: m[1], val: m[2] });
+      }
+    }
+    return { filters, select, limit };
+  }
+
+  function matches(row, filters) {
+    return filters.every((f) => {
+      const cell = row[f.col];
+      if (f.op === 'eq') return String(cell) === f.val;
+      if (f.op === 'lt') return new Date(cell) < new Date(f.val);
+      if (f.op === 'gt') return new Date(cell) > new Date(f.val);
+      if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));
+      return false;
+    });
+  }
+
+  async function handler(url, init = {}) {
+    const u = new URL(url);
+    const [, , , table] = u.pathname.split('/'); // /rest/v1/<table>
+    const method = init.method ?? 'GET';
+    const { filters, limit } = parse(u.search.slice(1));
+
+    calls.push({ table, method, search: u.search });
+
+    if (!(table in tables) && !u.pathname.includes('/rpc/')) {
+      return new Response(`no such table ${table}`, { status: 404 });
+    }
+
+    if (u.pathname.includes('/rpc/')) {
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
+
+    if (method === 'GET') {
+      let rows = tables[table].filter((r) => matches(r, filters));
+      if (limit) rows = rows.slice(0, limit);
+      return new Response(JSON.stringify(rows), { status: 200 });
+    }
+
+    if (method === 'POST') {
+      const body = JSON.parse(init.body);
+      const key = unique[table];
+
+      if (key && body[key] != null && tables[table].some((r) => r[key] === body[key])) {
+        // PostgREST with resolution=ignore-duplicates answers 200 with [].
+        // worker/lib/supabase.js turns that into null, which is what the
+        // payout path treats as "already done".
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+
+      const row = { id: `row-${nextId++}`, ...body };
+      tables[table].push(row);
+      return new Response(JSON.stringify([row]), { status: 200 });
+    }
+
+    if (method === 'PATCH') {
+      const patch = JSON.parse(init.body);
+      const hit = tables[table].filter((r) => matches(r, filters));
+      for (const r of hit) Object.assign(r, patch);
+      return new Response(JSON.stringify(hit), { status: 200 });
+    }
+
+    return new Response('unsupported', { status: 405 });
+  }
+
+  return { tables, calls, handler };
+}
+
+// Installs a global fetch that routes Supabase and Paystack to fakes and
+// refuses anything else, so a test cannot silently reach the network.
+export function installFetch({ supabase, paystackAmountKobo = null, paystackStatus = 'success' }) {
+  const real = globalThis.fetch;
+
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+
+    if (url.startsWith(SUPABASE_URL)) return supabase.handler(url, init);
+
+    if (url.startsWith('https://api.paystack.co/transaction/verify/')) {
+      if (paystackAmountKobo == null) return new Response('nope', { status: 404 });
+      return new Response(
+        JSON.stringify({ status: true, data: { amount: paystackAmountKobo, status: paystackStatus } }),
+        { status: 200 }
+      );
+    }
+
+    throw new Error(`test tried to reach the network: ${url}`);
+  };
+
+  return () => {
+    globalThis.fetch = real;
+  };
+}
+
+export function env(extra = {}) {
+  return {
+    SUPABASE_URL,
+    SUPABASE_SERVICE_KEY: SERVICE_KEY,
+    TOKEN_SECRET: 'token-secret-for-tests',
+    PAYSTACK_SECRET_KEY: 'sk_test_secret',
+    ASSETS: {
+      fetch: async () =>
+        new Response(
+          '<!DOCTYPE html><html><head><meta name="robots" content="noindex"><title>Unique Thrift</title></head><body><div id="root"></div></body></html>',
+          { status: 200, headers: { 'content-type': 'text/html' } }
+        ),
+    },
+    ...extra,
+  };
+}

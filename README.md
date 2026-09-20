@@ -34,8 +34,10 @@ src/
   index.css      Tailwind + the design tokens
   App.jsx        Routes
   main.jsx       React root + providers
-worker/          Cloudflare Worker — the one origin that holds secrets.
-                 Shell only; routes land in phase 3.
+worker/          Cloudflare Worker — the one origin that holds secrets
+  lib/           env, supabase (service key), money, sign, paystack, orders
+  routes/        paystack webhook, confirm, escrow sweep, storefront OG
+  test/          `npm test` — node:test, no network, no wrangler
 supabase/
   migrations/    The schema, from nothing, in order
 ```
@@ -367,6 +369,49 @@ every tenant's catalogue. `channel_connections` has RLS on with no policy at
 all — every column that matters is a credential — and the Channels screen reads
 `channel_status()` instead.
 
+## The Worker
+
+Everything the browser cannot be trusted with. It holds the service key, so it
+writes the rows no client may write — commission, escrow release, payouts — and
+Postgres has stopped checking tenant scope for it, which is why every query in
+`worker/lib/orders.js` names `tenant_id` even where the primary key alone would
+be unique.
+
+**The webhook order of operations is the whole thing.** Read the *raw* body,
+verify the signature before parsing, re-read the transaction from Paystack
+rather than trusting the amount, convert kobo to naira exactly once, and update
+only an order still `awaiting_payment`. Paystack signs with your **secret key** —
+there is no separate webhook secret — and it retries on any non-2xx, so every
+outcome we have actually handled answers 200. A 500 buys a retry storm.
+
+**Idempotency is in the WHERE clause, not in a flag.** `markPaid` matches
+`status=eq.awaiting_payment` and `releaseEscrow` matches `escrow_status=eq.held`,
+so a replayed delivery updates zero rows and the payout is never written twice.
+The test suite delivers the same webhook three times and asserts one payout.
+
+**A payment with no matching order is acknowledged, never invented.** An order
+exists because somebody was quoted a price; conjuring one from event metadata
+would mean the amount, the product and the tenant all came from a payload.
+
+**Escrow releases on a deadline.** `confirm_deadline` plus an hourly cron, because
+a buyer who simply stops replying would otherwise freeze the seller's money — and
+a seller who has had that happen once goes back to asking for bank transfers,
+which is the behaviour this platform exists to replace.
+
+**Commission is floored, not rounded.** A test found this: gross amounts are not
+always whole naira (kobo/100 gives ₦3500.50 readily), and rounding 100% of
+₦1234.56 to nearest gives ₦1235 — more than the sale, so the payout went
+negative. Flooring keeps commission ≤ gross at any rate and puts the sub-naira
+remainder on the seller's side, which is the right direction for a fee to round.
+
+### Not built
+
+WAHA and the Meta/TikTok OAuth flows answer `501`. Both need credentials and a
+real external account to test against, and writing them blind would produce code
+that looks finished and has never once run. The routes are named in
+`worker/index.js` so the boundary is visible rather than a 404 that reads like a
+typo.
+
 ## Two consoles, not one
 
 The ten screens in the spec are all seller-facing, but multi-tenancy needs a
@@ -401,8 +446,11 @@ yet.
 - All 14 seller screens built and rendered against a mocked API ✅
 - Analytics code-split: Recharts is ~40% of the bundle and a Business-tier
   screen, so a Starter seller never downloads it ✅
-- `worker/` is a shell: static assets and the SPA fallback, no routes.
-- `/confirm/:token` is a placeholder.
+- Worker: Paystack webhook, escrow hold/release, the signed confirm link and
+  edge-rendered link previews, with 17 tests covering the money paths ✅
+- WAHA and the Meta/TikTok OAuth flows answer 501 — they need credentials and a
+  real account to test against.
+- No platform-operator console yet.
 
 ## Next steps
 
@@ -411,8 +459,9 @@ yet.
    `TenantContext` → RLS → the right store.
 2. Phase 2 — the data layer: `lib/products.js`, `lib/orders.js`,
    `lib/payouts.js`, one module per domain, no `supabase.from()` in a page.
-3. Phase 3 — `worker/` for real: signed sessions, the Paystack webhook,
-   commission, escrow hold/release, and the signed confirm-receipt link.
+3. Set the Worker's secrets: `SUPABASE_SERVICE_KEY`, `TOKEN_SECRET`,
+   `PAYSTACK_SECRET_KEY`, via `wrangler secret put`. Point Paystack's webhook at
+   `/api/paystack/webhook`.
 4. Submit the Meta App Review and the TikTok audit. One-time platform-level
    gates with multi-week lead times, and both block phase 5.
 5. Phase 4 — WAHA session layer and `infra/waha/`.
