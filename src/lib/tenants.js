@@ -20,7 +20,7 @@ const EDITABLE = ['name', 'logo_url', 'brand_color', 'whatsapp_number'];
 
 const COLUMNS =
   'id, slug, name, tier, status, logo_url, brand_color, whatsapp_number, ' +
-  'commission_pct, waha_session, disclaimer_accepted_at, created_at';
+  'commission_pct, waha_session, waha_status, disclaimer_accepted_at, created_at';
 
 export async function fetchTenant(tenantId) {
   if (!tenantId) return null;

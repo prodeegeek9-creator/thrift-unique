@@ -19,6 +19,21 @@ export function config(env) {
     // separate webhook secret, whatever the dashboard's wording suggests.
     paystackKey: env.PAYSTACK_SECRET_KEY || null,
     publicOrigin: env.PUBLIC_ORIGIN || null,
+
+    // WAHA — the self-hosted WhatsApp HTTP API. Base URL of the server, and
+    // the key it checks on every call.
+    wahaUrl: env.WAHA_URL ? env.WAHA_URL.replace(/\/+$/, '') : null,
+    wahaKey: env.WAHA_API_KEY || null,
+
+    // The platform's own WhatsApp session: the number sellers message to add
+    // an item. Distinct from a tenant's session, which is the seller's own
+    // WhatsApp and exists to post to their Status — see routes/waha.js.
+    wahaSession: env.WAHA_SESSION || 'ut-platform',
+
+    // What the platform session's webhook carries. Tenant sessions each get
+    // their own secret in tenants.waha_secret; this one has no tenant to hang
+    // off, so it is configuration.
+    wahaWebhookSecret: env.WAHA_WEBHOOK_SECRET || null,
   };
 }
 

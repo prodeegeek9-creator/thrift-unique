@@ -48,11 +48,31 @@ export async function fetchChannels(tenantId, tenant) {
 }
 
 // WhatsApp is never "connected" in the OAuth sense — the seller scanned a QR
-// code once and the platform routes their session through WAHA. It shows as
-// live when the tenant has a session assigned.
+// code once and the platform routes their session through WAHA.
+//
+// Having a session is not the same as that session working. A phone that gets
+// unlinked from WhatsApp's own Linked Devices list leaves the row here
+// untouched and the session dead, so a tenant whose status is anything but
+// WORKING reads as needing attention rather than as connected. The live check
+// lives in <WhatsappLink>; this is the cached view the channel list shows.
+// Read from waha_status rather than waha_session, and not only because a
+// status is the more useful of the two. TenantContext deliberately does not
+// select waha_session into the bundle, so a check against it here is a check
+// against undefined — which read as "not connected" for every store on the
+// platform, forever, and looked exactly like a store that had never linked.
 export function whatsappState(tenant) {
-  if (!tenant) return 'disconnected';
-  return tenant.waha_session ? 'connected' : 'disconnected';
+  switch (tenant?.waha_status) {
+    case 'WORKING':
+      return 'connected';
+    case 'STARTING':
+    case 'SCAN_QR_CODE':
+    case null:
+    case undefined:
+      return 'disconnected';
+    default:
+      // FAILED or STOPPED: there is a session and it is not carrying anything.
+      return 'expired';
+  }
 }
 
 // Where the OAuth dance starts. The Worker owns both ends of it: the browser

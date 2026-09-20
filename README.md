@@ -20,6 +20,7 @@ src/
                  navItems.js — the nav as data, each item carrying its flag
     ui/          Icon, TierBadge, StatusPill, BrandMark, PageHeader, LogoLoader
     Require*.jsx Auth, Feature, StaffRole — the route guards
+    WhatsappLink.jsx  the QR-code pairing panel on Channels
   pages/
     seller/      Overview, Listings, Orders, OrderDetail, Payouts, Contacts,
                  Disputes, Analytics, Team, Channels, Billing, Settings, Help
@@ -27,9 +28,9 @@ src/
     FeatureUpsell.jsx  what a locked route renders instead of redirecting
     Login, Onboarding, ConnectChannels, NotFound
   lib/           supabase.js, AuthContext, TenantContext, ToastContext,
-                 features.js, money.js, privacy.js, whatsapp.js
+                 features.js, money.js, privacy.js, whatsapp.js, images.js
                  products.js, orders.js, payouts.js, contacts.js, disputes.js,
-                 analytics.js, staff.js, channels.js, billing.js,
+                 analytics.js, staff.js, channels.js, billing.js, waha.js,
                  dashboard.js, tenants.js, queryKeys.js — the data layer
   index.css      Tailwind + the design tokens
   App.jsx        Routes
@@ -38,8 +39,13 @@ src/
                  Escrow, Disputes, Audit — the platform console
 worker/          Cloudflare Worker — the one origin that holds secrets
   lib/           env, supabase (service key), money, sign, paystack, orders,
-                 operator — the cross-tenant privilege boundary
-  routes/        paystack webhook, confirm, escrow sweep, storefront OG, admin
+                 operator — the cross-tenant privilege boundary,
+                 member — tenant membership for the few calls RLS cannot check,
+                 bot — the listing conversation, a pure function,
+                 waha — every WAHA URL and payload, in one file,
+                 media — WhatsApp photo → Supabase Storage
+  routes/        paystack webhook, confirm, escrow sweep, storefront OG, admin,
+                 waha — the inbound webhook and session linking
   test/          `npm test` — node:test, no network, no wrangler
 supabase/
   migrations/    The schema, from nothing, in order
@@ -309,6 +315,53 @@ one, but that tag is a **hint**: the Worker resolves the real tenant from the
 sender's number against `tenants.whatsapp_number`, and a tag that disagrees
 loses.
 
+### Two kinds of WhatsApp session
+
+This is the thing to hold on to when reading `worker/routes/waha.js`, because
+almost every decision in that file follows from it:
+
+| | |
+|---|---|
+| **the platform session** | One number, every seller. What the "Open WhatsApp" button deep-links to, and where the listing conversation happens. An inbound message is resolved to a store by the sender's number. |
+| **a tenant session** | The seller's own WhatsApp, linked by scanning a QR code. It exists to post to their **Status** — which is the Starter tier's entire distribution channel, and is impossible from a platform number, because Status goes to *their* contacts. |
+
+Inbound traffic on a tenant session is deliberately ignored. That session is
+the seller's real WhatsApp with their real customers in it, and a bot answering
+their buyers on their behalf is not something to switch on by accident.
+
+### The conversation is a pure function
+
+`worker/lib/bot.js` has no `fetch`, no database and no clock beyond what is
+handed in. `step(conversation, message, ctx)` takes the conversation as it was
+stored and returns the conversation as it should now be stored, what to say,
+and at most one thing to do. The route does the I/O.
+
+That is most of why the flow is worth writing this way: every branch a seller
+can take is reachable in a test without a WhatsApp account, a WAHA server or a
+network. Only four HTTP calls in `worker/lib/waha.js` need a real server.
+
+Two details that are not arbitrary:
+
+- **`35k` parses.** Nigerian sellers write prices that way constantly, and a bot
+  that answers "I didn't understand that price" to `35k` reads as broken on the
+  first try.
+- **Photos end on the first thing that is not a photo.** A seller who sends
+  three angles and then types "brown leather jacket" is two answers from done
+  rather than five, and `done`/`ok`/`next` are filtered so they cannot become
+  an item's name.
+
+### Replays
+
+WAHA retries a webhook it believes failed, and a retried "yes" that creates a
+second product is the kind of bug a seller notices and cannot explain. Every
+inbound message is written to `bot_messages` with a unique `external_id` first;
+an insert that collides ends the request. Engines that send no message id fall
+back to sender + WhatsApp's own send timestamp, which a retry carries unchanged.
+
+After that row is written the handler answers `200` to everything — a later
+failure is logged, not turned into a status code that asks for the whole
+conversation again.
+
 ## The database
 
 Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
@@ -321,8 +374,15 @@ Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 | `0004_function_grants.sql` | revoke the default PUBLIC `EXECUTE` on every function |
 | `0005_revoke_anon_execute.sql` | and the *explicit* `anon` grant, which 0004 missed |
 | `0006_table_grants.sql` | table privileges cut back to match the policies |
+| `0007_public_code_default.sql` | `products.public_code` generates itself |
+| `0008_public_code_default_grant.sql` | and the grant 0007 revoked, which broke every insert |
+| `0009_platform_operators.sql` | `platform_admins`, the append-only `operator_audit` |
+| `0010_whatsapp_sessions.sql` | `bot_conversations`, `bot_messages`, session status |
+| `0011_product_images.sql` | the `product-images` storage bucket |
+| `0012_whatsapp_secret.sql` | the webhook secret moved off `tenants` |
+| `0013_revoke_bot_tables.sql` | the default grants those three tables came with |
 
-Three of those six exist because of a trap worth knowing about. A new function
+Seven of those thirteen exist because of a trap worth knowing about. A new function
 in `public` ends up with **two** separate `EXECUTE` grants: the `PUBLIC` one
 Postgres adds, and an explicit one Supabase's default privileges give `anon`.
 `revoke ... from public` removes only the first. So 0004 looked right, passed a
@@ -339,6 +399,49 @@ caught it — run `get_advisors` after every schema change, not just at the end.
 defaults hand `anon` SELECT **and INSERT** on every table and leave RLS as the
 only thing in the way. Two layers instead of one: a grant that does not exist
 cannot be reached by a policy mistake.
+
+0007 and 0008 are the same trap wearing a different hat. Revoking `EXECUTE` on
+`gen_public_code()` broke **every product insert**, because a column default is
+evaluated as the *inserting* role — so if a function is named in a policy, a
+column default, a generated column or a trigger's `WHEN` clause, the role
+touching that table needs `EXECUTE` on it.
+
+0012 is the third variant, found while wiring the Channels screen. The webhook
+secret added by 0010 went on `public.tenants` — where the table-level SELECT
+grant from 0006 covers *every column, present and future*. No policy allowed
+it; the grant did, and adding a column to a granted table publishes that column.
+A column-level `REVOKE` would not have helped: with a table-level grant in
+place, revoking one column from it does nothing. The secret moved to
+`whatsapp_secrets`, following the pattern `channel_connections` already set —
+a table whose every column is a credential gets RLS on, **no policy and no
+grant**. 0013 then took the default `authenticated` grants off all three new
+WhatsApp tables for the same reason.
+
+The rule, stated plainly, since it has now surfaced four separate times:
+**adding a table to `public` grants it to `authenticated` unless you say
+otherwise, and adding a column to a granted table publishes that column.**
+
+### Advisor findings that are meant to be there
+
+`get_advisors` is worth running after every schema change, but four of its
+current findings are the intended design and should not be "fixed":
+
+- **`rls_enabled_no_policy`** on `bot_conversations`, `bot_messages`,
+  `whatsapp_secrets`, `channel_connections`, `platform_admins` and
+  `operator_audit`. That is the pattern, not an oversight — RLS on, no policy,
+  no grant, reachable only under the service key.
+- **`public_product()` executable by `anon`.** It is the storefront's one
+  public read and returns a fixed, safe column list by design.
+- **`current_tenant_ids()` / `has_tenant_role()` / `channel_status()`
+  executable by `authenticated`.** Every policy in the schema calls the first
+  two, so the signed-in role has to be able to execute them; all three are
+  `SECURITY DEFINER` with a pinned `search_path` and scope themselves to
+  `auth.uid()`.
+- **`rls_auto_enable()` executable by `anon`.** Not ours — it is Supabase's
+  own event trigger, the thing that turns RLS on for every new table in
+  `public`. It returns `event_trigger`, so PostgREST cannot expose it and
+  Postgres will not let it be called outside a DDL event. Left alone
+  deliberately: it is platform-managed, and all it ever does is enable RLS.
 
 ### The first tenant
 
@@ -409,11 +512,13 @@ remainder on the seller's side, which is the right direction for a fee to round.
 
 ### Not built
 
-WAHA and the Meta/TikTok OAuth flows answer `501`. Both need credentials and a
-real external account to test against, and writing them blind would produce code
-that looks finished and has never once run. The routes are named in
-`worker/index.js` so the boundary is visible rather than a 404 that reads like a
-typo.
+The Meta and TikTok OAuth flows answer `501`. Both are gated on an app review
+and a platform audit before they can be pointed at anything real, and writing
+them blind would produce code that looks finished and has never once run. The
+routes are named in `worker/index.js` so the boundary is visible rather than a
+404 that reads like a typo.
+
+WAHA was on this list and is not any more — see below.
 
 ## Two consoles, not one
 
@@ -481,10 +586,13 @@ does it has it to hand.
   screen, so a Starter seller never downloads it ✅
 - Worker: Paystack webhook, escrow hold/release, the signed confirm link and
   edge-rendered link previews, with 17 tests covering the money paths ✅
-- WAHA and the Meta/TikTok OAuth flows answer 501 — they need credentials and a
-  real account to test against.
 - Platform console at `/admin`: overview, stores, release queue, disputes,
   audit log — 16 tests over the privilege boundary ✅
+- WAHA integration: the listing bot, the inbound webhook, per-tenant sessions
+  linked by QR, photo upload into Supabase Storage, and posting to a seller's
+  WhatsApp Status — 52 tests, none of which need a WAHA server ✅
+- The Meta/TikTok OAuth flows answer 501 — they are gated on an app review and
+  a platform audit.
 
 ## Next steps
 
@@ -498,4 +606,9 @@ does it has it to hand.
    `/api/paystack/webhook`.
 4. Submit the Meta App Review and the TikTok audit. One-time platform-level
    gates with multi-week lead times, and both block phase 5.
-5. Phase 4 — WAHA session layer and `infra/waha/`.
+5. Stand up WAHA and set `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`,
+   `WAHA_WEBHOOK_SECRET` and `PUBLIC_ORIGIN` on the Worker. Create the platform
+   session in WAHA with a webhook pointed at `/api/waha/webhook` carrying
+   `X-Thrift-Secret`; tenant sessions create themselves when a seller links.
+   Until those are set the bot answers nothing and logs what it would have sent,
+   which is the intended unconfigured state rather than an error.

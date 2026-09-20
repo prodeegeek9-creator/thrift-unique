@@ -344,7 +344,19 @@ test('unknown API routes 404 and unbuilt ones say so', async () => {
     const missing = await worker.fetch(new Request('https://example.com/api/nope'), env(), {});
     assert.equal(missing.status, 404);
 
-    const later = await worker.fetch(new Request('https://example.com/api/waha/inbound'), env(), {});
+    // WAHA is built now, so an unknown path under it is an ordinary 404
+    // rather than a promise.
+    const unknownWaha = await worker.fetch(new Request('https://example.com/api/waha/inbound'), env(), {});
+    assert.equal(unknownWaha.status, 404);
+
+    // The OAuth channels still are not: they need an app review and an audit
+    // before they can be tested against anything real, and saying so is
+    // better than a 404 that reads like a typo.
+    const later = await worker.fetch(
+      new Request('https://example.com/api/oauth/instagram/start'),
+      env(),
+      {}
+    );
     assert.equal(later.status, 501);
   } finally { restore(); }
 });

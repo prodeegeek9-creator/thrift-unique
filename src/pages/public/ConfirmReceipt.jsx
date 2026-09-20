@@ -4,6 +4,7 @@ import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import { formatNaira } from '../../lib/money.js';
+import { firstImage } from '../../lib/images.js';
 
 // How escrow actually releases.
 //
@@ -94,9 +95,9 @@ export default function ConfirmReceipt() {
           </p>
 
           <div className="mt-4 flex items-center gap-3 rounded-lg bg-surface-2 p-3">
-            {order?.product?.images?.[0] ? (
+            {firstImage(order?.product) ? (
               <img
-                src={order.product.images[0]}
+                src={firstImage(order?.product)}
                 alt=""
                 className="h-14 w-14 rounded-lg object-cover"
               />

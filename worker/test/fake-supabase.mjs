@@ -20,12 +20,20 @@ export function makeFakeSupabase(seed = {}) {
     orders: [],
     payouts: [],
     payout_items: [],
+    bot_conversations: [],
+    bot_messages: [],
+    whatsapp_secrets: [],
     ...structuredClone(seed),
   };
 
   // Unique constraints the schema actually declares, so a test can prove a
   // replay collides rather than silently inserting twice.
-  const unique = { orders: 'payment_ref', payouts: 'reference' };
+  const unique = {
+    orders: 'payment_ref',
+    payouts: 'reference',
+    // What makes a retried WAHA webhook a no-op instead of a second listing.
+    bot_messages: 'external_id',
+  };
 
   let nextId = 1;
   const calls = [];
@@ -93,6 +101,9 @@ export function makeFakeSupabase(seed = {}) {
       }
 
       const row = { id: `row-${nextId++}`, ...body };
+      // products.public_code has a column default in the real schema; the
+      // storefront link and the bot's confirmation both read it back.
+      if (table === 'products' && !row.public_code) row.public_code = `PC${nextId}`;
       tables[table].push(row);
       return new Response(JSON.stringify([row]), { status: 200 });
     }
@@ -104,10 +115,15 @@ export function makeFakeSupabase(seed = {}) {
       return new Response(JSON.stringify(hit), { status: 200 });
     }
 
+    if (method === 'DELETE') {
+      tables[table] = tables[table].filter((r) => !matches(r, filters));
+      return new Response(null, { status: 204 });
+    }
+
     return new Response('unsupported', { status: 405 });
   }
 
-  return { tables, calls, handler };
+  return { tables, calls, uploads: [], handler };
 }
 
 // Installs a global fetch that routes Supabase and Paystack to fakes and
@@ -121,11 +137,22 @@ export function installFetch({
   paystackAmountKobo = null,
   paystackStatus = 'success',
   tokens = {},
+  waha = null,
 }) {
   const real = globalThis.fetch;
 
   globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
+
+    // Supabase Storage, which is a different origin path from PostgREST and
+    // takes raw bytes rather than JSON.
+    if (url.startsWith(`${SUPABASE_URL}/storage/v1/object/`)) {
+      const path = url.slice(`${SUPABASE_URL}/storage/v1/object/`.length);
+      supabase.uploads.push({ path, contentType: init?.headers?.['Content-Type'] ?? null });
+      return new Response(JSON.stringify({ Key: path }), { status: 200 });
+    }
+
+    if (waha && url.startsWith(waha.url)) return waha.handler(url, init);
 
     if (url === `${SUPABASE_URL}/auth/v1/user`) {
       const auth = init?.headers?.Authorization ?? '';

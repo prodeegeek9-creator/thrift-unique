@@ -95,6 +95,15 @@ export default function AdminOverview() {
               value={data?.escrow?.overdue ?? 0}
               tone={data?.escrow?.overdue ? 'red' : 'ok'}
             />
+            {/* A store whose WhatsApp has dropped is silently not selling.
+                They will not report it as an outage — they will report, weeks
+                later, that things went quiet. */}
+            <Attention
+              to="/admin/tenants"
+              label="WhatsApp disconnected"
+              value={data?.whatsapp?.broken ?? 0}
+              tone={data?.whatsapp?.broken ? 'red' : 'ok'}
+            />
           </div>
         </section>
       </div>

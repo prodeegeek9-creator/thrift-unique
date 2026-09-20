@@ -1,0 +1,260 @@
+// WAHA — the WhatsApp HTTP API, self-hosted.
+//
+// Every WAHA-specific URL and payload shape lives in this file and nowhere
+// else, so a WAHA upgrade that moves an endpoint is one file to correct rather
+// than a hunt through the bot.
+//
+// The paths and payloads below were read from WAHA's own source
+// (devlikeapro/waha, `core` branch) rather than recalled:
+//
+//   @Controller('api/sessions')          sessions.controller.ts
+//   @Controller('api/:session/status')   status.controller.ts
+//   @Controller('api/:session/auth')     auth.controller.ts  (GET qr)
+//   POST /api/sendText { chatId, text, session }            README
+//   RemoteFile { url, mimetype, filename? }                 files.dto.ts
+//   SessionConfig { webhooks: [{ url, events, hmac?, customHeaders? }] }
+//
+// Including the API key header, which is read in
+// core/auth/HeaderOrQueryApiKeyStrategy.ts as `req.headers['x-api-key']`.
+// Express lower-cases header names, so the casing here is cosmetic.
+const API_KEY_HEADER = 'X-Api-Key';
+
+// A chat id is the phone number without a `+`, suffixed. Group chats use
+// @g.us; the bot only ever talks to individuals.
+export function chatId(phone) {
+  const digits = String(phone ?? '').replace(/[^\d]/g, '');
+  if (!digits) return null;
+  return `${digits}@c.us`;
+}
+
+export function phoneFromChatId(id) {
+  const m = /^(\d+)@c\.us$/.exec(String(id ?? ''));
+  return m ? m[1] : null;
+}
+
+export class WahaError extends Error {
+  constructor(message, status, body) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function client(cfg) {
+  if (!cfg.wahaUrl) throw new WahaError('WAHA is not configured', 503, null);
+
+  return async function call(path, { method = 'GET', body, raw = false } = {}) {
+    const res = await fetch(`${cfg.wahaUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cfg.wahaKey ? { [API_KEY_HEADER]: cfg.wahaKey } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new WahaError(`WAHA ${res.status} on ${method} ${path}`, res.status, text);
+    }
+    if (raw) return res;
+    // DELETE and some POSTs answer 204.
+    if (res.status === 204) return null;
+    return res.json().catch(() => null);
+  };
+}
+
+// ── SESSIONS ─────────────────────────────────────────────────────────────────
+
+// One session per tenant, named after the tenant's slug so that a session seen
+// in WAHA's own dashboard is identifiable without a lookup.
+//
+// Everything below takes a session *name* rather than a tenant, because the
+// platform's own session has no tenant behind it — it is one number that every
+// seller messages. Callers that hold a tenant pass tenants.waha_session, which
+// is authoritative: a slug that changed later must not silently rename a
+// session that WAHA still knows by the old one.
+export function sessionName(tenant) {
+  return `ut-${tenant.slug}`;
+}
+
+// Creating a session also tells WAHA where to deliver events and what secret
+// to carry when it does.
+//
+// The secret goes in a custom header rather than relying on WAHA's HMAC
+// option: a shared secret we generate, store per tenant and compare ourselves
+// is one mechanism under our control, where the HMAC's header name and digest
+// vary between WAHA versions and editions.
+export async function createSession(cfg, tenant, { webhookUrl, secret }) {
+  const call = client(cfg);
+
+  return call('/api/sessions', {
+    method: 'POST',
+    body: {
+      name: sessionName(tenant),
+      config: {
+        // Only the events the bot acts on. Subscribing to everything means
+        // paying for, logging and rate-limiting a firehose of presence and
+        // typing notifications nothing reads.
+        webhooks: [
+          {
+            url: webhookUrl,
+            events: ['message', 'session.status'],
+            customHeaders: [{ name: 'X-Thrift-Secret', value: secret }],
+          },
+        ],
+        metadata: { tenant_id: tenant.id, tenant_slug: tenant.slug },
+      },
+    },
+  });
+}
+
+export async function getSession(cfg, session) {
+  const call = client(cfg);
+  try {
+    return await call(`/api/sessions/${encodeURIComponent(session)}`);
+  } catch (err) {
+    // A session that has never been created is a 404, which is a state to
+    // report rather than an error to propagate — the Channels screen wants to
+    // say "not linked", not to fail.
+    if (err instanceof WahaError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export async function startSession(cfg, session) {
+  const call = client(cfg);
+  return call(`/api/sessions/${encodeURIComponent(session)}/start`, { method: 'POST' });
+}
+
+export async function deleteSession(cfg, session) {
+  const call = client(cfg);
+  return call(`/api/sessions/${encodeURIComponent(session)}`, { method: 'DELETE' });
+}
+
+// The QR the seller scans, as a data URL.
+//
+// Returned inline rather than proxied as an image, because an <img src> cannot
+// carry an Authorization header and this endpoint has to be behind one — a QR
+// code is a login. It is also short-lived: WAHA rotates it every twenty
+// seconds or so, which is why the Channels screen re-fetches rather than
+// caching one.
+export async function getQR(cfg, session) {
+  const call = client(cfg);
+
+  try {
+    const res = await call(`/api/${encodeURIComponent(session)}/auth/qr`, { raw: true });
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (!bytes.byteLength) return null;
+    return `data:image/png;base64,${base64(bytes)}`;
+  } catch (err) {
+    // A session that is already paired, still starting, or stopped has no QR
+    // to give. That is a state, not a failure — the caller reports the status
+    // it already has.
+    if (err instanceof WahaError) return null;
+    throw err;
+  }
+}
+
+// Chunked, because btoa(String.fromCharCode(...bytes)) spreads every byte into
+// an argument list and blows the stack on anything but a tiny input. A QR PNG
+// is small; this is here so it stays correct if something larger is ever
+// encoded.
+function base64(bytes) {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+// ── MESSAGES ─────────────────────────────────────────────────────────────────
+
+export async function sendText(cfg, session, to, text) {
+  const call = client(cfg);
+  return call('/api/sendText', {
+    method: 'POST',
+    body: { session, chatId: to, text },
+  });
+}
+
+// ── WHATSAPP STATUS ──────────────────────────────────────────────────────────
+
+// The Starter tier's entire distribution channel, and the reason product
+// images live in Supabase storage behind public URLs: WAHA takes a RemoteFile,
+// so nothing has to be uploaded twice.
+//
+// Always the tenant's own session, never the platform's — Status goes to the
+// seller's contacts, which is the whole point and is impossible from a number
+// those contacts have never saved.
+export async function postImageStatus(cfg, session, { url, caption, mimetype = 'image/jpeg' }) {
+  const call = client(cfg);
+
+  return call(`/api/${encodeURIComponent(session)}/status/image`, {
+    method: 'POST',
+    body: {
+      file: { url, mimetype, filename: 'listing.jpg' },
+      caption,
+    },
+  });
+}
+
+export async function postTextStatus(cfg, session, { text, backgroundColor = '#12301E' }) {
+  const call = client(cfg);
+
+  return call(`/api/${encodeURIComponent(session)}/status/text`, {
+    method: 'POST',
+    body: { text, backgroundColor, font: 0, linkPreview: true },
+  });
+}
+
+// ── INBOUND ──────────────────────────────────────────────────────────────────
+
+// WAHA's event envelope, read defensively.
+//
+// The payload shape differs between WAHA's engines (WEBJS, NOWEB, GOWS) and
+// has changed across versions, so this reads what it needs with fallbacks
+// rather than destructuring a shape it cannot verify. A message the bot cannot
+// understand should be ignored, not crash the webhook — WAHA retries failures,
+// and a crash loop on one malformed event stalls every other message.
+export function parseEvent(body) {
+  if (!body || typeof body !== 'object') return null;
+
+  const event = body.event ?? body.type ?? null;
+  const session = body.session ?? null;
+  const p = body.payload ?? body.data ?? {};
+
+  if (event === 'session.status') {
+    return {
+      kind: 'status',
+      session,
+      status: p.status ?? p.state ?? null,
+    };
+  }
+
+  if (event !== 'message') return null;
+
+  // WAHA marks the seller's own outgoing messages with fromMe. Acting on them
+  // would have the bot answering itself, which is a loop that costs real
+  // WhatsApp traffic before anybody notices.
+  if (p.fromMe === true) return null;
+
+  const from = p.from ?? p.chatId ?? null;
+  if (!from || !String(from).endsWith('@c.us')) return null;
+
+  return {
+    kind: 'message',
+    session,
+    id: p.id?.id ?? p.id ?? p._data?.id?.id ?? null,
+    // WhatsApp's own send time, in seconds. It survives a webhook retry
+    // unchanged, which makes it the fallback identity for an engine that does
+    // not give a message id — see the dedup in routes/waha.js.
+    timestamp: Number(p.timestamp ?? p.t ?? 0) || null,
+    from: String(from),
+    body: typeof p.body === 'string' ? p.body : (p.text ?? ''),
+    hasMedia: Boolean(p.hasMedia ?? p.media ?? false),
+    mediaUrl: p.media?.url ?? p.mediaUrl ?? null,
+    mimetype: p.media?.mimetype ?? p.mimetype ?? null,
+  };
+}

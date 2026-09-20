@@ -1,6 +1,7 @@
 import { config } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { escapeHtml, summarise } from '../lib/http.js';
+import { publicUrl } from '../lib/media.js';
 
 // GET /p/:code — the shared product link, rendered at the edge.
 //
@@ -26,7 +27,12 @@ export async function renderProductPage(request, env, code) {
   const description = summarise(
     product.description || `${formatNaira(product.price)} · ${condition(product.condition)}`
   );
-  const image = product.images?.[0] ? absolute(product.images[0], origin) : null;
+
+  // A storage path, not a URL — see the note on products.images in the catalog
+  // migration. Resolving it against this origin, which is what happened
+  // before anything ever wrote an image, produces a 404 that a scraper
+  // silently drops and nobody sees.
+  const image = publicUrl(config(env), product.images?.[0]);
 
   const tags = [
     `<title>${escapeHtml(title)}</title>`,
@@ -79,12 +85,6 @@ async function lookup(env, code) {
   // `products` directly means the column list is defined in one place.
   const rows = await db(cfg).rpc('public_product', { code });
   return rows?.[0] ?? null;
-}
-
-function absolute(path, origin) {
-  if (/^https?:\/\//i.test(path)) return path;
-  const cfgUrl = path.startsWith('/') ? path : `/${path}`;
-  return `${origin}${cfgUrl}`;
 }
 
 function condition(value) {

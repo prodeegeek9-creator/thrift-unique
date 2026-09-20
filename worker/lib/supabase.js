@@ -73,6 +73,13 @@ export function db(cfg) {
       return Array.isArray(rows) ? rows : [];
     },
 
+    async del(table, query) {
+      return call(cfg, `${table}?${query}`, {
+        method: 'DELETE',
+        headers: headers(cfg, { Prefer: 'return=minimal' }),
+      });
+    },
+
     async rpc(fn, args) {
       return call(cfg, `rpc/${fn}`, {
         method: 'POST',

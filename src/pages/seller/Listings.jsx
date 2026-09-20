@@ -12,6 +12,7 @@ import { listingDeepLink, botConfigured } from '../../lib/whatsapp.js';
 import { productUrl } from '../../lib/tenants.js';
 import { formatNaira } from '../../lib/money.js';
 import { keys } from '../../lib/queryKeys.js';
+import { firstImage } from '../../lib/images.js';
 
 const CONDITION = {
   brand_new: 'Brand new',
@@ -140,9 +141,9 @@ export default function Listings() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {listings.map((item) => (
             <article key={item.id} className="card flex flex-col overflow-hidden">
-              {item.images?.[0] ? (
+              {firstImage(item) ? (
                 <img
-                  src={item.images[0]}
+                  src={firstImage(item)}
                   alt=""
                   className="aspect-[4/3] w-full bg-surface-2 object-cover"
                 />
