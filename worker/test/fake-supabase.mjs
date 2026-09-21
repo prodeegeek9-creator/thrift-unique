@@ -142,7 +142,11 @@ export function installFetch({
   const real = globalThis.fetch;
 
   globalThis.fetch = async (input, init) => {
-    const url = typeof input === 'string' ? input : input.url;
+    // fetch() takes a string, a URL or a Request, and real code uses all
+    // three. Reading `.url` alone silently yields undefined for a URL object,
+    // which makes every route below fall through to "tried to reach the
+    // network" — a confusing way to find out you built a URL properly.
+    const url = requestUrl(input);
 
     // Supabase Storage, which is a different origin path from PostgREST and
     // takes raw bytes rather than JSON.
@@ -178,6 +182,12 @@ export function installFetch({
   return () => {
     globalThis.fetch = real;
   };
+}
+
+export function requestUrl(input) {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input?.url ?? String(input);
 }
 
 export function env(extra = {}) {
