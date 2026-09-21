@@ -25,24 +25,59 @@ export function roleScope(role) {
   return ROLES.find((r) => r.id === role)?.scope ?? '';
 }
 
-// tenant_members joined to the account behind each membership.
+// tenant_members, and nothing joined out of auth.users.
 //
-// Deliberately not reading auth.users: it is not in the exposed schema and it
-// carries the password hash, the recovery tokens and every confirmation
-// timestamp. What a colleague needs to see of a colleague is a name — which is
-// why the display name lives in the membership's own row, once the Worker
-// writes it there at invitation time.
+// auth.users is not in the exposed schema and should not be: it carries the
+// password hash, the recovery tokens and every confirmation timestamp. What a
+// colleague needs to see of a colleague is a name and an email, which is why
+// both live on the membership row — written there by the Worker when the
+// invitation is created.
 export async function fetchStaff(tenantId) {
   if (!tenantId) return [];
 
   const { data, error } = await supabase
     .from('tenant_members')
-    .select('user_id, role, created_at')
+    .select('user_id, role, created_at, display_name, email, invited_at, accepted_at')
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: true });
 
   if (error) throw error;
   return data ?? [];
+}
+
+// Somebody who has been sent a link and has not used it yet.
+//
+// Worth showing as its own state rather than as an ordinary member: an owner
+// who cannot tell the difference will assume a colleague has access, and find
+// out otherwise at the worst moment.
+export function isPending(member) {
+  return Boolean(member?.invited_at) && !member?.accepted_at;
+}
+
+// Adding a colleague goes through the Worker, not Supabase.
+//
+// A membership needs a user_id, and the browser has no way to turn an email
+// address into one — that means reading auth.users. The Worker resolves it
+// under the service key and writes the row.
+export async function inviteStaff(tenantId, { email, role, name }) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Not signed in');
+
+  const res = await fetch('/api/team/invite', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tenant: tenantId, email, role, name }),
+  });
+
+  const payload = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const err = new Error(payload.error ?? `Could not add them (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return payload;
 }
 
 // Changing somebody's role.

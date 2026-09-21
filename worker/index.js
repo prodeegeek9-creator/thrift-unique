@@ -13,6 +13,7 @@ import { getConfirmable, confirmReceipt } from './routes/confirm.js';
 import { renderProductPage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
 import { handleWaha } from './routes/waha.js';
+import { handleTeam } from './routes/team.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -86,6 +87,12 @@ async function api(request, env, path) {
   // scanning a QR code.
   if (path.startsWith('/api/waha')) {
     return handleWaha(request, env, path);
+  }
+
+  // Adding a colleague. Here rather than in the browser because a membership
+  // needs a user_id, and resolving an email to one means reading auth.users.
+  if (path.startsWith('/api/team')) {
+    return handleTeam(request, env, path);
   }
 
   // Not built yet, and saying so is better than a 404 that reads like a typo.

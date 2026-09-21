@@ -1,4 +1,5 @@
 import Icon from '../ui/Icon.jsx';
+import NotificationBell from './NotificationBell.jsx';
 import { useAuth, signOut } from '../../lib/AuthContext.jsx';
 import { initialsOf } from '../../lib/privacy.js';
 import { useTenant } from '../../lib/TenantContext.jsx';
@@ -31,14 +32,7 @@ export default function TopBar() {
 
       <div className="flex-1 md:hidden" />
 
-      <button
-        type="button"
-        className="relative grid h-9 w-9 place-items-center rounded-full hover:bg-overlay"
-        aria-label="Notifications"
-      >
-        <Icon name="bell" className="h-5 w-5 text-ink" />
-        <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-amber ring-2 ring-bg" />
-      </button>
+      <NotificationBell />
 
       <div className="flex items-center gap-2.5 rounded-pill border border-line bg-surface py-1 pl-1 pr-3">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-green-lt text-[11px] font-semibold text-green">

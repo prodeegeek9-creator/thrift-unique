@@ -362,6 +362,56 @@ After that row is written the handler answers `200` to everything — a later
 failure is logged, not turned into a status code that asks for the whole
 conversation again.
 
+## Adding a colleague
+
+The Team screen could list staff and never add one. The button was disabled
+with a tooltip pointing at the README, which is how it was reported: *"I can't
+add users. It says it needs a worker."*
+
+It genuinely did. A membership row needs a `user_id`, and turning
+`ada@example.com` into one means reading `auth.users` — not in the exposed
+schema, and it should stay that way, because it holds the password hash and
+every recovery token. So the Worker resolves the address through
+`user_id_for_email()`, a function only `service_role` may execute, and writes
+the row itself.
+
+**No email is sent, on purpose.** `generate_link` creates the account and hands
+back a link without delivering it, which suits a platform whose whole premise
+is that people talk on WhatsApp — the owner gets a link and a *Send on
+WhatsApp* button. It also means invitations do not quietly stop working when a
+project's SMTP is unconfigured or its hourly mail allowance runs out, which
+shows up as "I invited them last week and they never got it".
+
+Two outcomes, and the seller is told which:
+
+| | |
+|---|---|
+| **they already have an account** | Added straight away, `accepted_at` set. No link — they have a password and can sign in. |
+| **they do not** | An account is created, `accepted_at` stays null, and the owner gets a link to pass on. The row shows as **Invite not accepted** until they use it. |
+
+Owner only, and the server checks the plan rather than trusting that the UI
+hid the screen. A manager who could add staff could add an *owner*, which is
+the same thing as promoting themselves.
+
+## The notification bell
+
+It was a `<button>` with no `onClick` and an amber dot that was always lit —
+worse than having no bell at all, because a permanent unread badge teaches
+people to stop looking at the one place the app has to interrupt them.
+
+There is no notifications table, deliberately. Everything worth interrupting a
+seller about is already a row they own: an order nobody has posted, a dispute
+waiting on them, money they can withdraw, a WhatsApp session that has died.
+Deriving the list means it cannot go stale, cannot be missed because a write
+failed, and needs no backfill for stores that existed before the bell worked.
+
+Two rules it follows:
+
+- **Ordered by what it costs to ignore**, not by recency. A dispute left alone
+  becomes a refund.
+- **The dot only counts bad news.** Money waiting to be withdrawn is good news,
+  and good news that nags is noise.
+
 ## The database
 
 Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
@@ -381,6 +431,7 @@ Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 | `0011_product_images.sql` | the `product-images` storage bucket |
 | `0012_whatsapp_secret.sql` | the webhook secret moved off `tenants` |
 | `0013_revoke_bot_tables.sql` | the default grants those three tables came with |
+| `0014_staff_invitations.sql` | names on memberships, and `user_id_for_email()` |
 
 Seven of those thirteen exist because of a trap worth knowing about. A new function
 in `public` ends up with **two** separate `EXECUTE` grants: the `PUBLIC` one
@@ -442,6 +493,10 @@ current findings are the intended design and should not be "fixed":
   `public`. It returns `event_trigger`, so PostgREST cannot expose it and
   Postgres will not let it be called outside a DDL event. Left alone
   deliberately: it is platform-managed, and all it ever does is enable RLS.
+
+`user_id_for_email()` is the one `SECURITY DEFINER` function that should
+*never* appear in those lists. If it ever does, something has re-granted it and
+the invitation route has become an email-enumeration endpoint.
 
 ### The first tenant
 
@@ -591,6 +646,10 @@ does it has it to hand.
 - WAHA integration: the listing bot, the inbound webhook, per-tenant sessions
   linked by QR, photo upload into Supabase Storage, and posting to a seller's
   WhatsApp Status — 52 tests, none of which need a WAHA server ✅
+- Staff invitations: owner-only, plan-checked server side, with a link the
+  owner sends over WhatsApp rather than an email that may never arrive ✅
+- The notification bell reads the seller's own rows — disputes, unposted
+  orders, a dead WhatsApp session, money waiting ✅
 - The Meta/TikTok OAuth flows answer 501 — they are gated on an app review and
   a platform audit.
 
