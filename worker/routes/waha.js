@@ -1,4 +1,4 @@
-import { require_ } from '../lib/env.js';
+import { require_, originOf } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
@@ -70,6 +70,12 @@ export async function handleWaha(request, env, path) {
 // the one thing that gets a refusal.
 async function webhook(request, env) {
   const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+
+  // Every link the bot sends a seller is built from this. Falls back to the
+  // host this request arrived on, so a deployment that has not pinned a
+  // canonical origin still sends working links rather than silently sending
+  // none. config() hands back a fresh object per call, so this is local.
+  cfg.publicOrigin = originOf(request, cfg);
 
   const body = await request.json().catch(() => null);
   const event = parseEvent(body);
@@ -428,7 +434,17 @@ async function sessionStatus(request, env) {
 // Owner only: linking a WhatsApp account is the store's identity, not a
 // listings task.
 async function linkSession(request, env) {
-  const cfg = require_(env, 'supabaseUrl', 'serviceKey', 'wahaUrl', 'publicOrigin');
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey', 'wahaUrl');
+
+  // WAHA has to be able to reach this to deliver anything, so it is the one
+  // place the origin genuinely has to be right. Pinning PUBLIC_ORIGIN is
+  // preferred; the owner's own dashboard host is the correct fallback, since
+  // that is by definition an origin that serves this Worker.
+  cfg.publicOrigin = originOf(request, cfg);
+  if (!cfg.publicOrigin) {
+    return json({ error: 'Server is not configured' }, 503);
+  }
+
   const { tenant: tenantId } = await request.json().catch(() => ({}));
 
   let member;

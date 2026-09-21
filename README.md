@@ -663,6 +663,14 @@ does it has it to hand.
 3. Set the Worker's secrets: `SUPABASE_SERVICE_KEY`, `TOKEN_SECRET`,
    `PAYSTACK_SECRET_KEY`, via `wrangler secret put`. Point Paystack's webhook at
    `/api/paystack/webhook`.
+
+   `PUBLIC_ORIGIN` is not one of them. It is the origin this app answers on and
+   appears in every link the product sends, so it belongs in `wrangler.jsonc`
+   under `vars` — committed, reviewed, deployed with the code. It is optional:
+   the Worker falls back to whichever host a request arrived on, so links work
+   before it is set. Pin it once there is a canonical domain, so links name
+   that one even when somebody reaches the dashboard on a workers.dev URL. A
+   wrong value there is worse than none, because it overrides the fallback.
 4. Submit the Meta App Review and the TikTok audit. One-time platform-level
    gates with multi-week lead times, and both block phase 5.
 5. Stand up WAHA and set `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`,
