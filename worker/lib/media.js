@@ -36,7 +36,16 @@ export function storagePath(tenantId, mimetype) {
 export function publicUrl(cfg, path) {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
-  return `${cfg.supabaseUrl}/storage/v1/object/public/${BUCKET}/${path.replace(/^\/+/, '')}`;
+
+  // An asset shipped with the app rather than an object in the bucket — the
+  // demo catalogue's pictures. Absolute here rather than root-relative,
+  // because both callers hand this to somebody else's fetcher: a link-preview
+  // scraper and WAHA, neither of which has an origin to resolve against.
+  if (path.startsWith('/')) {
+    return cfg.publicOrigin ? `${cfg.publicOrigin}${path}` : null;
+  }
+
+  return `${cfg.supabaseUrl}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
 // Fetch from WAHA, upload to Supabase, return the storage path.

@@ -433,6 +433,20 @@ Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 | `0013_revoke_bot_tables.sql` | the default grants those three tables came with |
 | `0014_staff_invitations.sql` | names on memberships, and `user_id_for_email()` |
 
+`supabase/seed/` holds two files that are **not** migrations and do not run on
+every database: `first_tenant.sql` creates the one account the bot cannot
+(chicken and egg — see the file), and `sample_catalog.sql` fills a store with a
+demo catalogue so the dashboard looks like the design rather than like a set of
+empty states. Both target one tenant by slug and are safe to run twice.
+
+The sample pictures are app assets — `public/samples/*.jpg`, referenced with a
+leading slash. `imageUrl()` in the bundle and `publicUrl()` in the Worker tell
+an asset from a storage object by that slash, because a real uploaded object's
+path always begins with the tenant id. So the demo needs no upload and no
+credentials: the pictures deploy with the code. They are drawn rather than
+photographed, and rasterised to JPEG rather than left as SVG, because a link
+preview scraper and WhatsApp Status both want a raster image.
+
 Seven of those thirteen exist because of a trap worth knowing about. A new function
 in `public` ends up with **two** separate `EXECUTE` grants: the `PUBLIC` one
 Postgres adds, and an explicit one Supabase's default privileges give `anon`.
