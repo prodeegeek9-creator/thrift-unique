@@ -19,6 +19,27 @@
     "command": "npm ci && npm run build"
   },
 
+  // Plain configuration, not secrets. Anything here is committed, reviewed and
+  // deployed with the code, which is where a value that appears in every link
+  // the product sends belongs — a dashboard setting nobody can see in a diff
+  // is how a deploy quietly starts pointing at the wrong host.
+  //
+  // Secrets are the opposite and go in with `wrangler secret put`:
+  // SUPABASE_SERVICE_KEY, TOKEN_SECRET, PAYSTACK_SECRET_KEY, WAHA_API_KEY,
+  // WAHA_WEBHOOK_SECRET. Putting any of those here would commit them.
+  "vars": {
+    // The canonical origin this app answers on, no trailing slash. It is what
+    // a shared /p/<code> link points at, where WAHA is told to deliver
+    // webhooks, and where an invited colleague lands after setting a password.
+    //
+    // Left unset deliberately until there is a real domain to name. The Worker
+    // falls back to whichever host a request arrived on (see originOf() in
+    // worker/lib/env.js), so links are correct without it — and a wrong value
+    // here would be worse than none, because it would override that.
+    //
+    // "PUBLIC_ORIGIN": "https://thrift-unique.<subdomain>.workers.dev"
+  },
+
   // The escrow deadline sweep. Without a trigger, a hold whose buyer never
   // replies never releases -- which is the failure that makes sellers stop
   // trusting escrow and go back to asking for bank transfers.

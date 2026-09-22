@@ -18,7 +18,20 @@ export function config(env) {
     // Paystack signs webhooks with the secret key itself — there is no
     // separate webhook secret, whatever the dashboard's wording suggests.
     paystackKey: env.PAYSTACK_SECRET_KEY || null,
-    publicOrigin: env.PUBLIC_ORIGIN || null,
+
+    // The canonical origin this app is served on, without a trailing slash.
+    //
+    // It is what a shared product link points at, where WAHA is told to
+    // deliver webhooks, and where a newly invited colleague lands. Not a
+    // secret — it is in every link the product sends — so it belongs in
+    // wrangler.jsonc under `vars`, versioned and deployed with the code,
+    // rather than in a dashboard where nobody can see it.
+    //
+    // Optional, because a Worker already knows what origin it was reached on:
+    // see originOf(). Setting it explicitly pins the canonical domain, which
+    // matters once the app answers on more than one (a workers.dev URL and a
+    // real domain), so that links always name the one people should see.
+    publicOrigin: env.PUBLIC_ORIGIN ? env.PUBLIC_ORIGIN.replace(/\/+$/, '') : null,
 
     // WAHA — the self-hosted WhatsApp HTTP API. Base URL of the server, and
     // the key it checks on every call.
@@ -49,3 +62,27 @@ export function require_(env, ...names) {
 }
 
 export class ConfigError extends Error {}
+
+// The origin to put in a link, for a handler that has a request in hand.
+//
+// A Worker is told what host it was reached on, so an unset PUBLIC_ORIGIN does
+// not have to mean no link. Before this, a deployment that had not set it sent
+// sellers a confirmation with the listing link quietly missing and dropped the
+// redirect off an invitation, which reads as the app being broken rather than
+// as a variable nobody set.
+//
+// The configured value still wins where there is one. A Host header is
+// attacker-controlled in general; here it is bounded by the fact that
+// Cloudflare only routes hosts you own to your Worker, but a canonical origin
+// is still the thing to put in a link somebody else will open.
+//
+// The cron handler has no request and therefore no fallback — anything it
+// needs an origin for has to be configured.
+export function originOf(request, cfg) {
+  if (cfg.publicOrigin) return cfg.publicOrigin;
+  try {
+    return new URL(request.url).origin;
+  } catch {
+    return null;
+  }
+}

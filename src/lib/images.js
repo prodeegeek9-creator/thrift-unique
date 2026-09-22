@@ -11,12 +11,20 @@ const BASE = import.meta.env.VITE_SUPABASE_URL?.replace(/\/+$/, '') ?? '';
 
 export function imageUrl(path) {
   if (!path) return null;
+
   // Rows written before the bucket existed, and anything pasted in by hand,
   // may already be absolute. Leave those alone.
   if (/^(https?:|data:|blob:)/i.test(path)) return path;
-  if (!BASE) return null;
 
-  return `${BASE}/storage/v1/object/public/${BUCKET}/${String(path).replace(/^\/+/, '')}`;
+  // A leading slash means an asset shipped with the app rather than an object
+  // in the bucket — public/samples/*.jpg, which is how the demo catalogue has
+  // pictures without anything having been uploaded. The two are told apart by
+  // the slash because a storage object path never starts with one: it starts
+  // with the tenant id (see storagePath() in worker/lib/media.js).
+  if (path.startsWith('/')) return path;
+
+  if (!BASE) return null;
+  return `${BASE}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
 // The first photo, resolved, or null. Almost every caller wants exactly this —

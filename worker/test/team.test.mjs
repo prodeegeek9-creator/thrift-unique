@@ -314,3 +314,47 @@ test('an auth service that will not answer does not leave a half-made member', a
     restore();
   }
 });
+
+// ── WHERE THE LINKS POINT ────────────────────────────────────────────────────
+
+test('an unset PUBLIC_ORIGIN falls back to the host the request came in on', async () => {
+  // Before this, a deployment that had not set the variable dropped the
+  // redirect off the invitation and the colleague finished on Supabase's own
+  // page — which reads as the invitation having gone wrong.
+  const supabase = makeFakeSupabase(seed());
+  const { generated, restore } = installAuth({ supabase });
+
+  try {
+    const res = await worker.fetch(
+      call({ token: 'tok-owner', body: { tenant: TENANT, email: 'new@example.com', role: 'staff' } }),
+      env(), // no PUBLIC_ORIGIN at all
+      {}
+    );
+
+    assert.equal(res.status, 200);
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Fexample\.com%2Fdashboard/);
+  } finally {
+    restore();
+  }
+});
+
+test('a configured PUBLIC_ORIGIN wins over the request host', async () => {
+  // Once there is a canonical domain, links must name it even when somebody
+  // reaches the dashboard on a workers.dev URL.
+  const supabase = makeFakeSupabase(seed());
+  const { generated, restore } = installAuth({ supabase });
+
+  try {
+    await worker.fetch(
+      call({ token: 'tok-owner', body: { tenant: TENANT, email: 'new@example.com', role: 'staff' } }),
+      // A trailing slash is the obvious way to set this by hand, and would
+      // otherwise produce "https://uniquethrift.ng//dashboard".
+      env({ PUBLIC_ORIGIN: 'https://uniquethrift.ng/' }),
+      {}
+    );
+
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fdashboard/);
+  } finally {
+    restore();
+  }
+});

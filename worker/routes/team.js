@@ -1,4 +1,4 @@
-import { require_ } from '../lib/env.js';
+import { require_, originOf } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
@@ -38,6 +38,11 @@ export async function handleTeam(request, env, path) {
 
 async function invite(request, env) {
   const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+
+  // Where the invited colleague lands after setting a password. Without it
+  // they finish on Supabase's own page instead of in the store, which looks
+  // like the invitation went wrong.
+  cfg.publicOrigin = originOf(request, cfg);
 
   const body = await request.json().catch(() => ({}));
   const tenantId = body?.tenant;
