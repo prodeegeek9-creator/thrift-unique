@@ -7,7 +7,7 @@ import { storeImage, publicUrl, MediaError } from '../lib/media.js';
 import { step, listedMessage, unknownStoreMessage, formatNaira, conditionLabel } from '../lib/bot.js';
 import {
   parseEvent,
-  phoneFromChatId,
+  phoneFor,
   sessionName,
   sendText,
   postImageStatus,
@@ -146,8 +146,14 @@ async function recordStatus(cfg, event) {
 }
 
 async function message(cfg, event) {
-  const phone = phoneFromChatId(event.from);
-  if (!phone) return json({ ok: true, ignored: 'no sender' });
+  // Replies still go to event.from as delivered; only the store lookup needs
+  // the number. An unresolvable privacy id is ignored rather than told "no
+  // store for this number", which could be untrue for a real seller.
+  const phone = await phoneFor(cfg, event.session, event.from);
+  if (!phone) {
+    console.warn('waha webhook: no phone number for sender', event.from);
+    return json({ ok: true, ignored: 'no sender' });
+  }
 
   const tenant = await db(cfg).one(
     'tenants',
