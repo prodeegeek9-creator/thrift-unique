@@ -27,6 +27,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     whatsapp_secrets: [],
     signups: [],
     tenant_members: [],
+    submissions: [],
     ...structuredClone(seed),
   };
 
@@ -54,7 +55,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       else if (k === 'limit') limit = Number(v);
       else if (k === 'order' || k === 'on_conflict') continue;
       else {
-        const m = /^(eq|lt|gt|in)\.(.*)$/s.exec(v);
+        const m = /^(eq|lt|gt|in|not\.is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
@@ -67,6 +68,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (f.op === 'eq') return String(cell) === f.val;
       if (f.op === 'lt') return new Date(cell) < new Date(f.val);
       if (f.op === 'gt') return new Date(cell) > new Date(f.val);
+      if (f.op === 'not.is') return f.val === 'null' ? cell != null : String(cell) !== f.val;
       if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));
       return false;
     });

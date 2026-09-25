@@ -4,7 +4,7 @@ import Icon from '../../components/ui/Icon.jsx';
 import TierBadge from '../../components/ui/TierBadge.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { signOut } from '../../lib/AuthContext.jsx';
-import { MAIN_NAV, CHANNEL_NAV, FOOTER_NAV, TAB_NAV } from '../../components/layout/navItems.js';
+import { mainNavFor, CHANNEL_NAV, FOOTER_NAV, TAB_NAV } from '../../components/layout/navItems.js';
 
 // Everything the five-slot tab bar cannot hold.
 //
@@ -17,7 +17,7 @@ export default function More() {
   const inTabBar = new Set(TAB_NAV.map((t) => t.to));
 
   const sections = [
-    { title: 'Your store', items: MAIN_NAV.filter((i) => !inTabBar.has(i.to)) },
+    { title: 'Your store', items: mainNavFor(tenant).filter((i) => !inTabBar.has(i.to)) },
     { title: 'Channels', items: CHANNEL_NAV },
     { title: 'Account', items: FOOTER_NAV },
   ];

@@ -14,6 +14,7 @@ import { renderProductPage, renderStorePage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
+import { handleSubmissions } from './routes/submissions.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -99,6 +100,12 @@ async function api(request, env, path) {
   // needs a user_id, and resolving an email to one means reading auth.users.
   if (path.startsWith('/api/team')) {
     return handleTeam(request, env, path);
+  }
+
+  // Approving or declining an item somebody brought to a store. Here because
+  // both end in a WhatsApp message from the store's own session.
+  if (path.startsWith('/api/submissions')) {
+    return handleSubmissions(request, env, path);
   }
 
   // Not built yet, and saying so is better than a 404 that reads like a typo.

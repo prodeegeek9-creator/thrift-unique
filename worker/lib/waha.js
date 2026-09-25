@@ -135,6 +135,11 @@ export async function createSession(cfg, tenant, { webhookUrl, secret }) {
           },
         ],
         metadata: { tenant_id: tenant.id, tenant_slug: tenant.slug },
+        // The store's own contacts, kept by NOWEB, are what turn a hidden
+        // (@lid) sender into a number the store can call back — see
+        // phoneFor(). No full history sync: this is a real, busy WhatsApp,
+        // and only the mapping is wanted.
+        noweb: { store: { enabled: true, fullSync: false } },
       },
     },
   });

@@ -15,6 +15,9 @@ export const keys = {
   listingCounts: (t) => ['tenant', t, 'listings', 'counts'],
   channelPosts: (t, ids) => ['tenant', t, 'channel-posts', ids],
 
+  submissions: (t, status = 'pending') => ['tenant', t, 'submissions', status],
+  submissionCounts: (t) => ['tenant', t, 'submissions', 'counts'],
+
   orders: (t, filter = 'all') => ['tenant', t, 'orders', filter],
   order: (t, id) => ['tenant', t, 'order', id],
 

@@ -37,16 +37,16 @@ const CONDITIONS = [
 // Checked in this order, and the order matters. The dashboard's deep link
 // opens WhatsApp with "Hi! I want to list a new item." pre-typed — which would
 // match a greeting as readily as an intent, so intent is tested first.
-const CANCEL = /^(cancel|stop|quit|abort|never ?mind)\b/i;
+export const CANCEL = /^(cancel|stop|quit|abort|never ?mind)\b/i;
 const START = /\b(list|sell|add|new item|post)\b/i;
 const GREETING = /^(help|menu|hi|hey|hello|start|\?)\b/i;
 
 // Words a seller types to mean "that is all the photos", which must not become
 // the item's name.
-const FILLER = /^(done|ok|okay|next|finish|finished|that'?s? ?(it|all)|no more)\b/i;
+export const FILLER = /^(done|ok|okay|next|finish|finished|that'?s? ?(it|all)|no more)\b/i;
 
-const YES = /^(y|yes|yeah|yep|ok|okay|post|send|confirm|go)\b/i;
-const NO = /^(n|no|nope|cancel|stop)\b/i;
+export const YES = /^(y|yes|yeah|yep|ok|okay|post|send|confirm|go)\b/i;
+export const NO = /^(n|no|nope|cancel|stop)\b/i;
 const NEGOTIABLE = /^(negotiable|negotiate|offers?|bargain)\b/i;
 
 // ── PARSING ──────────────────────────────────────────────────────────────────
@@ -646,7 +646,7 @@ function done(message) {
 // Media, reduced to the two things the upload step needs. Held as the WAHA URL
 // rather than downloaded now, so an abandoned draft costs nothing — the
 // download happens once, at the moment the product is actually created.
-function imageFrom(message) {
+export function imageFrom(message) {
   if (!message?.hasMedia || !message.mediaUrl) return null;
 
   const mimetype = String(message.mimetype ?? '');
@@ -658,7 +658,7 @@ function imageFrom(message) {
   return { url: message.mediaUrl, mimetype: mimetype || 'image/jpeg' };
 }
 
-function staleness(conversation, ctx) {
+export function staleness(conversation, ctx) {
   if (!conversation?.updated_at) return false;
   const now = ctx.now ? new Date(ctx.now).getTime() : Date.now();
   const then = new Date(conversation.updated_at).getTime();

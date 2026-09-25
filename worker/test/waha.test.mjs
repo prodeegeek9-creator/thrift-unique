@@ -1012,3 +1012,307 @@ test('typing can be switched off, and a refusal to show it never loses the reply
     restore2();
   }
 });
+
+// ── ITEMS BROUGHT TO A STORE ─────────────────────────────────────────────────
+//
+// On the store's own session: somebody offers the store an item, it lands in
+// the review queue, and the store approves or declines it from the dashboard.
+
+const CONSIGNOR_PHONE = '2348097776655';
+const CONSIGNOR_CHAT = `${CONSIGNOR_PHONE}@c.us`;
+const STORE_SESSION = 'ut-store';
+const STORE_SECRET = 'tenant-secret';
+
+function storeSeed(tenant = {}) {
+  return seed({
+    tenant: { waha_session: STORE_SESSION, waha_status: 'WORKING', ...tenant },
+    secret: STORE_SECRET,
+  });
+}
+
+async function toStore(messages) {
+  for (const m of messages) {
+    await worker.fetch(hook(m, { secret: STORE_SECRET }), wahaEnv(), {});
+  }
+}
+
+const fromConsignor = (body, extra = {}) =>
+  incoming(body, { session: STORE_SESSION, from: CONSIGNOR_CHAT, ...extra });
+
+function decideCall(token, body) {
+  return new Request('https://uniquethrift.ng/api/submissions/decide', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+test("somebody offers an item on the store's own number, and it waits for review", async () => {
+  const supabase = makeFakeSupabase(storeSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await toStore([
+      fromConsignor('SELL'),
+      fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SESSION}/bag.jpg` }),
+      fromConsignor('Brown leather bag'),
+      fromConsignor('15k'),
+      fromConsignor('3'),
+      fromConsignor('Ada Obi'),
+      fromConsignor('yes'),
+    ]);
+
+    assert.equal(supabase.tables.submissions.length, 1);
+    const item = supabase.tables.submissions[0];
+    assert.equal(item.tenant_id, TENANT);
+    assert.equal(item.title, 'Brown leather bag');
+    assert.equal(item.asking_price, 15000);
+    assert.equal(item.condition, 'good');
+    assert.equal(item.seller_name, 'Ada Obi');
+    assert.equal(item.seller_chat_id, CONSIGNOR_CHAT);
+    assert.equal(item.seller_phone, CONSIGNOR_PHONE);
+    assert.equal(item.images.length, 1);
+    assert.match(item.images[0], new RegExp(`^${TENANT}/`));
+    // Nothing is listed until the store says so.
+    assert.equal(supabase.tables.products.length, 0);
+
+    // Every answer to the seller came from the store's own number.
+    const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
+    assert.ok(toSeller.length >= 7);
+    assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
+    assert.match(toSeller.at(-1).text, /Sent!/);
+
+    // And the owner heard about it on the platform number.
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
+    assert.equal(toOwner.length, 1);
+    assert.equal(toOwner[0].session, PLATFORM);
+    assert.match(toOwner[0].text, /New item to review: \*Brown leather bag\*/);
+    assert.match(toOwner[0].text, /\/dashboard\/submissions/);
+  } finally {
+    restore();
+  }
+});
+
+test("a store's customers are not answered, and their messages are not stored", async () => {
+  const supabase = makeFakeSupabase(storeSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await toStore([
+      fromConsignor('Hi, is the bag still available?'),
+      fromConsignor('do you sell shoes?'),
+      fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SESSION}/x.jpg` }),
+    ]);
+
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.bot_messages.length, 0);
+    assert.equal(supabase.tables.bot_conversations.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a brand store sells its own stock, so SELL is left for the owner', async () => {
+  const supabase = makeFakeSupabase(storeSeed({ store_type: 'brand' }));
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await toStore([fromConsignor('SELL')]);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.bot_conversations.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+function queued(extra = {}) {
+  return {
+    id: 'bbbbbbbb-0000-0000-0000-00000000000b',
+    tenant_id: TENANT,
+    seller_chat_id: CONSIGNOR_CHAT,
+    seller_phone: CONSIGNOR_PHONE,
+    seller_name: 'Ada Obi',
+    title: 'Brown leather bag',
+    asking_price: 15000,
+    condition: 'good',
+    images: [`${TENANT}/bag.jpg`],
+    status: 'pending',
+    ...extra,
+  };
+}
+
+test('approving lists the item at the store price, posts it and tells the seller', async () => {
+  const supabase = makeFakeSupabase({ ...storeSeed(), submissions: [queued()] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      decideCall('tok-staff', { tenant: TENANT, id: queued().id, decision: 'approve', price: '20k' }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.status, 'approved');
+    assert.equal(body.notified, true);
+    assert.equal(body.posted, true);
+
+    const product = supabase.tables.products[0];
+    assert.equal(product.tenant_id, TENANT);
+    assert.equal(product.title, 'Brown leather bag');
+    assert.equal(product.price, 20000);
+    assert.equal(product.status, 'active');
+    assert.deepEqual(product.images, [`${TENANT}/bag.jpg`]);
+
+    const item = supabase.tables.submissions[0];
+    assert.equal(item.status, 'approved');
+    assert.equal(item.product_id, product.id);
+    assert.equal(item.decided_by, STAFF.id);
+    assert.equal(item.asking_price, 15000);
+
+    assert.equal(waha.statuses.length, 1);
+    assert.equal(waha.statuses[0].session, STORE_SESSION);
+
+    const told = waha.sent.at(-1);
+    assert.equal(told.chatId, CONSIGNOR_CHAT);
+    assert.equal(told.session, STORE_SESSION);
+    assert.match(told.text, /listed your \*Brown leather bag\* for ₦20,000/);
+    assert.match(told.text, new RegExp(`/p/${product.public_code}`));
+
+    // Once decided, it stays decided.
+    const again = await worker.fetch(
+      decideCall('tok-owner', { tenant: TENANT, id: queued().id, decision: 'decline' }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(again.status, 409);
+    assert.equal(supabase.tables.submissions[0].status, 'approved');
+  } finally {
+    restore();
+  }
+});
+
+test('approving without a price lists it at what the seller asked', async () => {
+  const supabase = makeFakeSupabase({ ...storeSeed(), submissions: [queued()] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      decideCall('tok-owner', { tenant: TENANT, id: queued().id, decision: 'approve' }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal(supabase.tables.products[0].price, 15000);
+
+    const bad = makeFakeSupabase({ ...storeSeed(), submissions: [queued()] });
+    restore();
+    const again = installFetch({ supabase: bad, waha, tokens: TOKENS });
+    try {
+      const refused = await worker.fetch(
+        decideCall('tok-owner', { tenant: TENANT, id: queued().id, decision: 'approve', price: 'lots' }),
+        wahaEnv(),
+        {}
+      );
+      assert.equal(refused.status, 400);
+      assert.equal(bad.tables.products.length, 0);
+      assert.equal(bad.tables.submissions[0].status, 'pending');
+    } finally {
+      again();
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('declining tells the seller why, and lists nothing', async () => {
+  const supabase = makeFakeSupabase({ ...storeSeed(), submissions: [queued()] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      decideCall('tok-owner', {
+        tenant: TENANT,
+        id: queued().id,
+        decision: 'decline',
+        reason: "  We're full on bags   right now ",
+      }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal(supabase.tables.products.length, 0);
+
+    const item = supabase.tables.submissions[0];
+    assert.equal(item.status, 'declined');
+    assert.equal(item.decline_reason, "We're full on bags right now");
+
+    assert.equal(waha.sent.at(-1).chatId, CONSIGNOR_CHAT);
+    assert.equal(waha.sent.at(-1).session, STORE_SESSION);
+    assert.match(waha.sent.at(-1).text, /Reason: We're full on bags right now/);
+  } finally {
+    restore();
+  }
+});
+
+test('only the store team can decide, and only on its own items', async () => {
+  const other = 'cccccccc-0000-0000-0000-00000000000c';
+  const supabase = makeFakeSupabase({
+    ...storeSeed(),
+    submissions: [queued({ tenant_id: other })],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const stranger = await worker.fetch(
+      decideCall('tok-stranger', { tenant: TENANT, id: queued().id, decision: 'approve' }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(stranger.status, 403);
+
+    // A member of this store naming another store's item finds nothing.
+    const elsewhere = await worker.fetch(
+      decideCall('tok-owner', { tenant: TENANT, id: queued().id, decision: 'approve' }),
+      wahaEnv(),
+      {}
+    );
+    assert.equal(elsewhere.status, 404);
+
+    assert.equal(supabase.tables.products.length, 0);
+    assert.equal(waha.sent.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a store whose WhatsApp is unlinked can still decide, and is told the seller was not', async () => {
+  const supabase = makeFakeSupabase({
+    ...storeSeed({ waha_status: 'FAILED' }),
+    submissions: [queued()],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      decideCall('tok-owner', { tenant: TENANT, id: queued().id, decision: 'approve' }),
+      wahaEnv(),
+      {}
+    );
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.notified, false);
+    assert.equal(supabase.tables.products.length, 1);
+    assert.equal(waha.sent.length, 0);
+  } finally {
+    restore();
+  }
+});
