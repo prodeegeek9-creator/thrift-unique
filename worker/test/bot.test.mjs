@@ -180,6 +180,9 @@ test('photos stop at the limit instead of growing without bound', () => {
 
   const result = converse(messages);
   assert.equal(result.draft.images.length, MAX_IMAGES);
+
+  // Three photos over the limit, one note about it.
+  assert.equal(result.said.filter((s) => /photo limit/.test(s)).length, 1);
 });
 
 test('a photo sent mid-question is kept, not treated as an answer', () => {

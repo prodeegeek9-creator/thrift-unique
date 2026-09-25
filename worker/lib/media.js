@@ -48,17 +48,37 @@ export function publicUrl(cfg, path) {
   return `${cfg.supabaseUrl}/storage/v1/object/public/${BUCKET}/${path}`;
 }
 
-// Fetch from WAHA, upload to Supabase, return the storage path.
+// Where to fetch a WAHA media URL from, and with what.
 //
-// The API key goes on the request because WAHA serves media from the same
-// guarded origin as the rest of its API; a deployment that has authentication
-// switched off simply ignores it.
+// WAHA writes these URLs from its own WAHA_BASE_URL, which defaults to
+// http://localhost:3000 — easy to leave unset, and unreachable from here. And
+// the request carries the WAHA API key, which must never go to any host but
+// WAHA's. So a WAHA file path is always fetched from WAHA_URL, whatever host
+// the payload named; anything else (media WAHA keeps in S3, say) is fetched
+// as given, without the key.
+export function mediaRequest(cfg, url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new MediaError('Bad media URL');
+  }
+
+  if (cfg.wahaUrl && parsed.pathname.startsWith('/api/files/')) {
+    return {
+      url: `${cfg.wahaUrl}${parsed.pathname}${parsed.search}`,
+      headers: cfg.wahaKey ? { 'X-Api-Key': cfg.wahaKey } : {},
+    };
+  }
+  return { url: parsed.href, headers: {} };
+}
+
+// Fetch from WAHA, upload to Supabase, return the storage path.
 export async function storeImage(cfg, tenantId, { url, mimetype }) {
   if (!url) throw new MediaError('No media URL');
 
-  const res = await fetch(url, {
-    headers: cfg.wahaKey ? { 'X-Api-Key': cfg.wahaKey } : {},
-  });
+  const source = mediaRequest(cfg, url);
+  const res = await fetch(source.url, { headers: source.headers });
   if (!res.ok) throw new MediaError(`Could not fetch media: ${res.status}`);
 
   const declared = Number(res.headers.get('content-length') ?? 0);
