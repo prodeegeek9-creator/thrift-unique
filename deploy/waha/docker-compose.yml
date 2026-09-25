@@ -13,7 +13,10 @@
 # QR/session-linking endpoint is not something to leave on plain HTTP.
 services:
   waha:
-    image: devlikeapro/waha
+    # devlikeapro/waha on Docker Hub is amd64-only. On an arm64 host (check
+    # `uname -m` — aarch64 means yes), build it locally instead and set
+    # WAHA_IMAGE=waha-local:latest in .env — see README "ARM64 hosts".
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
     container_name: waha
     restart: unless-stopped
     environment:

@@ -33,15 +33,54 @@ curl -fsSL https://get.docker.com | sh
 (Or follow your distro's Docker Engine + Compose plugin install docs —
 anything with `docker compose` as a subcommand works.)
 
-## 3. Copy this folder to the server
-
-From your machine, with this repo checked out:
+Check the architecture while you're at it:
 
 ```bash
-scp -r deploy/waha your-user@your-vps-ip:~/waha
-ssh your-user@your-vps-ip
-cd ~/waha
+uname -m
 ```
+
+`x86_64` → skip to step 3. `aarch64` (arm64) → read the next section first;
+`docker pull devlikeapro/waha` fails outright on it (`no matching manifest`).
+
+### ARM64 hosts
+
+The published `devlikeapro/waha` image is amd64-only. Its Dockerfile builds
+cleanly on arm64 too, though — the browser it installs is Debian's own
+`chromium` package (arch-agnostic via apt), not Google Chrome's amd64-only
+`.deb`, and its Go component already branches on target architecture — so
+build it locally instead of pulling:
+
+```bash
+git clone --branch core --depth 1 https://github.com/devlikeapro/waha.git ~/waha-src
+cd ~/waha-src
+sudo docker build -t waha-local:latest .
+```
+
+This takes a few minutes and needs the VPS's normal internet access (pulling
+base images, an npm/yarn install, apt packages) — nothing to do with
+Cloudflare or this repo. Once it finishes, set in `.env` (step 4 below):
+
+```
+WAHA_IMAGE=waha-local:latest
+```
+
+`docker-compose.yml` reads `WAHA_IMAGE` with `devlikeapro/waha` as the
+default, so this is the only change an arm64 host needs — everything else in
+this README is identical. Re-run the `docker build` after a `git pull` in
+`~/waha-src` when you want to pick up a WAHA update; the image won't update
+itself the way a Docker Hub pull would.
+
+## 3. Copy this folder to the server
+
+Easiest from the VPS itself, since it just needs GitHub over HTTPS:
+
+```bash
+git clone https://github.com/prodeegeek9-creator/thrift-unique.git
+cd thrift-unique/deploy/waha
+```
+
+(Or `scp -r deploy/waha your-user@your-vps-ip:~/waha` from your own machine
+if you'd rather not put the whole repo on the box.)
 
 ## 4. Configure
 
