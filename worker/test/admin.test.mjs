@@ -470,9 +470,13 @@ test('approving a sign-up makes the owner and tells them on WhatsApp', async () 
     assert.equal(sent[0].chatId, PENDING_CHAT);
     assert.match(sent[0].text, /Ada Stores\* is approved/);
     assert.match(sent[0].text, /verify\?token=owner/);
+    // And the address of their store's own page, live from now.
+    assert.match(sent[0].text, /\/s\/ada-stores/);
 
     assert.equal(sb.tables.signups.length, 0);
-    assert.ok(sb.calls.some((c) => c.rpc === 'seed_tenant_features'));
+    // Reseeded for the plan they chose, not a fixed one.
+    const reseed = sb.calls.find((c) => c.rpc === 'seed_tenant_features');
+    assert.deepEqual(reseed?.args, { target: PENDING, plan: 'starter' });
     assert.equal(sb.tables.operator_audit.at(-1).action, 'tenant.approve');
   } finally { restore(); }
 });

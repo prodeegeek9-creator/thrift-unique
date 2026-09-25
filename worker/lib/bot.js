@@ -117,17 +117,80 @@ const SAY = {
 
 // ── OPENING A STORE ──────────────────────────────────────────────────────────
 //
-// Somebody whose number belongs to no store gets asked for a business name and
-// an email, and a store is created for them, pending the operator's approval.
+// Somebody whose number belongs to no store is walked through opening one:
+// the business's name, what kind of store it is, what it sells, a plan, an
+// email for the dashboard, and the commission terms. A store is created at the
+// end, pending the operator's approval, and can list straight away.
+//
 // Their number is the store's number from then on: messaging from it proves
 // they hold it, so there is nothing to type into a dashboard first — which
 // matters, because there is no dashboard login until approval.
 
 export const MAX_BUSINESS_NAME = 60;
 
+// Bumped whenever the wording of TERMS changes, so the version stored against
+// a store always names the text its owner actually said YES to.
+export const DISCLAIMER_VERSION = 'commission-v1';
+
+// Commission per plan, from the pricing table: the top of each range, since
+// the operator can lower a rate but raising one after acceptance would be
+// charging for something nobody agreed to. Business is negotiable, so it
+// starts at Growth's rate until the operator agrees another.
+export const COMMISSION = { starter: 8, growth: 7, business: 7 };
+
+const STORE_TYPES = [
+  { value: 'consignment', words: ['1', 'thrift', 'thrift store', 'consignment', 'middleman'] },
+  { value: 'brand', words: ['2', 'brand', 'brand store', 'my own', 'own'] },
+];
+
+export const CATEGORIES = [
+  { value: 'thrift', label: 'Thrift & vintage clothing' },
+  { value: 'fashion', label: 'Fashion & clothing' },
+  { value: 'bags-shoes', label: 'Bags, shoes & accessories' },
+  { value: 'beauty', label: 'Beauty & hair' },
+  { value: 'gadgets', label: 'Phones & gadgets' },
+  { value: 'home', label: 'Home & furniture' },
+  { value: 'other', label: 'Something else' },
+];
+
+const PLANS = [
+  { value: 'starter', words: ['1', 'starter'] },
+  { value: 'growth', words: ['2', 'growth'] },
+  { value: 'business', words: ['3', 'business'] },
+];
+
 // A bare greeting in answer to "what is your business called?" is somebody
 // saying hello again, not a store called "Hi".
 const BARE_GREETING = /^(hi|hey|hello|help|menu|start|yo)[\s!.?]*$/i;
+const AGREE = /^(y|yes|yeah|yep|i agree|agree|accept|i accept|ok|okay)\b/i;
+const DECLINE = /^(n|no|nope)\b/i;
+
+function pick(options, text) {
+  const raw = String(text ?? '').toLowerCase().trim().replace(/[.!*]+$/, '');
+  if (!raw) return null;
+  return options.find((o) => o.words.some((w) => raw === w || raw.startsWith(`${w} `)))?.value ?? null;
+}
+
+export function parseStoreType(text) {
+  return pick(STORE_TYPES, text);
+}
+
+export function parsePlan(text) {
+  return pick(PLANS, text);
+}
+
+export function parseCategory(text) {
+  const raw = String(text ?? '').toLowerCase().trim().replace(/[.!*]+$/, '');
+  if (!raw) return null;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1 && n <= CATEGORIES.length) return CATEGORIES[n - 1].value;
+  const hit = CATEGORIES.find((c) => c.value === raw || c.label.toLowerCase() === raw);
+  return hit?.value ?? null;
+}
+
+export function categoryLabel(value) {
+  return CATEGORIES.find((c) => c.value === value)?.label ?? value;
+}
 
 const SIGNUP = {
   welcome:
@@ -135,30 +198,67 @@ const SIGNUP = {
     'Want to open one? Reply with your *business name*.\n\n' +
     '(Reply *cancel* any time.)',
   badName: `Reply with your business name — 2 to ${MAX_BUSINESS_NAME} characters.`,
-  askEmail: (name) =>
-    `*${name}* — nice. What email should your dashboard login use?`,
+  askType: (name) =>
+    `*${name}* — nice. What kind of store is it?\n\n` +
+    '1 *Thrift store* — people bring you items and you sell them on their behalf\n' +
+    '2 *Brand store* — you sell your own stock\n\n' +
+    'Reply 1 or 2.',
+  badType: 'Reply 1 for a thrift store, or 2 for a brand store.',
+  askCategory:
+    'What do you mostly sell?\n\n' +
+    CATEGORIES.map((c, i) => `${i + 1} ${c.label}`).join('\n') +
+    '\n\nReply with the number.',
+  badCategory: `Reply with a number from 1 to ${CATEGORIES.length}.`,
+  askPlan:
+    'Pick a plan:\n\n' +
+    `1 *Starter* — ₦10,000–15,000/mo. Listings shared to your WhatsApp Status. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
+    `2 *Growth* — ₦25,000–35,000/mo. Adds Instagram & Facebook, buyer protection and checkout in WhatsApp. ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
+    '3 *Business* — from ₦75,000/mo. Adds TikTok, staff logins, analytics and dedicated support. Commission agreed with you.\n\n' +
+    "Reply 1, 2 or 3. We'll confirm pricing with you before anything is charged, and you can change plan later.",
+  badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
+  askEmail: 'What email should your dashboard login use?',
   badEmail: "That doesn't look like an email address. Try again, e.g. ada@example.com",
+  declined:
+    "Understood — the store can't open without agreeing to these terms, because every sale on Unique Thrift is paid through us. " +
+    'Reply *YES* if you change your mind, or *CANCEL* to stop.',
   cancelled: 'No problem, nothing was set up. Message us any time to open a store.',
 };
 
-export function submittedMessage(name) {
+// The commission disclaimer, version DISCLAIMER_VERSION. A draft for the
+// operator to review; change DISCLAIMER_VERSION with the wording.
+export function termsMessage(tier) {
+  const pct = COMMISSION[tier] ?? COMMISSION.starter;
+  const payout =
+    tier === 'starter'
+      ? "You're paid the same day the buyer pays."
+      : "The buyer's payment is held until they confirm they've received the item, then released to you.";
+  const rate =
+    tier === 'business'
+      ? `A ${pct}% commission applies to every sale paid through Unique Thrift until we agree a different rate with you.`
+      : `Every sale paid through Unique Thrift has a ${pct}% commission deducted before you're paid.`;
+
   return (
-    `Thanks! *${name}* is set up and waiting for approval.\n\n` +
-    "We'll message you here as soon as it's approved."
+    '*Before we set you up — our commission terms*\n\n' +
+    `• ${rate}\n` +
+    `• ${payout}\n` +
+    '• Buyers always pay through Unique Thrift. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
+    '• Your monthly plan fee is separate from commission, and is confirmed with you before anything is charged.\n\n' +
+    'Reply *YES* to accept, or *CANCEL*.'
   );
 }
 
-export function pendingMessage(tenant) {
+export function submittedMessage(name) {
   return (
-    `*${tenant?.name ?? 'Your store'}* is still waiting for approval. ` +
-    "We'll message you here as soon as it's live."
+    `✅ *${name}* is set up!\n\n` +
+    "We're reviewing your store and will message you here once it's approved — then your dashboard login and your store's web page go live.\n\n" +
+    "Don't wait for us: send a photo of your first item now and I'll list it 📸"
   );
 }
 
 // Sent when the operator approves. A new account gets its set-password link; an
 // email that already had an account gets told to sign in with it, because a
 // login link for an existing account must never go to whoever typed its email.
-export function approvedMessage({ name, link, email, origin }) {
+export function approvedMessage({ name, link, email, origin, slug }) {
   const lines = [`🎉 *${name}* is approved and live!`, ''];
 
   if (link) {
@@ -170,61 +270,100 @@ export function approvedMessage({ name, link, email, origin }) {
     );
   }
 
-  lines.push('', 'To list your first item, just send a photo here 📸');
+  if (origin && slug) {
+    lines.push('', 'Your store page — share it anywhere:', `${origin}/s/${slug}`);
+  }
+
+  lines.push('', 'To list an item, just send a photo here 📸');
   return lines.join('\n');
 }
 
+const SIGNUP_STATES = ['name', 'type', 'category', 'plan', 'email', 'terms'];
+
 // signupStep(signup, message, ctx) → { state, patch, replies, action }
 //
-//   signup   { state, business_name, updated_at } as stored, or null
+//   signup   { state, business_name, store_type, category, tier, email,
+//              updated_at } as stored, or null
 //   state    what to store next, or null to forget the sign-up
 //   patch    columns to store alongside it
-//   action   { type: 'provision', name, email } once both answers are in
+//   action   { type: 'provision', name, email, storeType, category, tier }
+//            once the terms are accepted
 //
 // Only reached for a number with no store, so a 'pending' row here means the
 // store it was waiting on has gone — rejected and deleted — and the sign-up
 // starts over.
 export function signupStep(signup, message, ctx = {}) {
   const live =
-    signup && ['name', 'email'].includes(signup.state) && !staleness(signup, ctx) ? signup : null;
+    signup && SIGNUP_STATES.includes(signup.state) && !staleness(signup, ctx) ? signup : null;
   const text = String(message?.body ?? '').trim();
+  const ask = (state, reply, patch = {}) => ({ state, patch, replies: [reply], action: null });
 
   if (live && CANCEL.test(text)) {
     return { state: null, patch: {}, replies: [SIGNUP.cancelled], action: null };
   }
 
-  if (live?.state === 'name') {
-    const name = text.replace(/\s+/g, ' ');
-    if (name.length < 2 || name.length > MAX_BUSINESS_NAME || BARE_GREETING.test(name)) {
-      return { state: 'name', patch: {}, replies: [SIGNUP.badName], action: null };
+  switch (live?.state) {
+    case 'name': {
+      const name = text.replace(/\s+/g, ' ');
+      if (name.length < 2 || name.length > MAX_BUSINESS_NAME || BARE_GREETING.test(name)) {
+        return ask('name', SIGNUP.badName);
+      }
+      return ask('type', SIGNUP.askType(name), { business_name: name });
     }
-    return {
-      state: 'email',
-      patch: { business_name: name },
-      replies: [SIGNUP.askEmail(name)],
-      action: null,
-    };
-  }
 
-  if (live?.state === 'email') {
-    const email = text.toLowerCase();
-    if (!EMAIL.test(email)) {
-      return { state: 'email', patch: {}, replies: [SIGNUP.badEmail], action: null };
+    case 'type': {
+      const storeType = parseStoreType(text);
+      if (!storeType) return ask('type', SIGNUP.badType);
+      return ask('category', SIGNUP.askCategory, { store_type: storeType });
     }
-    return {
-      state: 'pending',
-      patch: { email },
-      replies: [],
-      action: { type: 'provision', name: live.business_name, email },
-    };
-  }
 
-  return {
-    state: 'name',
-    patch: { business_name: null, email: null },
-    replies: [SIGNUP.welcome],
-    action: null,
-  };
+    case 'category': {
+      const category = parseCategory(text);
+      if (!category) return ask('category', SIGNUP.badCategory);
+      return ask('plan', SIGNUP.askPlan, { category });
+    }
+
+    case 'plan': {
+      const tier = parsePlan(text);
+      if (!tier) return ask('plan', SIGNUP.badPlan);
+      return ask('email', SIGNUP.askEmail, { tier });
+    }
+
+    case 'email': {
+      const email = text.toLowerCase();
+      if (!EMAIL.test(email)) return ask('email', SIGNUP.badEmail);
+      return ask('terms', termsMessage(live.tier), { email });
+    }
+
+    case 'terms': {
+      if (AGREE.test(text)) {
+        return {
+          state: 'pending',
+          patch: {},
+          replies: [],
+          action: {
+            type: 'provision',
+            name: live.business_name,
+            email: live.email,
+            storeType: live.store_type,
+            category: live.category,
+            tier: live.tier ?? 'starter',
+          },
+        };
+      }
+      if (DECLINE.test(text)) return ask('terms', SIGNUP.declined);
+      return ask('terms', termsMessage(live.tier));
+    }
+
+    default:
+      return ask('name', SIGNUP.welcome, {
+        business_name: null,
+        store_type: null,
+        category: null,
+        tier: null,
+        email: null,
+      });
+  }
 }
 
 function summary(draft, tenant) {
@@ -266,6 +405,15 @@ export function listedMessage(product, { origin, posted } = {}) {
 
   lines.push('', 'Send another photo to list the next one.');
   return lines.join('\n');
+}
+
+// A listing from a store still waiting for approval: saved, not yet public.
+export function savedMessage(product) {
+  return (
+    `✅ *${product.title}* is saved — ${formatNaira(product.price)}\n\n` +
+    "It goes live, with its own link, as soon as your store is approved.\n\n" +
+    'Send another photo to add the next one.'
+  );
 }
 
 export function formatNaira(amount) {

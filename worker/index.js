@@ -10,7 +10,7 @@ import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
 import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
-import { renderProductPage } from './routes/storefront.js';
+import { renderProductPage, renderStorePage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
@@ -30,6 +30,12 @@ export default {
       const shared = path.match(/^\/p\/([A-Za-z0-9]{4,10})\/?$/);
       if (shared) {
         return await renderProductPage(request, env, shared[1]);
+      }
+
+      // A store's own page, /s/<slug>, for the same reason.
+      const store = path.match(/^\/s\/([a-z0-9-]{3,40})\/?$/i);
+      if (store) {
+        return await renderStorePage(request, env, store[1].toLowerCase());
       }
 
       // Everything else: a real file if there is one, index.html if not.

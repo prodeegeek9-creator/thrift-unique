@@ -7,6 +7,7 @@ import { fetchTenant, setFlag, setTenantStatus } from '../../lib/admin.js';
 import { FLAG_MIN_TIER } from '../../lib/features.js';
 import { formatNaira } from '../../lib/money.js';
 import { dateOnly } from '../../lib/time.js';
+import { CATEGORY_LABELS, STORE_TYPE_LABELS, storeUrl } from '../../lib/tenants.js';
 
 export default function AdminTenantDetail({ operator }) {
   const { tenantId } = useParams();
@@ -140,7 +141,10 @@ export default function AdminTenantDetail({ operator }) {
               </>
             ) : null}
             {signup?.created_at ? ` on ${dateOnly(signup.created_at)}` : ''}.
-            {' '}Approving creates their login and sends them the link on WhatsApp.
+            {' '}They accepted the {tenant.disclaimer_version ?? 'commission'} terms for the{' '}
+            <span className="font-medium capitalize">{tenant.tier}</span> plan and can already list
+            items; nothing is public until you approve. Approving creates their login and sends them
+            the link on WhatsApp.
           </p>
         </section>
       ) : null}
@@ -208,7 +212,28 @@ export default function AdminTenantDetail({ operator }) {
               />
               <Row label="Status" value={tenant.status} />
               <Row label="Disclaimer" value={tenant.disclaimer_accepted_at ? dateOnly(tenant.disclaimer_accepted_at) : 'Not accepted'} />
+              {tenant.disclaimer_version ? <Row label="Terms version" value={tenant.disclaimer_version} /> : null}
             </dl>
+          </section>
+
+          <section className="card p-4">
+            <h2 className="text-sm font-semibold text-ink">Store</h2>
+            <dl className="mt-2 space-y-1 text-sm">
+              <Row label="Type" value={STORE_TYPE_LABELS[tenant.store_type] ?? 'Not given'} />
+              <Row label="Sells" value={CATEGORY_LABELS[tenant.category] ?? tenant.category ?? 'Not given'} />
+            </dl>
+            {tenant.status === 'active' ? (
+              <a
+                href={storeUrl(tenant.slug)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-block text-xs font-semibold text-green"
+              >
+                Open store page ↗
+              </a>
+            ) : (
+              <p className="mt-2 text-xs text-muted">The store page goes live on approval.</p>
+            )}
           </section>
 
           <section className="card p-4">

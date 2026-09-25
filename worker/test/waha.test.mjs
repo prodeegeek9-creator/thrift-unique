@@ -272,7 +272,7 @@ test('a number belonging to no store is offered one, and nothing else is created
   }
 });
 
-test('a seller opens a store over WhatsApp, and it waits for approval', async () => {
+test('a business opens a store over WhatsApp, and it waits for approval', async () => {
   const supabase = makeFakeSupabase(seed());
   const waha = makeFakeWaha();
   const restore = installFetch({ supabase, waha, tokens: TOKENS });
@@ -284,8 +284,12 @@ test('a seller opens a store over WhatsApp, and it waits for approval', async ()
         // A second hello is not a business called "hi".
         incoming('hi', { from: NEWCOMER_CHAT }),
         incoming("Ada's Thrift & Vintage", { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }), // thrift store
+        incoming('1', { from: NEWCOMER_CHAT }), // thrift & vintage clothing
+        incoming('2', { from: NEWCOMER_CHAT }), // growth
         incoming('not an email', { from: NEWCOMER_CHAT }),
         incoming(' Ada@Example.com ', { from: NEWCOMER_CHAT }),
+        incoming('yes', { from: NEWCOMER_CHAT }),
       ],
       wahaEnv()
     );
@@ -296,10 +300,18 @@ test('a seller opens a store over WhatsApp, and it waits for approval', async ()
     assert.equal(store.name, "Ada's Thrift & Vintage");
     assert.equal(store.slug, 'adas-thrift-vintage');
     assert.equal(store.status, 'onboarding');
-    assert.equal(store.tier, 'starter');
+    assert.equal(store.tier, 'growth');
+    assert.equal(store.store_type, 'consignment');
+    assert.equal(store.category, 'thrift');
+    assert.equal(store.commission_pct, 7);
+
+    // The acceptance the whole commercial relationship rests on: when, and
+    // which wording.
+    assert.ok(store.disclaimer_accepted_at);
+    assert.equal(store.disclaimer_version, 'commission-v1');
 
     const seeded = supabase.calls.find((c) => c.rpc === 'seed_tenant_features');
-    assert.deepEqual(seeded?.args, { target: store.id, plan: 'starter' });
+    assert.deepEqual(seeded?.args, { target: store.id, plan: 'growth' });
 
     // The email waits for approval rather than becoming a login now, so a
     // sign-up the operator rejects leaves no account behind.
@@ -311,14 +323,41 @@ test('a seller opens a store over WhatsApp, and it waits for approval', async ()
 
     const said = waha.sent.map((m) => m.text);
     assert.match(said[1], /business name/i);
-    assert.match(said.at(-2), /doesn't look like an email/i);
-    assert.match(said.at(-1), /waiting for approval/i);
+    assert.ok(said.some((t) => /doesn't look like an email/i.test(t)));
+    assert.match(said.at(-2), /commission terms/i);
+    assert.match(said.at(-1), /reviewing your store/i);
     assert.ok(waha.sent.every((m) => m.chatId === NEWCOMER_CHAT));
+  } finally {
+    restore();
+  }
+});
 
-    // Until then the bot does not start a listing.
-    await worker.fetch(hook(incoming('list', { from: NEWCOMER_CHAT })), wahaEnv(), {});
-    assert.match(waha.sent.at(-1).text, /still waiting for approval/i);
-    assert.equal(supabase.tables.bot_conversations.length, 0);
+test('a store awaiting approval can list, and nothing is posted until it is live', async () => {
+  const supabase = makeFakeSupabase(
+    seed({ tenant: { status: 'onboarding', waha_session: 'ut-store', waha_status: 'WORKING' }, secret: 's' })
+  );
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await converse(
+      [
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/jacket.jpg` }),
+        incoming('Jacket'),
+        incoming('35k'),
+        incoming('2'),
+        incoming('yes'),
+      ],
+      wahaEnv()
+    );
+
+    assert.equal(supabase.tables.products.length, 1);
+    assert.equal(supabase.tables.products[0].tenant_id, TENANT);
+    // No Status post, and no link: both pages answer "not found" until the
+    // store is approved.
+    assert.equal(waha.statuses.length, 0);
+    assert.match(waha.sent.at(-1).text, /saved/i);
+    assert.doesNotMatch(waha.sent.at(-1).text, /\/p\//);
   } finally {
     restore();
   }
@@ -359,8 +398,8 @@ test('a retried sign-up answer is not applied twice', async () => {
     const replay = await worker.fetch(hook(name), wahaEnv(), {});
 
     assert.deepEqual(await replay.json(), { ok: true, replayed: true });
-    // Read twice, the name would have been taken as the email as well.
-    assert.equal(supabase.tables.signups[0].state, 'email');
+    // Read twice, the name would have been taken as the store type as well.
+    assert.equal(supabase.tables.signups[0].state, 'type');
     assert.equal(waha.sent.length, 2);
   } finally {
     restore();

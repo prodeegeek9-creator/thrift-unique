@@ -11,6 +11,7 @@ import Onboarding from './pages/Onboarding.jsx';
 import ConnectChannels from './pages/ConnectChannels.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Product from './pages/public/Product.jsx';
+import Store from './pages/public/Store.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
@@ -46,10 +47,11 @@ const AdminRoutes = lazy(() => import('./pages/admin/AdminRoutes.jsx'));
 export default function App() {
   return (
     <Routes>
-      {/* The only two public documents. Not a storefront: one item at a time,
-          reached by a link somebody was sent, with no cart and nothing to
-          browse. See pages/public/Product.jsx. */}
+      {/* The public documents: one item, one store's own page, and the
+          receipt confirmation. No marketplace — each store's page shows that
+          store alone. See pages/public/Product.jsx and Store.jsx. */}
       <Route path="/p/:code" element={<Product />} />
+      <Route path="/s/:slug" element={<Store />} />
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
 
       <Route path="/login" element={<Login />} />

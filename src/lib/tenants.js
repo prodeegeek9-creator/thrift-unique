@@ -65,6 +65,30 @@ export function productUrl(publicCode) {
   return `${window.location.origin}/p/${publicCode}`;
 }
 
+// A store's own web page, /s/<slug>: every live listing it has, and the link a
+// store puts in its bio or shares in place of posting items one by one.
+export function storeUrl(slug) {
+  if (!slug) return null;
+  return `${window.location.origin}/s/${slug}`;
+}
+
+// What the sign-up conversation records about a store. Keep in step with
+// STORE_TYPES and CATEGORIES in worker/lib/bot.js.
+export const STORE_TYPE_LABELS = {
+  consignment: 'Thrift store (sells for others)',
+  brand: 'Brand store (own stock)',
+};
+
+export const CATEGORY_LABELS = {
+  thrift: 'Thrift & vintage clothing',
+  fashion: 'Fashion & clothing',
+  'bags-shoes': 'Bags, shoes & accessories',
+  beauty: 'Beauty & hair',
+  gadgets: 'Phones & gadgets',
+  home: 'Home & furniture',
+  other: 'Something else',
+};
+
 // A tenant's branding, as the CSS variables index.css already defines.
 //
 // Returned as a style object rather than written to document.documentElement,
@@ -90,4 +114,14 @@ function hexToChannels(hex) {
   if (!m) return null;
   const n = parseInt(m[1], 16);
   return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+
+// A store's public page, through public_store(): the store's name, branding,
+// number and live listings, or null for a store that does not exist or is not
+// live yet.
+export async function fetchPublicStore(slug) {
+  if (!slug) return null;
+  const { data, error } = await supabase.rpc('public_store', { store_slug: slug });
+  if (error) throw error;
+  return data ?? null;
 }

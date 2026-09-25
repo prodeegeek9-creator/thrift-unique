@@ -258,7 +258,7 @@ async function setStatus(request, cfg, op, tenantId) {
 
   const tenant = await db(cfg).one(
     'tenants',
-    `id=eq.${tenantId}&select=id,name,status,whatsapp_number`
+    `id=eq.${tenantId}&select=id,slug,name,tier,status,whatsapp_number`
   );
   if (!tenant) return json({ error: 'No such tenant' }, 404);
 
@@ -306,7 +306,13 @@ async function tellApproved(cfg, tenant, { signup, link }) {
       cfg,
       cfg.wahaSession,
       signup.chat_id,
-      approvedMessage({ name: tenant.name, link, email: signup.email, origin: cfg.publicOrigin })
+      approvedMessage({
+        name: tenant.name,
+        slug: tenant.slug,
+        link,
+        email: signup.email,
+        origin: cfg.publicOrigin,
+      })
     );
     return true;
   } catch (err) {

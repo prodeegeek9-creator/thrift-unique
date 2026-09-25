@@ -11,7 +11,9 @@
 export const SUPABASE_URL = 'https://test.supabase.co';
 export const SERVICE_KEY = 'service-key-for-tests';
 
-export function makeFakeSupabase(seed = {}) {
+// `rpcs` answers named functions: { public_store: (args, tables) => value }.
+// Any other function answers [], as a set-returning function with no rows.
+export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
   const tables = {
     tenants: [],
     tenant_features: [],
@@ -88,7 +90,9 @@ export function makeFakeSupabase(seed = {}) {
     }
 
     if (u.pathname.includes('/rpc/')) {
-      return new Response(JSON.stringify([]), { status: 200 });
+      const fn = rpcs[u.pathname.split('/')[4]];
+      const out = fn ? fn(JSON.parse(init.body ?? '{}'), tables) : [];
+      return new Response(JSON.stringify(out ?? null), { status: 200 });
     }
 
     if (method === 'GET') {

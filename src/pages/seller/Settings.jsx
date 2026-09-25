@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
-import { updateTenant } from '../../lib/tenants.js';
+import { storeUrl, updateTenant } from '../../lib/tenants.js';
 import { InputError } from '../../lib/phone.js';
 import { tenantScope } from '../../lib/queryKeys.js';
 
@@ -72,14 +72,30 @@ export default function Settings() {
           value={form.brand_color}
           onChange={(v) => setForm((f) => ({ ...f, brand_color: v }))}
           disabled={!isOwner}
-          hint="A hex value like #5C7A3E. Used for accents in your dashboard."
+          hint="A hex value like #5C7A3E. Used for accents in your dashboard and on your store page."
         />
 
         {/* Read-only on purpose. The slug is already inside every product link
             a seller has shared, and the plan and commission are set by
             billing, not by the customer. */}
         <div className="space-y-1 border-t border-line pt-4 text-sm">
-          <ReadOnly label="Store address" value={`/s/${tenant?.slug ?? ''}`} />
+          <ReadOnly
+            label="Store page"
+            value={
+              tenant?.status === 'active' ? (
+                <a
+                  href={storeUrl(tenant.slug)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-green underline-offset-2 hover:underline"
+                >
+                  /s/{tenant.slug}
+                </a>
+              ) : (
+                `/s/${tenant?.slug ?? ''} · live once approved`
+              )
+            }
+          />
           <ReadOnly label="Plan" value={tenant?.tier ?? '—'} />
           <ReadOnly
             label="Commission"

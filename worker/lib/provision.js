@@ -1,5 +1,6 @@
 import { db, SupabaseError } from './supabase.js';
 import { generateInvite } from './accounts.js';
+import { COMMISSION, DISCLAIMER_VERSION } from './bot.js';
 
 // Creating a store, and later giving it an owner.
 //
@@ -8,7 +9,7 @@ import { generateInvite } from './accounts.js';
 // can tell them it is waiting. The login is created only when the operator
 // approves it, so a sign-up that is turned down leaves no account behind.
 
-const PLAN = 'starter';
+const TIERS = ['starter', 'growth', 'business'];
 
 // "Ada's Thrift & Vintage!" → "adas-thrift-vintage". The slug is in every
 // shared product link, so it has to be something a person could read.
@@ -35,9 +36,14 @@ async function freeSlug(cfg, name) {
   throw new Error(`no free slug for ${base}`);
 }
 
-// A new store, waiting for approval: status 'onboarding', the Starter plan's
-// features, and the sender's number as the store's number.
-export async function provisionStore(cfg, { phone, name }) {
+// A new store, waiting for approval: status 'onboarding', the chosen plan's
+// features and commission, the terms its owner accepted, and the sender's
+// number as the store's number.
+//
+// Reaching here means the terms were accepted: the sign-up conversation only
+// asks for provisioning after a YES to them.
+export async function provisionStore(cfg, { phone, name, storeType = null, category = null, tier }) {
+  const plan = TIERS.includes(tier) ? tier : 'starter';
   const slug = await freeSlug(cfg, name);
 
   let tenant;
@@ -45,9 +51,14 @@ export async function provisionStore(cfg, { phone, name }) {
     tenant = await db(cfg).insert('tenants', {
       slug,
       name,
-      tier: PLAN,
+      tier: plan,
       status: 'onboarding',
       whatsapp_number: phone,
+      store_type: storeType,
+      category,
+      commission_pct: COMMISSION[plan],
+      disclaimer_accepted_at: new Date().toISOString(),
+      disclaimer_version: DISCLAIMER_VERSION,
     });
   } catch (err) {
     // The number is unique. Losing that race means the store already exists,
@@ -62,7 +73,7 @@ export async function provisionStore(cfg, { phone, name }) {
     throw err;
   }
 
-  await db(cfg).rpc('seed_tenant_features', { target: tenant.id, plan: PLAN });
+  await db(cfg).rpc('seed_tenant_features', { target: tenant.id, plan });
   return tenant;
 }
 
@@ -86,7 +97,10 @@ export async function approveStore(cfg, tenant, { origin } = {}) {
 
   // Idempotent (on conflict do nothing), and it repairs a store whose
   // provisioning died between the insert and the seed.
-  await db(cfg).rpc('seed_tenant_features', { target: tenant.id, plan: PLAN });
+  await db(cfg).rpc('seed_tenant_features', {
+    target: tenant.id,
+    plan: TIERS.includes(tenant.tier) ? tenant.tier : 'starter',
+  });
 
   const existing = await db(cfg).rpc('user_id_for_email', { addr: signup.email });
   let userId = typeof existing === 'string' ? existing : null;
