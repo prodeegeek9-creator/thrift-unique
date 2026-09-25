@@ -61,6 +61,12 @@
     // file on disk, so an unmatched path has to answer with the document
     // rather than a 404. The Worker still sees /api/* and /p/* first — see
     // worker/index.js.
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+
+    // "/" is a real file (index.html), so without this the asset layer answers
+    // it and the Worker never runs. The Worker serves the homepage itself, to
+    // lift the document's noindex and add a link preview — see
+    // renderHomePage() in worker/routes/storefront.js.
+    "run_worker_first": ["/"]
   }
 }

@@ -10,7 +10,7 @@ import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
 import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
-import { renderProductPage, renderStorePage } from './routes/storefront.js';
+import { renderHomePage, renderProductPage, renderStorePage } from './routes/storefront.js';
 import { releaseExpiredHolds } from './routes/escrow.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
@@ -24,6 +24,11 @@ export default {
     try {
       if (path.startsWith('/api/')) {
         return await api(request, env, path);
+      }
+
+      // The homepage, indexable and with a proper preview.
+      if (path === '/' && request.method === 'GET') {
+        return await renderHomePage(request, env);
       }
 
       // A shared product link. The document is the same bundle everyone else

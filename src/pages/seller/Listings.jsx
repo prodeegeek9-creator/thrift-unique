@@ -5,6 +5,7 @@ import Icon from '../../components/ui/Icon.jsx';
 import StatusPill from '../../components/ui/StatusPill.jsx';
 import ChannelDots from '../../components/ui/ChannelDots.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
+import ListingEditor from '../../components/ListingEditor.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
 import { fetchListings, fetchListingCounts, fetchChannelPosts } from '../../lib/products.js';
@@ -27,6 +28,8 @@ export default function Listings() {
   const toast = useToast();
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  // null: closed. 'new': adding. Otherwise the id being edited.
+  const [editing, setEditing] = useState(null);
 
   const { data: counts } = useQuery({
     queryKey: keys.listingCounts(tenantId),
@@ -57,15 +60,25 @@ export default function Listings() {
           counts ? `${counts.active} active · ${counts.sold} sold` : 'Everything you have for sale.'
         }
         actions={
-          deepLink ? (
-            <a
-              href={deepLink}
+          <div className="flex flex-wrap gap-2">
+            {deepLink ? (
+              <a
+                href={deepLink}
+                className="inline-flex items-center gap-1.5 rounded-pill border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink hover:bg-surface-2"
+              >
+                <Icon name="whatsapp" className="h-4 w-4" />
+                Add on WhatsApp
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setEditing('new')}
               className="inline-flex items-center gap-1.5 rounded-pill bg-green px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
             >
               <Icon name="plus" className="h-4 w-4" />
               Add Product
-            </a>
-          ) : null
+            </button>
+          </div>
         }
       />
 
@@ -122,19 +135,31 @@ export default function Listings() {
             search
               ? 'Try a different word, or clear the search.'
               : botConfigured()
-                ? 'Send us a photo, a name and a price on WhatsApp and we will create the listing for you.'
-                : 'Your listings will appear here once you add one.'
+                ? 'Add one here with photos from your phone or laptop, or send a photo on WhatsApp and we will list it for you.'
+                : 'Add your first product with the button below.'
           }
           action={
-            deepLink && !search ? (
-              <a
-                href={deepLink}
-                className="inline-flex items-center gap-1.5 rounded-pill bg-green px-4 py-2 text-sm font-semibold text-white"
-              >
-                <Icon name="whatsapp" className="h-4 w-4" />
-                Open WhatsApp
-              </a>
-            ) : null
+            search ? null : (
+              <div className="flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditing('new')}
+                  className="inline-flex items-center gap-1.5 rounded-pill bg-green px-4 py-2 text-sm font-semibold text-white"
+                >
+                  <Icon name="plus" className="h-4 w-4" />
+                  Add a product
+                </button>
+                {deepLink ? (
+                  <a
+                    href={deepLink}
+                    className="inline-flex items-center gap-1.5 rounded-pill border border-line px-4 py-2 text-sm font-semibold text-ink"
+                  >
+                    <Icon name="whatsapp" className="h-4 w-4" />
+                    Open WhatsApp
+                  </a>
+                ) : null}
+              </div>
+            )
           }
         />
       ) : (
@@ -170,6 +195,7 @@ export default function Listings() {
                 <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
                   <button
                     type="button"
+                    onClick={() => setEditing(item.id)}
                     className="flex-1 rounded-lg border border-line py-1.5 text-xs font-medium text-ink hover:bg-surface-2"
                   >
                     Edit
@@ -201,6 +227,14 @@ export default function Listings() {
           ))}
         </div>
       )}
+
+      {editing ? (
+        <ListingEditor
+          tenantId={tenantId}
+          listingId={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
     </>
   );
 }

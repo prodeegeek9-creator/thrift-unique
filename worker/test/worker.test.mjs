@@ -338,6 +338,22 @@ test('an unconfigured Worker still serves the page rather than failing', async (
   } finally { restore(); }
 });
 
+// ── the homepage ─────────────────────────────────────────────────────────────
+
+test('the homepage is indexable and previews as the platform', async () => {
+  const restore = installFetch({ supabase: makeFakeSupabase(seed()) });
+  try {
+    const res = await worker.fetch(new Request('https://example.com/'), env(), {});
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /content="index, follow"/);
+    assert.doesNotMatch(html, /noindex/);
+    assert.match(html, /<title>Unique Thrift: run your thrift business from WhatsApp<\/title>/);
+    assert.match(html, /og:url" content="https:\/\/example\.com\/"/);
+    assert.match(html, /<div id="root">/);
+  } finally { restore(); }
+});
+
 // ── a store's own page ───────────────────────────────────────────────────────
 
 test("a store's page previews as the store, and an unknown one is just the page", async () => {
