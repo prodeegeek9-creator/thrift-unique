@@ -6,10 +6,23 @@
 // fallback for when a seller is already at a desk. Every listing surface
 // should lead here first.
 
+import { checkedWhatsappNumber } from './phone.js';
+
 const BOT_NUMBER = import.meta.env.VITE_WHATSAPP_NUMBER;
 
 export function botConfigured() {
   return Boolean(BOT_NUMBER);
+}
+
+export function checkStoreWhatsapp(raw) {
+  return checkedWhatsappNumber(raw, BOT_NUMBER);
+}
+
+// For somebody with an account but no store yet: the bot is where a store
+// gets set up, so this is the way forward rather than a support ticket.
+export function setupDeepLink() {
+  if (!BOT_NUMBER) return null;
+  return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent('Hi! I want to set up my store.')}`;
 }
 
 // The bot answers one number for every tenant, so the opening message has to

@@ -32,9 +32,11 @@ async function call(cfg, path, init) {
     throw new SupabaseError(`PostgREST ${res.status} on ${path}`, res.status, body);
   }
 
-  // Prefer: return=minimal and DELETE both answer 204.
-  if (res.status === 204) return null;
-  return res.json();
+  // An empty body is success with nothing to hand back. That is 204 for a
+  // DELETE or a minimal PATCH, but 201 for a minimal INSERT, so the body is
+  // read rather than the status code trusted.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 export function db(cfg) {

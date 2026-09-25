@@ -89,15 +89,21 @@ export function makeFakeSupabase(seed = {}) {
       return new Response(JSON.stringify(rows), { status: 200 });
     }
 
+    // Answered the way PostgREST answers, including what it leaves out: with
+    // Prefer: return=minimal an INSERT is 201 with an empty body and a PATCH
+    // is 204. A fake that always sent JSON let a parser that choked on the
+    // empty 201 through every test.
+    const minimal = /return=minimal/.test(init.headers?.Prefer ?? '');
+
     if (method === 'POST') {
       const body = JSON.parse(init.body);
       const key = unique[table];
 
       if (key && body[key] != null && tables[table].some((r) => r[key] === body[key])) {
-        // PostgREST with resolution=ignore-duplicates answers 200 with [].
-        // worker/lib/supabase.js turns that into null, which is what the
-        // payout path treats as "already done".
-        return new Response(JSON.stringify([]), { status: 200 });
+        // resolution=ignore-duplicates inserts nothing: [] with
+        // return=representation, which worker/lib/supabase.js turns into
+        // null — what the payout path treats as "already done".
+        return new Response(minimal ? null : JSON.stringify([]), { status: 201 });
       }
 
       const row = { id: `row-${nextId++}`, ...body };
@@ -105,14 +111,16 @@ export function makeFakeSupabase(seed = {}) {
       // storefront link and the bot's confirmation both read it back.
       if (table === 'products' && !row.public_code) row.public_code = `PC${nextId}`;
       tables[table].push(row);
-      return new Response(JSON.stringify([row]), { status: 200 });
+      return new Response(minimal ? null : JSON.stringify([row]), { status: 201 });
     }
 
     if (method === 'PATCH') {
       const patch = JSON.parse(init.body);
       const hit = tables[table].filter((r) => matches(r, filters));
       for (const r of hit) Object.assign(r, patch);
-      return new Response(JSON.stringify(hit), { status: 200 });
+      return minimal
+        ? new Response(null, { status: 204 })
+        : new Response(JSON.stringify(hit), { status: 200 });
     }
 
     if (method === 'DELETE') {

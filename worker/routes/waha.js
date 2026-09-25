@@ -14,6 +14,7 @@ import {
   createSession,
   getSession,
   startSession,
+  stopSession,
   deleteSession,
   getQR,
   WahaError,
@@ -482,6 +483,13 @@ async function linkSession(request, env) {
       await createSession(cfg, tenant, {
         webhookUrl: `${cfg.publicOrigin}/api/waha/webhook`,
         secret,
+      });
+    } else if (['FAILED', 'STOPPED'].includes(existing.status)) {
+      // WAHA refuses to start a session that failed (an expired QR, or a
+      // phone that unlinked it) until it has been stopped, so "Link again"
+      // would otherwise show the same dead session forever.
+      await stopSession(cfg, name).catch((err) => {
+        if (!(err instanceof WahaError)) throw err;
       });
     }
     await startSession(cfg, name).catch((err) => {

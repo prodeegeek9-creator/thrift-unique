@@ -59,6 +59,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
   const sent = [];
   const statuses = [];
   const started = [];
+  const stopped = [];
   const created = [];
   const deleted = [];
 
@@ -89,6 +90,12 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     if (status) {
       statuses.push({ session: decodeURIComponent(status[1]), kind: status[2], ...body });
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+
+    const stop = path.match(/^\/api\/sessions\/([^/]+)\/stop$/);
+    if (stop) {
+      stopped.push(decodeURIComponent(stop[1]));
+      return new Response(JSON.stringify({ status: 'STOPPED' }), { status: 201 });
     }
 
     const start = path.match(/^\/api\/sessions\/([^/]+)\/start$/);
@@ -133,7 +140,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, statuses, started, created, deleted, sessions };
+  return { url: WAHA_URL, handler, sent, statuses, started, stopped, created, deleted, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -639,6 +646,33 @@ test('an owner links a session, and the webhook it registers carries a secret', 
     assert.ok(header.value.length >= 32);
     assert.equal(tenant.waha_session, 'ut-store');
     assert.deepEqual(waha.started, ['ut-store']);
+  } finally {
+    restore();
+  }
+});
+
+test('linking again recovers a link that stopped halfway', async () => {
+  // The state production was left in: the secret saved and the session
+  // created in WAHA, but never recorded on the store, and failed since.
+  const supabase = makeFakeSupabase(seed({ secret: 'kept-secret' }));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'FAILED' } } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      sessionCall('POST', { token: 'tok-owner', body: { tenant: TENANT } }),
+      wahaEnv(),
+      {}
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(waha.created.length, 0);
+    assert.deepEqual(waha.stopped, ['ut-store']);
+    assert.deepEqual(waha.started, ['ut-store']);
+    assert.equal(supabase.tables.tenants[0].waha_session, 'ut-store');
+    // WAHA already signs this session's webhooks with the stored secret.
+    assert.equal(supabase.tables.whatsapp_secrets.length, 1);
+    assert.equal(supabase.tables.whatsapp_secrets[0].webhook_secret, 'kept-secret');
   } finally {
     restore();
   }

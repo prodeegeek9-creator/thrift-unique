@@ -4,6 +4,7 @@ import PageHeader from '../../components/ui/PageHeader.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
 import { updateTenant } from '../../lib/tenants.js';
+import { InputError } from '../../lib/phone.js';
 import { tenantScope } from '../../lib/queryKeys.js';
 
 export default function Settings() {
@@ -29,7 +30,15 @@ export default function Settings() {
       toast('Saved', 'success');
       qc.invalidateQueries(tenantScope(tenant.id));
     },
-    onError: () => toast('Could not save those changes', 'error'),
+    onError: (e) =>
+      toast(
+        e instanceof InputError
+          ? e.message
+          : e?.code === '23505'
+            ? 'That WhatsApp number is already registered to another store.'
+            : 'Could not save those changes',
+        'error'
+      ),
   });
 
   return (
@@ -55,7 +64,7 @@ export default function Settings() {
           value={form.whatsapp_number}
           onChange={(v) => setForm((f) => ({ ...f, whatsapp_number: v }))}
           disabled={!isOwner}
-          hint="Digits only, with country code — 2348012345678. This is how we know an incoming message is yours."
+          hint="The number you'll message the bot from, e.g. 2348012345678 or 0801 234 5678. This is how we know an incoming message is yours."
         />
 
         <Field

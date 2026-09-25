@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { checkStoreWhatsapp } from './whatsapp.js';
 
 // The store itself: the Settings screen, and the branding the dashboard chrome
 // reads.
@@ -40,6 +41,8 @@ export async function updateTenant(tenantId, patch) {
   for (const key of EDITABLE) {
     if (key in patch) clean[key] = patch[key];
   }
+
+  if ('whatsapp_number' in clean) clean.whatsapp_number = checkStoreWhatsapp(clean.whatsapp_number);
 
   if (!Object.keys(clean).length) return fetchTenant(tenantId);
 
