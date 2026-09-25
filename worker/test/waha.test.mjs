@@ -57,6 +57,9 @@ function seed({ tenant = {}, secret = null } = {}) {
 // on what the seller and their contacts would actually have seen.
 function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null } = {}) {
   const sent = [];
+  const typing = [];
+  // Typing and sending, in the order they happened.
+  const events = [];
   const statuses = [];
   const started = [];
   const stopped = [];
@@ -75,8 +78,15 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
       });
     }
 
+    if (path === '/api/startTyping') {
+      typing.push(body);
+      events.push({ typing: body.chatId });
+      return new Response('{}', { status: 200 });
+    }
+
     if (path === '/api/sendText') {
       sent.push(body);
+      events.push({ sent: body.chatId });
       return new Response(JSON.stringify({ id: { id: `out-${sent.length}` } }), { status: 200 });
     }
 
@@ -140,7 +150,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, statuses, started, stopped, created, deleted, sessions };
+  return { url: WAHA_URL, handler, sent, typing, events, statuses, started, stopped, created, deleted, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -150,6 +160,8 @@ function wahaEnv(extra = {}) {
     WAHA_SESSION: PLATFORM,
     WAHA_WEBHOOK_SECRET: SECRET,
     PUBLIC_ORIGIN: 'https://uniquethrift.ng',
+    // A real pause, just not a slow one: the typing path runs in every test.
+    WAHA_TYPING_MS: '1',
     ...extra,
   });
 }
@@ -863,5 +875,55 @@ test('a deployment with no WAHA answers rather than crashing', async () => {
     assert.equal(supabase.tables.bot_conversations[0].state, 'photo');
   } finally {
     restore();
+  }
+});
+
+// ── HOW A REPLY ARRIVES ──────────────────────────────────────────────────────
+
+test('every reply is preceded by a moment of "typing…" in the same chat', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await converse([incoming('hi'), incoming('list')], wahaEnv());
+
+    assert.ok(waha.sent.length >= 2);
+    assert.equal(waha.typing.length, waha.sent.length);
+    for (let i = 0; i < waha.events.length; i += 2) {
+      assert.deepEqual(waha.events[i], { typing: SELLER_CHAT });
+      assert.deepEqual(waha.events[i + 1], { sent: SELLER_CHAT });
+    }
+    assert.ok(waha.typing.every((t) => t.session === PLATFORM));
+  } finally {
+    restore();
+  }
+});
+
+test('typing can be switched off, and a refusal to show it never loses the reply', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await worker.fetch(hook(incoming('hi')), wahaEnv({ WAHA_TYPING_MS: '0' }), {});
+    assert.equal(waha.typing.length, 0);
+    assert.equal(waha.sent.length, 1);
+  } finally {
+    restore();
+  }
+
+  const quiet = makeFakeWaha();
+  const handler = quiet.handler;
+  quiet.handler = (url, init) =>
+    new URL(url).pathname === '/api/startTyping'
+      ? new Response('nope', { status: 500 })
+      : handler(url, init);
+  const restore2 = installFetch({ supabase: makeFakeSupabase(seed()), waha: quiet, tokens: TOKENS });
+  try {
+    await worker.fetch(hook(incoming('hi')), wahaEnv(), {});
+    assert.equal(quiet.sent.length, 1);
+  } finally {
+    restore2();
   }
 });
