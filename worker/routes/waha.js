@@ -11,7 +11,7 @@ import {
   conditionLabel,
   signupStep,
   submittedMessage,
-  pendingMessage,
+  savedMessage,
 } from '../lib/bot.js';
 import { provisionStore } from '../lib/provision.js';
 import {
@@ -180,12 +180,9 @@ async function message(cfg, event) {
     return json({ ok: true, ignored: 'suspended' });
   }
 
-  // Signed up, not yet approved. Listing waits until there is somebody on the
-  // other side to sell it.
-  if (tenant.status === 'onboarding') {
-    await say(cfg, tenant, event.from, pendingMessage(tenant));
-    return json({ ok: true, ignored: 'pending approval' });
-  }
+  // Signed up and not yet approved is no reason to stop listing: the store
+  // builds its catalogue while it waits, and it all goes public on approval.
+  // See listItem().
 
   // The replay guard. WAHA retries a webhook it thinks failed, and a retried
   // "yes" that creates a second product is the kind of bug a seller notices
@@ -267,6 +264,13 @@ async function listItem(cfg, tenant, chatId, action) {
   } catch (err) {
     console.error('listing insert failed:', err?.message ?? err);
     await say(cfg, tenant, chatId, "Something went wrong saving that. Try again in a moment.");
+    return;
+  }
+
+  // Before approval the product and store pages answer "not found" (both
+  // RPCs want a live store), so there is nothing to link to or post yet.
+  if (tenant.status === 'onboarding') {
+    await say(cfg, tenant, chatId, savedMessage(product));
     return;
   }
 
@@ -402,7 +406,7 @@ async function signup(cfg, event, phone) {
   const messageId = inboundId(event);
   const current = await db(cfg).one(
     'signups',
-    `phone=eq.${phone}&select=phone,state,business_name,email,last_message_id,updated_at`
+    `phone=eq.${phone}&select=phone,state,business_name,store_type,category,tier,email,last_message_id,updated_at`
   );
 
   // The same replay guard as a listing, by hand: WAHA retries what it thinks
@@ -433,20 +437,21 @@ async function signup(cfg, event, phone) {
 
   if (result.action?.type === 'provision') {
     try {
-      const tenant = await provisionStore(cfg, { phone, name: result.action.name });
+      const { name, storeType, category, tier } = result.action;
+      const tenant = await provisionStore(cfg, { phone, name, storeType, category, tier });
       await say(cfg, null, event.from, submittedMessage(tenant.name));
     } catch (err) {
-      // Put the conversation back one step, so the seller's next message is
-      // read as their email again rather than as a new business name.
+      // Put the conversation back one step, so the seller's next YES is read
+      // as accepting the terms again rather than as a new business name.
       console.error('provisioning failed:', err?.message ?? err);
       await db(cfg)
-        .update('signups', `phone=eq.${phone}`, { state: 'email' }, { returning: false })
+        .update('signups', `phone=eq.${phone}`, { state: 'terms' }, { returning: false })
         .catch(() => {});
       await say(
         cfg,
         null,
         event.from,
-        'Sorry, something went wrong setting that up. Send your email again in a minute.'
+        'Sorry, something went wrong setting that up. Reply *YES* again in a minute.'
       );
     }
   }

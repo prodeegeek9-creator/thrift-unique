@@ -76,6 +76,62 @@ export async function renderProductPage(request, env, code) {
   });
 }
 
+// GET /s/:slug — a store's own page, rendered at the edge for the same
+// reason: the link a store shares in its bio or a group chat should arrive as
+// its name and a photo, not a bare URL.
+export async function renderStorePage(request, env, slug) {
+  const asset = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+
+  const store = await lookupStore(env, slug).catch(() => null);
+  if (!store) return asset;
+
+  const html = await asset.text();
+  const origin = new URL(request.url).origin;
+  const cfg = config(env);
+
+  const count = store.products?.length ?? 0;
+  const description = count
+    ? `${count} item${count === 1 ? '' : 's'} for sale. Order on WhatsApp, payment protected by Unique Thrift.`
+    : 'Order on WhatsApp, payment protected by Unique Thrift.';
+  const image = publicUrl(cfg, store.logo_url) ?? publicUrl(cfg, store.products?.[0]?.image);
+
+  const tags = [
+    `<title>${escapeHtml(store.name)}</title>`,
+    `<meta name="description" content="${escapeHtml(description)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${escapeHtml(store.name)}">`,
+    `<meta property="og:description" content="${escapeHtml(description)}">`,
+    `<meta property="og:url" content="${escapeHtml(`${origin}/s/${store.slug}`)}">`,
+    `<meta property="og:site_name" content="${escapeHtml(store.name)}">`,
+    `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}">`,
+  ];
+  if (image) {
+    tags.push(
+      `<meta property="og:image" content="${escapeHtml(image)}">`,
+      `<meta name="twitter:image" content="${escapeHtml(image)}">`
+    );
+  }
+
+  const body = html
+    .replace(/<meta\s+name="robots"[^>]*>/i, '<meta name="robots" content="index, follow">')
+    .replace(/<title>[^<]*<\/title>/i, '')
+    .replace('</head>', `${tags.join('\n    ')}\n  </head>`);
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=60, s-maxage=300',
+    },
+  });
+}
+
+async function lookupStore(env, slug) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey) return null;
+  return db(cfg).rpc('public_store', { store_slug: slug });
+}
+
 async function lookup(env, code) {
   const cfg = config(env);
   if (!cfg.supabaseUrl || !cfg.serviceKey) return null;

@@ -6,11 +6,11 @@ import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
 import { firstImage } from '../../lib/images.js';
 
-// One item. Not a shop.
+// One item.
 //
-// There is no storefront, no cart and no browse — the product is discovered on
-// WhatsApp Status, Instagram, Facebook or TikTok, and this page is only ever
-// the far end of a link somebody was sent. It exists for three reasons a
+// There is no cart and no marketplace — the product is discovered on WhatsApp
+// Status, Instagram, Facebook, TikTok or its store's own page (Store.jsx), and
+// this page is the far end of that link. It exists for three reasons a
 // caption cannot cover:
 //
 //   - Instagram will not make a caption clickable, so a link in the bio or a

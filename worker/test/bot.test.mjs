@@ -11,6 +11,10 @@ import {
   MAX_TITLE,
   STALE_AFTER_HOURS,
   signupStep,
+  termsMessage,
+  savedMessage,
+  COMMISSION,
+  CATEGORIES,
   approvedMessage,
   MAX_BUSINESS_NAME,
 } from '../lib/bot.js';
@@ -455,31 +459,99 @@ test('a stored path resolves to the bucket, and an absolute URL is left alone', 
 
 // ── OPENING A STORE ──────────────────────────────────────────────────────────
 
-test('a sign-up asks for a name, then an email, then asks for the store', () => {
+test('a sign-up asks name, type, category, plan, email, then the terms', () => {
   const first = signupStep(null, { body: 'hello' });
   assert.equal(first.state, 'name');
   assert.equal(first.action, null);
 
   const named = signupStep({ state: 'name' }, { body: '  Ada   Stores ' });
-  assert.equal(named.state, 'email');
+  assert.equal(named.state, 'type');
   assert.equal(named.patch.business_name, 'Ada Stores');
+  assert.match(named.replies[0], /thrift store/i);
 
-  const done = signupStep({ state: 'email', business_name: 'Ada Stores' }, { body: 'Ada@Example.com' });
+  const typed = signupStep({ state: 'type' }, { body: '1' });
+  assert.equal(typed.state, 'category');
+  assert.equal(typed.patch.store_type, 'consignment');
+  assert.equal(signupStep({ state: 'type' }, { body: 'Brand' }).patch.store_type, 'brand');
+
+  const categorised = signupStep({ state: 'category' }, { body: '1' });
+  assert.equal(categorised.state, 'plan');
+  assert.equal(categorised.patch.category, 'thrift');
+
+  const planned = signupStep({ state: 'plan' }, { body: '2' });
+  assert.equal(planned.state, 'email');
+  assert.equal(planned.patch.tier, 'growth');
+
+  const emailed = signupStep({ state: 'email', tier: 'growth' }, { body: 'Ada@Example.com' });
+  assert.equal(emailed.state, 'terms');
+  assert.equal(emailed.patch.email, 'ada@example.com');
+  assert.match(emailed.replies[0], /7% commission/);
+  assert.equal(emailed.action, null);
+
+  const stored = {
+    state: 'terms',
+    business_name: 'Ada Stores',
+    store_type: 'consignment',
+    category: 'thrift',
+    tier: 'growth',
+    email: 'ada@example.com',
+  };
+  const done = signupStep(stored, { body: 'YES' });
   assert.equal(done.state, 'pending');
-  assert.deepEqual(done.action, { type: 'provision', name: 'Ada Stores', email: 'ada@example.com' });
+  assert.deepEqual(done.action, {
+    type: 'provision',
+    name: 'Ada Stores',
+    email: 'ada@example.com',
+    storeType: 'consignment',
+    category: 'thrift',
+    tier: 'growth',
+  });
 });
 
 test('a business name has to be one', () => {
   for (const body of ['a', 'hi', 'Hello!', 'x'.repeat(MAX_BUSINESS_NAME + 1)]) {
     assert.equal(signupStep({ state: 'name' }, { body }).state, 'name', body);
   }
-  assert.equal(signupStep({ state: 'name' }, { body: 'Hello Kitty Thrift' }).state, 'email');
+  assert.equal(signupStep({ state: 'name' }, { body: 'Hello Kitty Thrift' }).state, 'type');
+});
+
+test('an answer that is not one of the options asks again', () => {
+  assert.equal(signupStep({ state: 'type' }, { body: '3' }).state, 'type');
+  assert.equal(signupStep({ state: 'category' }, { body: `${CATEGORIES.length + 1}` }).state, 'category');
+  assert.equal(signupStep({ state: 'plan' }, { body: 'premium' }).state, 'plan');
+  assert.equal(signupStep({ state: 'email' }, { body: 'not an email' }).state, 'email');
+});
+
+test('no store opens without a yes to the terms', () => {
+  const stored = { state: 'terms', business_name: 'Ada', tier: 'starter', email: 'a@b.co' };
+
+  const no = signupStep(stored, { body: 'no' });
+  assert.equal(no.state, 'terms');
+  assert.equal(no.action, null);
+  assert.match(no.replies[0], /can't open without/i);
+
+  const unclear = signupStep(stored, { body: 'what?' });
+  assert.equal(unclear.state, 'terms');
+  assert.equal(unclear.action, null);
+  assert.match(unclear.replies[0], /8% commission/);
+});
+
+test('the terms name the rate and payout of the chosen plan', () => {
+  assert.match(termsMessage('starter'), /8% commission/);
+  assert.match(termsMessage('starter'), /same day/);
+  assert.match(termsMessage('growth'), /7% commission/);
+  assert.match(termsMessage('growth'), /confirm they've received/);
+  assert.match(termsMessage('business'), /until we agree a different rate/);
+  for (const tier of ['starter', 'growth', 'business']) {
+    assert.match(termsMessage(tier), /directly from a buyer/);
+    assert.equal(typeof COMMISSION[tier], 'number');
+  }
 });
 
 test('a sign-up left for hours, or one whose store is gone, starts over', () => {
   const old = new Date(Date.now() - (STALE_AFTER_HOURS + 1) * 3_600_000).toISOString();
   assert.equal(
-    signupStep({ state: 'email', business_name: 'Ada', updated_at: old }, { body: 'ada@example.com' }).state,
+    signupStep({ state: 'terms', business_name: 'Ada', updated_at: old }, { body: 'yes' }).state,
     'name'
   );
   // 'pending' only reaches signupStep when no store has the number any more.
@@ -499,6 +571,16 @@ test('an approval sends a link only to a new account', () => {
   assert.match(existing, /existing account \(a@b\.co\)/);
   assert.match(existing, /https:\/\/ut\.ng\/login/);
   assert.doesNotMatch(existing, /verify/);
+
+  const withPage = approvedMessage({ name: 'Ada', link: null, email: 'a@b.co', origin: 'https://ut.ng', slug: 'ada' });
+  assert.match(withPage, /https:\/\/ut\.ng\/s\/ada/);
+});
+
+test('a listing from a store awaiting approval is saved, not linked', () => {
+  const text = savedMessage({ title: 'Jacket', price: 35000, public_code: 'PC1' });
+  assert.match(text, /saved/);
+  assert.match(text, /approved/);
+  assert.doesNotMatch(text, /\/p\//);
 });
 
 test('a store name becomes a readable slug', () => {

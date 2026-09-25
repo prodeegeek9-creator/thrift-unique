@@ -338,6 +338,41 @@ test('an unconfigured Worker still serves the page rather than failing', async (
   } finally { restore(); }
 });
 
+// ── a store's own page ───────────────────────────────────────────────────────
+
+test("a store's page previews as the store, and an unknown one is just the page", async () => {
+  const stores = {
+    'ada-thrift': {
+      name: 'Ada <Thrift>',
+      slug: 'ada-thrift',
+      logo_url: null,
+      products: [{ public_code: 'PC1', title: 'Jacket', price: 35000, image: 't/a.jpg' }],
+    },
+  };
+  const sb = makeFakeSupabase(seed(), {
+    rpcs: { public_store: ({ store_slug }) => stores[store_slug] ?? null },
+  });
+  const restore = installFetch({ supabase: sb });
+  try {
+    const res = await worker.fetch(new Request('https://example.com/s/Ada-Thrift'), env(), {});
+    assert.equal(res.status, 200);
+    const html = await res.text();
+
+    assert.equal(sb.calls.find((c) => c.rpc === 'public_store')?.args.store_slug, 'ada-thrift');
+    assert.match(html, /<title>Ada &lt;Thrift&gt;<\/title>/);
+    assert.match(html, /og:url" content="https:\/\/example\.com\/s\/ada-thrift"/);
+    assert.match(html, /1 item for sale/);
+    assert.match(html, new RegExp(`og:image" content="${SUPABASE_URL}/storage/v1/object/public/product-images/t/a\\.jpg"`));
+    assert.match(html, /content="index, follow"/);
+
+    const missing = await worker.fetch(new Request('https://example.com/s/nobody'), env(), {});
+    assert.equal(missing.status, 200);
+    const plain = await missing.text();
+    assert.match(plain, /<div id="root">/);
+    assert.match(plain, /noindex/);
+  } finally { restore(); }
+});
+
 test('unknown API routes 404 and unbuilt ones say so', async () => {
   const restore = installFetch({ supabase: makeFakeSupabase(seed()) });
   try {
