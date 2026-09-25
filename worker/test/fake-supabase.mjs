@@ -28,6 +28,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     signups: [],
     tenant_members: [],
     submissions: [],
+    listing_channel_posts: [],
     ...structuredClone(seed),
   };
 

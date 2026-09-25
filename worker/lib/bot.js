@@ -36,10 +36,10 @@ const CONDITIONS = [
 
 // Checked in this order, and the order matters. The dashboard's deep link
 // opens WhatsApp with "Hi! I want to list a new item." pre-typed — which would
-// match a greeting as readily as an intent, so intent is tested first.
+// read as a greeting as readily as an intent, so intent is tested before the
+// menu, which answers greetings and anything else.
 export const CANCEL = /^(cancel|stop|quit|abort|never ?mind)\b/i;
 const START = /\b(list|sell|add|new item|post)\b/i;
-const GREETING = /^(help|menu|hi|hey|hello|start|\?)\b/i;
 
 // Words a seller types to mean "that is all the photos", which must not become
 // the item's name.
@@ -458,11 +458,11 @@ export function step(conversation, message, ctx = {}) {
     case 'review':
       return reviewStep(draft, text, ctx);
     default:
-      return idleStep(text, image);
+      return idleStep(text, image, ctx);
   }
 }
 
-function idleStep(text, image) {
+function idleStep(text, image, ctx = {}) {
   // A photo with no preamble is the most common way a listing actually
   // starts. Treating it as an opening move saves a round trip and matches
   // what sellers already do with each other.
@@ -475,15 +475,88 @@ function idleStep(text, image) {
     };
   }
 
+  // The menu's own words, before START: "review items" is not a listing.
+  if (MENU_STORE.test(text)) return done(storeLinkMessage(ctx));
+  if (MENU_REVIEW.test(text)) return done(reviewMessage(ctx));
+  if (MENU_DASHBOARD.test(text)) return done(dashboardMessage(ctx));
+
   if (START.test(text)) {
     return { state: 'photo', draft: { images: [] }, replies: [SAY.askPhoto], action: null };
   }
 
-  if (GREETING.test(text) || !text) {
-    return { state: 'idle', draft: {}, replies: [SAY.help], action: null };
-  }
+  // A greeting, "menu", "help", or anything the bot does not understand.
+  return done(menuMessage(ctx));
+}
 
-  return { state: 'idle', draft: {}, replies: [SAY.help], action: null };
+// ── THE OWNER'S MENU ─────────────────────────────────────────────────────────
+//
+// What a store owner gets for "hi", "menu" or anything the bot does not
+// follow: the few things this number does, each one word away. Anchored at the
+// start of the message, so a sentence that merely contains "store" is not
+// mistaken for a request.
+
+const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
+const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
+const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
+
+const isBrand = (ctx) => ctx.tenant?.store_type === 'brand';
+
+export function menuMessage(ctx = {}) {
+  const pending = Number.isInteger(ctx.pendingItems) ? ctx.pendingItems : null;
+  const lines = [
+    `👋 Hi${ctx.tenant?.name ? ` ${ctx.tenant.name}` : ''}! Here's what you can do here:`,
+    '',
+    '📸 *Send a photo* to list a new item',
+    '🏪 *STORE* for your store page link',
+  ];
+  if (!isBrand(ctx)) {
+    lines.push(`📥 *REVIEW* for items people sent you${pending ? ` (${pending} waiting)` : ''}`);
+  }
+  lines.push('💻 *DASHBOARD* to manage listings, orders and payouts', '', 'Reply *cancel* any time to stop.');
+  return lines.join('\n');
+}
+
+export function storeLinkMessage(ctx = {}) {
+  const slug = ctx.tenant?.slug;
+  const link = ctx.origin && slug ? `${ctx.origin}/s/${slug}` : slug ? `/s/${slug}` : null;
+  if (!link) return 'Your store page is not set up yet.';
+  if (ctx.tenant?.status !== 'active') {
+    return `🏪 Your store page will be live here once your store is approved:\n${link}`;
+  }
+  return `🏪 Your store page:\n${link}\n\nShare it anywhere: your bio, your Status, any chat.`;
+}
+
+export function reviewMessage(ctx = {}) {
+  if (isBrand(ctx)) {
+    return "Brand stores list their own stock, so there's nothing to review. Send a photo to list an item.";
+  }
+  const pending = Number.isInteger(ctx.pendingItems) ? ctx.pendingItems : 0;
+  const where = ctx.origin ? `${ctx.origin}/dashboard/submissions` : '/dashboard/submissions';
+  const lines = [
+    pending
+      ? `📥 ${pending} item${pending === 1 ? '' : 's'} waiting for you to review:`
+      : '📥 Nothing waiting for review right now.',
+    where,
+  ];
+  const sell = sellLinkFor(ctx.tenant);
+  if (sell) {
+    lines.push('', 'People can send you items to sell with this link:', sell);
+  }
+  return lines.join('\n');
+}
+
+export function dashboardMessage(ctx = {}) {
+  const where = ctx.origin ? `${ctx.origin}/dashboard` : '/dashboard';
+  return `💻 Your dashboard:\n${where}\n\nSign in with the email you signed up with.`;
+}
+
+// The store's "Sell with us" link: its own number, with SELL typed. Keep the
+// text in step with sellLink() in src/lib/submissions.js.
+export function sellLinkFor(tenant) {
+  const number = String(tenant?.whatsapp_number ?? '').replace(/\D/g, '');
+  if (!number) return null;
+  const text = `SELL — I'd like ${tenant.name ?? 'you'} to sell an item for me`;
+  return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
 }
 
 // Collecting photos, and leaving on the first thing that is not one.

@@ -599,3 +599,50 @@ test('the typing pause is brief, and longer for a longer reply', () => {
   assert.ok(typingDelay(cfg, 'x'.repeat(60)) > typingDelay(cfg, 'x'.repeat(10)));
   assert.equal(typingDelay({ wahaTypingMs: 0 }, 'anything'), 0);
 });
+
+// ── THE OWNER'S MENU ─────────────────────────────────────────────────────────
+
+const OWNER_CTX = {
+  tenant: { name: 'Ada Thrift', slug: 'ada-thrift', status: 'active', whatsapp_number: '2348012345678' },
+  origin: 'https://ut.ng',
+  pendingItems: 2,
+};
+
+test('a greeting or anything unclear gets the menu, with items waiting', () => {
+  for (const body of ['hi', 'Menu', 'help', 'what can you do?', '']) {
+    const r = step(null, text(body), OWNER_CTX);
+    assert.equal(r.state, 'idle', body);
+    assert.match(r.replies[0], /Hi Ada Thrift!/);
+    assert.match(r.replies[0], /\*STORE\*/);
+    assert.match(r.replies[0], /\*REVIEW\* for items people sent you \(2 waiting\)/);
+    assert.match(r.replies[0], /\*DASHBOARD\*/);
+  }
+});
+
+test('the menu words answer, and do not start a listing', () => {
+  const store = step(null, text('store'), OWNER_CTX);
+  assert.equal(store.state, 'idle');
+  assert.match(store.replies[0], /https:\/\/ut\.ng\/s\/ada-thrift/);
+
+  const review = step(null, text('REVIEW'), OWNER_CTX);
+  assert.match(review.replies[0], /2 items waiting/);
+  assert.match(review.replies[0], /https:\/\/ut\.ng\/dashboard\/submissions/);
+  assert.match(review.replies[0], /https:\/\/wa\.me\/2348012345678\?text=SELL/);
+
+  const dash = step(null, text('dashboard'), OWNER_CTX);
+  assert.match(dash.replies[0], /https:\/\/ut\.ng\/dashboard/);
+
+  // "list" is still how a listing starts.
+  assert.equal(step(null, text('list'), OWNER_CTX).state, 'photo');
+});
+
+test('a store waiting for approval is told its page is not live yet', () => {
+  const r = step(null, text('link'), { ...OWNER_CTX, tenant: { ...OWNER_CTX.tenant, status: 'onboarding' } });
+  assert.match(r.replies[0], /once your store is approved/);
+});
+
+test('a brand store has no review queue in its menu', () => {
+  const brand = { ...OWNER_CTX, tenant: { ...OWNER_CTX.tenant, store_type: 'brand' } };
+  assert.doesNotMatch(step(null, text('hi'), brand).replies[0], /REVIEW/);
+  assert.match(step(null, text('review'), brand).replies[0], /nothing to review/);
+});

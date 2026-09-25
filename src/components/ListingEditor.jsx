@@ -7,8 +7,10 @@ import {
   createListing,
   fetchListing,
   markSold,
+  postListingToStatus,
   updateListing,
 } from '../lib/products.js';
+import { useTenant } from '../lib/TenantContext.jsx';
 import { uploadListingPhoto } from '../lib/uploads.js';
 import { imageUrl } from '../lib/images.js';
 import { formatNaira, parseNaira } from '../lib/money.js';
@@ -42,7 +44,11 @@ const EMPTY = {
 export default function ListingEditor({ tenantId, listingId = null, onClose }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const { tenant } = useTenant();
   const fileInput = useRef(null);
+  // Status posting needs a live store and its own WhatsApp linked.
+  const canPost = tenant?.status === 'active' && tenant?.waha_status === 'WORKING';
+  const [alsoPost, setAlsoPost] = useState(canPost);
   const [form, setForm] = useState(EMPTY);
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState(null);
@@ -80,7 +86,7 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
   const failed = (err) => setError(err?.message ?? 'Something went wrong. Try again.');
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const price = parseNaira(form.price);
       const fields = {
         title: form.title.trim().replace(/\s+/g, ' ').slice(0, 120),
@@ -90,14 +96,34 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
         images: form.images,
       };
       if (listingId) {
-        return updateListing(tenantId, listingId, {
+        await updateListing(tenantId, listingId, {
           ...fields,
           allow_negotiation: form.allowNegotiation,
         });
+        return 'Listing updated';
       }
-      return createListing(tenantId, { ...fields, allowNegotiation: form.allowNegotiation });
+
+      const created = await createListing(tenantId, { ...fields, allowNegotiation: form.allowNegotiation });
+      if (!(alsoPost && canPost)) return 'Listing added';
+      // The listing exists either way; a Status post that fails is reported,
+      // not treated as the save failing.
+      try {
+        await postListingToStatus(tenantId, created.id);
+        return 'Listing added and posted to your Status';
+      } catch (err) {
+        return `Listing added. Status post didn't go out: ${err.message}`;
+      }
     },
-    onSuccess: () => done(listingId ? 'Listing updated' : 'Listing added'),
+    onSuccess: (message) => done(message),
+    onError: failed,
+  });
+
+  const post = useMutation({
+    mutationFn: () => postListingToStatus(tenantId, listingId),
+    onSuccess: () => {
+      qc.invalidateQueries(tenantScope(tenantId));
+      toast('Posted to your WhatsApp Status', 'success');
+    },
     onError: failed,
   });
 
@@ -142,7 +168,7 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
     save.mutate();
   }
 
-  const busy = save.isPending || sold.isPending || remove.isPending;
+  const busy = save.isPending || sold.isPending || remove.isPending || post.isPending;
   const price = parseNaira(form.price);
   const live = existing?.status === 'active';
 
@@ -289,6 +315,20 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
               Buyers can make an offer
             </label>
 
+            {!listingId ? (
+              <label className={`mt-2 flex items-center gap-2 text-sm ${canPost ? 'text-ink' : 'text-muted'}`}>
+                <input
+                  type="checkbox"
+                  checked={alsoPost && canPost}
+                  disabled={!canPost}
+                  onChange={(e) => setAlsoPost(e.target.checked)}
+                  className="h-4 w-4 accent-green"
+                />
+                Also post to my WhatsApp Status
+                {!canPost ? <span className="text-[11px]">(link WhatsApp in Channels first)</span> : null}
+              </label>
+            ) : null}
+
             {error ? <p className="mt-3 text-sm text-red">{error}</p> : null}
 
             <button
@@ -298,6 +338,19 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
             >
               {save.isPending ? 'Saving…' : listingId ? 'Save changes' : 'Add product'}
             </button>
+
+            {listingId && live ? (
+              <button
+                type="button"
+                disabled={busy || !canPost}
+                title={canPost ? undefined : 'Link your WhatsApp in Channels first'}
+                onClick={() => post.mutate()}
+                className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-pill border border-green py-2 text-sm font-semibold text-green hover:bg-green-lt disabled:opacity-50"
+              >
+                <Icon name="whatsapp" className="h-4 w-4" />
+                {post.isPending ? 'Posting…' : 'Post to my WhatsApp Status'}
+              </button>
+            ) : null}
 
             {listingId && existing?.status !== 'archived' ? (
               <div className="mt-3 flex gap-2">

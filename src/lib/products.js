@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { callWorker } from './api.js';
 
 // Listings.
 //
@@ -173,6 +174,13 @@ export async function markSold(tenantId, id) {
 // history that cannot say what was bought is not a history.
 export async function archiveListing(tenantId, id) {
   return updateListing(tenantId, id, { status: 'archived' });
+}
+
+// Posting a live listing to the store's WhatsApp Status. The bot does this by
+// itself for items listed over WhatsApp; this is for items added here, or to
+// post one again. Through the Worker, which holds the WAHA key.
+export async function postListingToStatus(tenantId, id) {
+  return callWorker('/api/listings/status', { body: { tenant: tenantId, id } });
 }
 
 // The one read that happens without a session, behind /p/:code.

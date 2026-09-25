@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { callWorker } from './api.js';
 
 // Items people bring to a thrift store, waiting for the store to decide.
 //
@@ -48,18 +49,7 @@ export async function fetchSubmissionCounts(tenantId) {
 
 // { decision: 'approve', price } or { decision: 'decline', reason }.
 export async function decideSubmission(tenantId, id, decision) {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Not signed in');
-
-  const res = await fetch('/api/submissions/decide', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tenant: tenantId, id, ...decision }),
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error ?? `Request failed (${res.status})`);
-  return payload;
+  return callWorker('/api/submissions/decide', { body: { tenant: tenantId, id, ...decision } });
 }
 
 // The link a store shares to invite items: opens a chat with the store's own
