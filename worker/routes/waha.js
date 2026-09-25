@@ -173,7 +173,7 @@ async function message(cfg, event) {
 
   const tenant = await db(cfg).one(
     'tenants',
-    `whatsapp_number=eq.${phone}&select=id,slug,name,status,whatsapp_number,waha_session,waha_status`
+    `whatsapp_number=eq.${phone}&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status`
   );
 
   // A number no store is registered to: the sign-up conversation.
@@ -214,7 +214,17 @@ async function message(cfg, event) {
       '&select=state,draft,updated_at'
   );
 
-  const result = step(conversation, event, { tenant, origin: cfg.publicOrigin });
+  // How many items wait for review, for the menu. Only between listings,
+  // where the menu can appear.
+  let pendingItems = null;
+  if (!conversation || conversation.state === 'idle') {
+    const waiting = await db(cfg)
+      .select('submissions', `tenant_id=eq.${tenant.id}&status=eq.pending&select=id&limit=100`)
+      .catch(() => null);
+    pendingItems = Array.isArray(waiting) ? waiting.length : null;
+  }
+
+  const result = step(conversation, event, { tenant, origin: cfg.publicOrigin, pendingItems });
 
   // The conversation is saved before anything is sent. If sending fails, the
   // seller has to repeat themselves once; if saving failed after sending, they
@@ -300,11 +310,15 @@ export async function uploadAll(cfg, tenantId, images) {
 //
 // Returns true, false or null: posted, could not post, or nothing to post to.
 // The seller is told which, because believing your listings are reaching your
-// contacts when they are not is the worst way for this to fail.
+// contacts when they are not is the worst way for this to fail. The outcome is
+// also recorded against the listing, which is what lights (or reddens) the
+// WhatsApp icon on its dashboard card.
 export async function postToStatus(cfg, tenant, product) {
-  if (!tenant.waha_session || tenant.waha_status !== 'WORKING') return false;
   if (!product.images?.length) return null;
-  if (!cfg.wahaUrl) return false;
+  if (!tenant.waha_session || tenant.waha_status !== 'WORKING' || !cfg.wahaUrl) {
+    await recordPost(cfg, tenant, product, false, 'WhatsApp is not linked');
+    return false;
+  }
 
   const link = cfg.publicOrigin ? `${cfg.publicOrigin}/p/${product.public_code}` : null;
   const caption = [
@@ -320,10 +334,41 @@ export async function postToStatus(cfg, tenant, product) {
       url: publicUrl(cfg, product.images[0]),
       caption,
     });
-    return true;
   } catch (err) {
     console.error('status post failed:', err?.message ?? err);
+    await recordPost(cfg, tenant, product, false, String(err?.message ?? 'failed').slice(0, 200));
     return false;
+  }
+
+  await recordPost(cfg, tenant, product, true, null);
+  return true;
+}
+
+// One row per listing and channel (the table's unique key), updated in place
+// when a listing is posted again. Best-effort: a post that went out is not
+// undone by a failed write here.
+async function recordPost(cfg, tenant, product, posted, error) {
+  if (!product.id) return;
+  const row = {
+    status: posted ? 'posted' : 'failed',
+    error,
+    ...(posted ? { posted_at: new Date().toISOString() } : {}),
+  };
+  try {
+    const hit = await db(cfg).update(
+      'listing_channel_posts',
+      `product_id=eq.${product.id}&channel=eq.whatsapp`,
+      row
+    );
+    if (!hit.length) {
+      await db(cfg).insert(
+        'listing_channel_posts',
+        { tenant_id: tenant.id, product_id: product.id, channel: 'whatsapp', ...row },
+        { onConflict: 'product_id,channel', returning: false }
+      );
+    }
+  } catch (err) {
+    console.warn('channel post record failed:', err?.message ?? err);
   }
 }
 

@@ -1316,3 +1316,127 @@ test('a store whose WhatsApp is unlinked can still decide, and is told the selle
     restore();
   }
 });
+
+// ── POSTING TO STATUS FROM THE DASHBOARD ─────────────────────────────────────
+
+function statusCall(token, body) {
+  return new Request('https://uniquethrift.ng/api/listings/status', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const LISTING = {
+  id: 'dddddddd-0000-0000-0000-00000000000d',
+  tenant_id: TENANT,
+  public_code: 'AB12CD',
+  title: 'Linen shirt',
+  price: 9500,
+  condition: 'good',
+  images: [`${TENANT}/shirt.jpg`],
+  status: 'active',
+};
+
+test('a listing added in the dashboard can be posted to Status, and the post is recorded', async () => {
+  const supabase = makeFakeSupabase({ ...storeSeed(), products: [LISTING] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(statusCall('tok-staff', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(res.status, 200);
+
+    assert.equal(waha.statuses.length, 1);
+    assert.equal(waha.statuses[0].session, STORE_SESSION);
+    assert.match(waha.statuses[0].caption, /Linen shirt/);
+    assert.match(waha.statuses[0].caption, /\/p\/AB12CD/);
+
+    const row = supabase.tables.listing_channel_posts[0];
+    assert.equal(row.product_id, LISTING.id);
+    assert.equal(row.channel, 'whatsapp');
+    assert.equal(row.status, 'posted');
+
+    // Posting again updates the same row rather than adding one.
+    await worker.fetch(statusCall('tok-owner', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(supabase.tables.listing_channel_posts.length, 1);
+    assert.equal(waha.statuses.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('posting to Status says why it cannot, and posts nothing', async () => {
+  const cases = [
+    [{ tenant: { waha_status: 'FAILED' } }, /Link your WhatsApp/],
+    [{ tenant: { status: 'onboarding' } }, /waiting for approval/],
+    [{ product: { status: 'sold' } }, /Only live listings/],
+    [{ product: { images: [] } }, /Add a photo/],
+  ];
+
+  for (const [change, message] of cases) {
+    const supabase = makeFakeSupabase({
+      ...storeSeed(change.tenant ?? {}),
+      products: [{ ...LISTING, ...(change.product ?? {}) }],
+    });
+    const waha = makeFakeWaha();
+    const restore = installFetch({ supabase, waha, tokens: TOKENS });
+    try {
+      const res = await worker.fetch(statusCall('tok-owner', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+      assert.equal(res.status, 409, String(message));
+      assert.match((await res.json()).error, message);
+      assert.equal(waha.statuses.length, 0);
+    } finally {
+      restore();
+    }
+  }
+
+  const supabase = makeFakeSupabase({ ...storeSeed(), products: [LISTING] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    const res = await worker.fetch(statusCall('tok-stranger', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(res.status, 403);
+    assert.equal(waha.statuses.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("a bot listing's Status post lights its WhatsApp icon too", async () => {
+  const supabase = makeFakeSupabase(storeSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/jacket.jpg` }),
+        incoming('Jacket'),
+        incoming('35k'),
+        incoming('3'),
+        incoming('yes'),
+      ],
+      wahaEnv()
+    );
+    const product = supabase.tables.products[0];
+    const row = supabase.tables.listing_channel_posts.find((r) => r.product_id === product.id);
+    assert.equal(row?.status, 'posted');
+  } finally {
+    restore();
+  }
+});
+
+test('an owner saying hi gets the menu, with the items waiting for them', async () => {
+  const supabase = makeFakeSupabase({ ...seed(), submissions: [queued(), queued({ id: 'x2', status: 'approved' })] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('hi')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].session, PLATFORM);
+    assert.match(waha.sent[0].text, /Hi Thrift Store!/);
+    assert.match(waha.sent[0].text, /\(1 waiting\)/);
+  } finally {
+    restore();
+  }
+});

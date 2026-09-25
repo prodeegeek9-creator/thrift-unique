@@ -15,6 +15,7 @@ import { releaseExpiredHolds } from './routes/escrow.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
+import { handleListings } from './routes/listings.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -111,6 +112,11 @@ async function api(request, env, path) {
   // both end in a WhatsApp message from the store's own session.
   if (path.startsWith('/api/submissions')) {
     return handleSubmissions(request, env, path);
+  }
+
+  // Posting a listing to the store's WhatsApp Status from the dashboard.
+  if (path.startsWith('/api/listings')) {
+    return handleListings(request, env, path);
   }
 
   // Not built yet, and saying so is better than a 404 that reads like a typo.

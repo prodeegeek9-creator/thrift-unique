@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { fetchPublicProduct } from '../../lib/products.js';
 import { formatNaira } from '../../lib/money.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
-import { firstImage } from '../../lib/images.js';
+import { firstImage, imageUrl } from '../../lib/images.js';
+import { fetchPublicStore } from '../../lib/tenants.js';
 
 // One item.
 //
@@ -35,9 +36,29 @@ export default function Product() {
   const { code } = useParams();
   const [product, setProduct] = useState(null);
   const [state, setState] = useState('loading');
+  const [more, setMore] = useState([]);
+
+  // A few more of the store's items, once the item itself is on screen. Its
+  // own failure is silent: this is a nicety under the thing the buyer came for.
+  useEffect(() => {
+    if (!product?.tenant_slug) return undefined;
+    let active = true;
+    fetchPublicStore(product.tenant_slug)
+      .then((store) => {
+        if (!active || !store) return;
+        setMore((store.products ?? []).filter((p) => p.public_code !== product.public_code).slice(0, 6));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [product?.tenant_slug, product?.public_code]);
 
   useEffect(() => {
     let active = true;
+    // Arriving from "More from this store" lands at the top, not where the
+    // last item's page was scrolled to.
+    window.scrollTo(0, 0);
     (async () => {
       const row = await fetchPublicProduct(code).catch(() => null);
       if (!active) return;
@@ -107,9 +128,48 @@ export default function Product() {
         ) : null}
 
         <p className="mt-3 text-center text-xs text-muted">
-          Sold by {product.tenant_name} · Payment protected by Unique Thrift
+          Sold by{' '}
+          {product.tenant_slug ? (
+            <Link to={`/s/${product.tenant_slug}`} className="font-medium text-green">
+              {product.tenant_name}
+            </Link>
+          ) : (
+            product.tenant_name
+          )}{' '}
+          · Payment protected by Unique Thrift
         </p>
       </div>
+
+      {more.length ? (
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-display text-sm font-semibold text-ink">More from {product.tenant_name}</h2>
+            <Link to={`/s/${product.tenant_slug}`} className="text-xs font-semibold text-green">
+              See all
+            </Link>
+          </div>
+          <ul className="mt-3 grid grid-cols-3 gap-2">
+            {more.map((p) => (
+              <li key={p.public_code}>
+                <Link to={`/p/${p.public_code}`} className="block">
+                  {imageUrl(p.image) ? (
+                    <img
+                      src={imageUrl(p.image)}
+                      alt={p.title}
+                      loading="lazy"
+                      className="aspect-square w-full rounded-lg bg-surface-2 object-cover"
+                    />
+                  ) : (
+                    <div className="aspect-square w-full rounded-lg bg-surface-2" />
+                  )}
+                  <p className="mt-1 truncate text-[11px] text-ink">{p.title}</p>
+                  <p className="text-[11px] font-semibold text-ink">{formatNaira(p.price)}</p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </Frame>
   );
 }
