@@ -35,8 +35,13 @@ export function phoneFromChatId(id) {
 // The phone number behind a chat, which is what a store is registered by.
 //
 // A privacy id (…@lid) says nothing about the number, so WAHA is asked for the
-// mapping it keeps. Null when it has none — the caller decides what an
-// unidentifiable sender gets. Any other WAHA failure throws, so the webhook
+// mapping it keeps — which on the NOWEB engine exists only when the session
+// was linked with the store on (see deploy/waha/pair.sh). Null when WAHA has
+// no answer; the caller decides what an unidentifiable sender gets.
+//
+// A 4xx is a standing answer, not a blip: retrying cannot turn a missing
+// mapping or a disabled store into a number, so it is logged with WAHA's own
+// explanation and treated as "unknown". Anything else throws, so the webhook
 // fails before recording anything and WAHA's retry gets another go.
 export async function phoneFor(cfg, session, chat) {
   if (!String(chat ?? '').endsWith('@lid')) return phoneFromChatId(chat);
@@ -48,7 +53,12 @@ export async function phoneFor(cfg, session, chat) {
     );
     return phoneFromChatId(found?.pn);
   } catch (err) {
-    if (err instanceof WahaError && err.status === 404) return null;
+    if (err instanceof WahaError && err.status >= 400 && err.status < 500) {
+      if (err.status !== 404) {
+        console.warn('waha lid lookup refused:', err.status, String(err.body ?? '').slice(0, 200));
+      }
+      return null;
+    }
     throw err;
   }
 }
