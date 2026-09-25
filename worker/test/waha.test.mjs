@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../index.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
+import { mediaRequest } from '../lib/media.js';
 
 // The webhook, end to end: secret check, replay guard, the conversation, the
 // upload, the product, the Status post.
@@ -57,6 +58,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 // on what the seller and their contacts would actually have seen.
 function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null } = {}) {
   const sent = [];
+  const mediaFetches = [];
   const typing = [];
   // Typing and sending, in the order they happened.
   const events = [];
@@ -70,7 +72,8 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(init.body) : null;
 
-    if (path.startsWith('/files/')) {
+    if (path.startsWith('/api/files/')) {
+      mediaFetches.push({ path, key: init.headers?.['X-Api-Key'] ?? null });
       if (mediaStatus !== 200) return new Response('gone', { status: mediaStatus });
       return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]), {
         status: 200,
@@ -150,7 +153,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, typing, events, statuses, started, stopped, created, deleted, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -438,7 +441,7 @@ test('a suspended store cannot list anything', async () => {
   const restore = installFetch({ supabase, waha, tokens: TOKENS });
 
   try {
-    await converse([incoming('list'), incoming('', { media: `${WAHA_URL}/files/a.jpg` })], wahaEnv());
+    await converse([incoming('list'), incoming('', { media: `${WAHA_URL}/api/files/ut-platform/a.jpg` })], wahaEnv());
 
     assert.equal(supabase.tables.products.length, 0);
     assert.match(waha.sent[0].text, /suspended/i);
@@ -474,6 +477,49 @@ test('inbound on a tenant own session never runs the listing flow', async () => 
 
 // ── LISTING ──────────────────────────────────────────────────────────────────
 
+test('a photo WAHA addresses as localhost is still fetched, from WAHA, with its key', async () => {
+  // What production sent: WAHA writes media URLs from WAHA_BASE_URL, which
+  // defaults to http://localhost:3000, and the listing failed to save.
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await converse(
+      [
+        incoming('', { media: 'http://localhost:3000/api/files/ut-platform/pilot.jpeg' }),
+        incoming('Honda Pilot 2006'),
+        incoming('2,000,000'),
+        incoming('4'),
+        incoming('negotiable'),
+      ],
+      wahaEnv()
+    );
+
+    assert.equal(supabase.tables.products.length, 1);
+    assert.equal(supabase.uploads.length, 1);
+    assert.deepEqual(waha.mediaFetches, [
+      { path: '/api/files/ut-platform/pilot.jpeg', key: 'waha-key' },
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test('media anywhere but WAHA is fetched without the WAHA key', () => {
+  const cfg = { wahaUrl: 'https://waha.example', wahaKey: 'secret' };
+
+  assert.deepEqual(mediaRequest(cfg, 'http://localhost:3000/api/files/s/a.jpg'), {
+    url: 'https://waha.example/api/files/s/a.jpg',
+    headers: { 'X-Api-Key': 'secret' },
+  });
+  assert.deepEqual(mediaRequest(cfg, 'https://bucket.s3.example/a.jpg'), {
+    url: 'https://bucket.s3.example/a.jpg',
+    headers: {},
+  });
+  assert.throws(() => mediaRequest(cfg, 'not a url'), /Bad media URL/);
+});
+
 test('a seller lists an item over WhatsApp, photo and all', async () => {
   const supabase = makeFakeSupabase(seed());
   const waha = makeFakeWaha();
@@ -482,7 +528,7 @@ test('a seller lists an item over WhatsApp, photo and all', async () => {
   try {
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/jacket.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/jacket.jpg` }),
         incoming('Brown leather jacket'),
         incoming('35k'),
         incoming('2'),
@@ -525,7 +571,7 @@ test('a linked WhatsApp gets the listing posted to Status', async () => {
   try {
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/jacket.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/jacket.jpg` }),
         incoming('Jacket'),
         incoming('35k'),
         incoming('3'),
@@ -560,7 +606,7 @@ test('an unlinked WhatsApp posts nothing and says so', async () => {
   try {
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/a.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/a.jpg` }),
         incoming('Jacket'),
         incoming('35k'),
         incoming('3'),
@@ -586,7 +632,7 @@ test('a session that is linked but not working does not silently swallow a listi
   try {
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/a.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/a.jpg` }),
         incoming('Jacket'),
         incoming('35k'),
         incoming('3'),
@@ -612,7 +658,7 @@ test('a photo WAHA can no longer serve does not produce a listing with no pictur
   try {
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/gone.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/gone.jpg` }),
         incoming('Jacket'),
         incoming('35k'),
         incoming('3'),
@@ -640,7 +686,7 @@ test('a retried webhook does not list the same item twice', async () => {
 
     await converse(
       [
-        incoming('', { media: `${WAHA_URL}/files/a.jpg` }),
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/a.jpg` }),
         incoming('Jacket'),
         incoming('35k'),
         incoming('3'),

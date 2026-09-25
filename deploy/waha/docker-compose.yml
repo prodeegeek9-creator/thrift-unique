@@ -21,6 +21,10 @@ services:
     restart: unless-stopped
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY}
+      # The public address WAHA writes into media URLs it sends in webhooks.
+      # Left at its default (http://localhost:3000), every photo a seller sends
+      # arrives addressed to somewhere only this box can reach.
+      WAHA_BASE_URL: https://${WAHA_DOMAIN}
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       WHATSAPP_API_PORT: "3000"
       # The Swagger UI and the built-in dashboard both sit on this same

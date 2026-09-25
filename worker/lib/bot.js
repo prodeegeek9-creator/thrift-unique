@@ -348,9 +348,12 @@ function photoStep(draft, text, image, ctx) {
 
   if (image) {
     if (images.length >= MAX_IMAGES) {
+      // Said once. A seller sending a whole album gets one note, not one per
+      // photo past the limit.
+      if (draft.limit_noted) return { state: 'photo', draft, replies: [], action: null };
       return {
         state: 'photo',
-        draft,
+        draft: { ...draft, limit_noted: true },
         replies: [`That's the ${MAX_IMAGES}-photo limit. ${SAY.askTitle}`],
         action: null,
       };
