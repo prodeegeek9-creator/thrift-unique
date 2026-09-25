@@ -693,3 +693,8 @@ does it has it to hand.
    `X-Thrift-Secret`; tenant sessions create themselves when a seller links.
    Until those are set the bot answers nothing and logs what it would have sent,
    which is the intended unconfigured state rather than an error.
+
+   `deploy/waha/` has the docker-compose setup (NOWEB engine — no browser, a
+   few MB per session rather than the few hundred MB WEBJS keeps per tenant)
+   and a step-by-step README covering the VPS, the platform session's
+   bootstrap curl commands, and the QR scan.

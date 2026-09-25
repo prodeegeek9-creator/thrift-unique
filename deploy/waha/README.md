@@ -1,0 +1,162 @@
+# Deploying WAHA for thrift-unique
+
+This stands up the WAHA server the Cloudflare Worker talks to — see
+`worker/lib/waha.js`, `worker/routes/waha.js` and the "WAHA" section of
+`.env.example` at the repo root for how the app uses it. Nothing here runs
+on Cloudflare; this is a small separate box because WAHA needs a persistent
+process and disk, which Workers don't give you.
+
+I don't have SSH access to any server, so these are the commands to run
+yourself. Wherever a value needs to match something on the Worker, it's
+called out.
+
+## 1. Provision the VPS
+
+Any provider works (Hetzner, DigitalOcean, etc.). Sizing, per the space
+estimate above: **1 vCPU / 2GB RAM / 20GB disk** covers the platform session
+plus hundreds of tenant sessions on the NOWEB engine this compose file uses.
+
+Point a DNS A record at the box before starting anything — Caddy requests a
+real TLS certificate for that hostname on first start and needs it resolvable
+to succeed (e.g. `waha.yourdomain.com` → the VPS's IP).
+
+Open only 22 (SSH), 80 and 443 in the firewall. WAHA's own port 3000 is never
+published to the host in this compose file (`expose`, not `ports`) — only
+Caddy reaches it, over the internal Docker network.
+
+## 2. Install Docker
+
+```bash
+curl -fsSL https://get.docker.com | sh
+```
+
+(Or follow your distro's Docker Engine + Compose plugin install docs —
+anything with `docker compose` as a subcommand works.)
+
+## 3. Copy this folder to the server
+
+From your machine, with this repo checked out:
+
+```bash
+scp -r deploy/waha your-user@your-vps-ip:~/waha
+ssh your-user@your-vps-ip
+cd ~/waha
+```
+
+## 4. Configure
+
+```bash
+cp .env.example .env
+openssl rand -hex 32   # paste the output in as WAHA_API_KEY below
+```
+
+Edit `.env`:
+
+```
+WAHA_DOMAIN=waha.yourdomain.com
+WAHA_API_KEY=<the value openssl just printed>
+```
+
+Keep that `WAHA_API_KEY` — it's the exact value you'll set as `WAHA_API_KEY`
+on the Cloudflare Worker in step 7.
+
+## 5. Start it
+
+```bash
+docker compose up -d
+docker compose logs -f caddy   # watch for the certificate to be issued
+```
+
+Once Caddy has its certificate, confirm WAHA answers:
+
+```bash
+curl -s https://waha.yourdomain.com/api/sessions -H "X-Api-Key: $WAHA_API_KEY"
+```
+
+An empty array (`[]`) means it's up with no sessions yet — expected on a
+fresh install.
+
+## 6. Create the platform session
+
+This is the one number every seller messages to list an item — the app
+creates a session per *tenant* on its own when a seller links their WhatsApp
+(`worker/routes/waha.js` → `linkSession`), but the platform session has no
+tenant behind it, so it's created once, by hand, here.
+
+Pick a webhook secret (different from the API key — this is what the
+`X-Thrift-Secret` header on every webhook delivery is checked against):
+
+```bash
+openssl rand -hex 32   # this becomes WAHA_WEBHOOK_SECRET on the Worker
+```
+
+Then, with `WAHA_API_KEY`, `WAHA_WEBHOOK_SECRET` and `PUBLIC_ORIGIN` (your
+deployed app's origin, e.g. `https://thrift-unique.<subdomain>.workers.dev`
+or the real domain once it's set) as shell variables:
+
+```bash
+curl -s https://waha.yourdomain.com/api/sessions \
+  -H "X-Api-Key: $WAHA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ut-platform",
+    "config": {
+      "webhooks": [{
+        "url": "'"$PUBLIC_ORIGIN"'/api/waha/webhook",
+        "events": ["message", "session.status"],
+        "customHeaders": [{ "name": "X-Thrift-Secret", "value": "'"$WAHA_WEBHOOK_SECRET"'" }]
+      }]
+    }
+  }'
+
+curl -s -X POST https://waha.yourdomain.com/api/sessions/ut-platform/start \
+  -H "X-Api-Key: $WAHA_API_KEY"
+```
+
+`ut-platform` is the default the Worker expects (`WAHA_SESSION` in
+`worker/lib/env.js`); only pass a different `WAHA_SESSION` secret on the
+Worker if you deliberately name it something else here too.
+
+## 7. Scan the QR with the platform's WhatsApp number
+
+```bash
+curl -s https://waha.yourdomain.com/api/ut-platform/auth/qr \
+  -H "X-Api-Key: $WAHA_API_KEY" -o qr.png
+```
+
+Open `qr.png` and scan it with the WhatsApp number you want sellers to
+message (a dedicated number/SIM, not a personal one). Then confirm it came
+up:
+
+```bash
+curl -s https://waha.yourdomain.com/api/sessions/ut-platform \
+  -H "X-Api-Key: $WAHA_API_KEY"
+```
+
+Wait for `"status": "WORKING"`.
+
+## 8. Hand these back to set as Worker secrets
+
+- `WAHA_URL` = `https://waha.yourdomain.com`
+- `WAHA_API_KEY` = the value from step 4
+- `WAHA_WEBHOOK_SECRET` = the value from step 6
+- `WAHA_SESSION` = only if you didn't use `ut-platform`
+- `PUBLIC_ORIGIN` = the value you used in step 6, if not already set in
+  `wrangler.jsonc`
+
+Tell me these values and, given a Cloudflare API token, I'll run
+`wrangler secret put` for each against the `thrift-unique` Worker.
+
+## Operating notes
+
+- **Back up the `waha_sessions` volume.** It's the login state for the
+  platform number and every linked tenant. Lose it and every seller has to
+  re-scan a QR code — not data loss, but real disruption. A nightly
+  `docker run --rm -v waha_waha_sessions:/data -v $PWD:/backup alpine tar czf /backup/waha-sessions-$(date +%F).tar.gz -C /data .` on a cron is enough.
+- **Updating:** `docker compose pull && docker compose up -d`. Sessions live
+  in the named volume, not the container, so an image update doesn't log
+  anyone out.
+- **Swagger/dashboard are off** in this compose file (`WHATSAPP_SWAGGER_ENABLED`,
+  `WAHA_DASHBOARD_ENABLED`) since only the Worker needs to reach this box. Set
+  them to `true` plus `WAHA_DASHBOARD_USERNAME`/`WAHA_DASHBOARD_PASSWORD` in
+  `.env` if you want to browse sessions from your own machine.
