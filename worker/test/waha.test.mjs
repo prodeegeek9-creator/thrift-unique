@@ -55,7 +55,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200 } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {} } = {}) {
   const sent = [];
   const statuses = [];
   const started = [];
@@ -117,6 +117,14 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200 } = {}) {
         status: 200,
         headers: { 'content-type': 'image/png' },
       });
+    }
+
+    const lid = path.match(/^\/api\/([^/]+)\/lids\/([^/]+)$/);
+    if (lid) {
+      const key = decodeURIComponent(lid[2]);
+      return lids[key]
+        ? new Response(JSON.stringify({ lid: key, pn: lids[key] }), { status: 200 })
+        : new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
     }
 
     return new Response('unexpected waha call', { status: 500 });
@@ -230,6 +238,50 @@ test('a number belonging to no store is answered once and stored nowhere', async
     assert.equal(supabase.tables.bot_conversations.length, 0);
     assert.equal(waha.sent.length, 1);
     assert.match(waha.sent[0].text, /isn't linked to a store/i);
+  } finally {
+    restore();
+  }
+});
+
+test('a seller whose WhatsApp hides their number is still recognised', async () => {
+  // WhatsApp increasingly addresses a chat by privacy id (…@lid) rather than
+  // by number. The store is found through WAHA's mapping, and the reply goes
+  // back to the chat exactly as WhatsApp addressed it.
+  const LID = '99887766554433@lid';
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha({ lids: { [LID]: SELLER_CHAT } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(hook(incoming('list', { from: LID })), wahaEnv(), {});
+
+    assert.equal(res.status, 200);
+    const inbound = supabase.tables.bot_messages.filter((m) => m.direction === 'in');
+    assert.equal(inbound.length, 1);
+    assert.equal(inbound[0].tenant_id, TENANT);
+    assert.ok(waha.sent.length > 0);
+    assert.ok(waha.sent.every((m) => m.chatId === LID));
+    assert.doesNotMatch(waha.sent[0].text, /isn't linked to a store/i);
+  } finally {
+    restore();
+  }
+});
+
+test('a hidden number WAHA cannot resolve is left alone, not told it has no store', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(
+      hook(incoming('list', { from: '11122233344455@lid' })),
+      wahaEnv(),
+      {}
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(supabase.tables.bot_messages.length, 0);
+    assert.equal(waha.sent.length, 0);
   } finally {
     restore();
   }

@@ -337,6 +337,9 @@ test('chat ids round-trip through a phone number', () => {
   assert.equal(chatId('+234 802 123 4567'), '2348021234567@c.us');
   assert.equal(phoneFromChatId('2348021234567@c.us'), '2348021234567');
   assert.equal(phoneFromChatId('2348021234567@g.us'), null);
+  assert.equal(phoneFromChatId('2348021234567@s.whatsapp.net'), '2348021234567');
+  // A privacy id is not a phone number, however much it looks like one.
+  assert.equal(phoneFromChatId('99887766554433@lid'), null);
   assert.equal(chatId(''), null);
 });
 
@@ -367,6 +370,22 @@ test('events the bot does not handle are ignored, not crashed on', () => {
     parseEvent({ event: 'message', payload: { from: '123@g.us', body: 'hi' } }),
     null
   );
+  // Nor is somebody's Status update.
+  assert.equal(
+    parseEvent({ event: 'message', payload: { from: 'status@broadcast', body: 'hi' } }),
+    null
+  );
+});
+
+test('a chat addressed by privacy id is still a message to act on', () => {
+  const event = parseEvent({
+    event: 'message',
+    session: 'ut-platform',
+    payload: { id: { id: 'L1' }, from: '99887766554433@lid', body: 'hi' },
+  });
+
+  assert.equal(event.kind, 'message');
+  assert.equal(event.from, '99887766554433@lid');
 });
 
 test('a message is read the same way whichever engine sent it', () => {

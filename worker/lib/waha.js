@@ -28,8 +28,29 @@ export function chatId(phone) {
 }
 
 export function phoneFromChatId(id) {
-  const m = /^(\d+)@c\.us$/.exec(String(id ?? ''));
+  const m = /^(\d+)@(c\.us|s\.whatsapp\.net)$/.exec(String(id ?? ''));
   return m ? m[1] : null;
+}
+
+// The phone number behind a chat, which is what a store is registered by.
+//
+// A privacy id (…@lid) says nothing about the number, so WAHA is asked for the
+// mapping it keeps. Null when it has none — the caller decides what an
+// unidentifiable sender gets. Any other WAHA failure throws, so the webhook
+// fails before recording anything and WAHA's retry gets another go.
+export async function phoneFor(cfg, session, chat) {
+  if (!String(chat ?? '').endsWith('@lid')) return phoneFromChatId(chat);
+
+  const call = client(cfg);
+  try {
+    const found = await call(
+      `/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(chat)}`
+    );
+    return phoneFromChatId(found?.pn);
+  } catch (err) {
+    if (err instanceof WahaError && err.status === 404) return null;
+    throw err;
+  }
 }
 
 export class WahaError extends Error {
@@ -240,8 +261,11 @@ export function parseEvent(body) {
   // WhatsApp traffic before anybody notices.
   if (p.fromMe === true) return null;
 
+  // A person's chat is addressed by phone number (…@c.us) or, more and more,
+  // by WhatsApp's privacy id (…@lid), which hides the number — see phoneFor().
+  // Groups, Status broadcasts and channels are not a seller talking to the bot.
   const from = p.from ?? p.chatId ?? null;
-  if (!from || !String(from).endsWith('@c.us')) return null;
+  if (!from || !/@(c\.us|lid)$/.test(String(from))) return null;
 
   return {
     kind: 'message',

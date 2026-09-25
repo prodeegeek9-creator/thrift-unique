@@ -1,0 +1,70 @@
+# WAHA (WhatsApp HTTP API), self-hosted, for the thrift-unique platform
+# session and every tenant's own linked session — see worker/lib/waha.js and
+# worker/routes/waha.js for how the app talks to this.
+#
+# Engine: NOWEB, not the default WEBJS. WEBJS runs a full headless Chromium
+# per session and keeps a whole browser profile on disk per tenant (hundreds
+# of MB each); NOWEB speaks the WhatsApp Web protocol directly, needs no
+# browser, and keeps a session's state to a few MB. Nothing this bot does
+# (send text, post a Status image, receive a webhook) needs a rendered page.
+#
+# Caddy in front gets a real TLS certificate automatically from the domain
+# you point at this box — the Cloudflare Worker calls this over HTTPS, and a
+# QR/session-linking endpoint is not something to leave on plain HTTP.
+services:
+  waha:
+    # devlikeapro/waha on Docker Hub is amd64-only. On an arm64 host (check
+    # `uname -m` — aarch64 means yes), build it locally instead and set
+    # WAHA_IMAGE=waha-local:latest in .env — see README "ARM64 hosts".
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
+    container_name: waha
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_API_PORT: "3000"
+      # The Swagger UI and the built-in dashboard both sit on this same
+      # container; both are off by default here since only the Worker talks
+      # to this box. Flip to true + set *_USERNAME/*_PASSWORD in .env if you
+      # want to browse either from your own machine.
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      WAHA_DASHBOARD_ENABLED: "false"
+      WAHA_PRINT_QR: "false"
+      WAHA_LOG_FORMAT: JSON
+      WAHA_LOG_LEVEL: info
+      TZ: ${TZ:-UTC}
+    volumes:
+      - waha_sessions:/app/.sessions
+      - waha_media:/app/.media
+    expose:
+      - "3000"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: waha-caddy
+    restart: unless-stopped
+    environment:
+      WAHA_DOMAIN: ${WAHA_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - waha
+
+volumes:
+  waha_sessions:
+  waha_media:
+  caddy_data:
+  caddy_config:
