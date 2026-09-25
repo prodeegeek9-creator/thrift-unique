@@ -55,7 +55,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {} } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null } = {}) {
   const sent = [];
   const statuses = [];
   const started = [];
@@ -121,6 +121,9 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {} } = {}) {
 
     const lid = path.match(/^\/api\/([^/]+)\/lids\/([^/]+)$/);
     if (lid) {
+      if (lidsStatus) {
+        return new Response(JSON.stringify({ message: 'Enable NOWEB store' }), { status: lidsStatus });
+      }
       const key = decodeURIComponent(lid[2]);
       return lids[key]
         ? new Response(JSON.stringify({ lid: key, pn: lids[key] }), { status: 200 })
@@ -284,6 +287,30 @@ test('a hidden number WAHA cannot resolve is left alone, not told it has no stor
     assert.equal(waha.sent.length, 0);
   } finally {
     restore();
+  }
+});
+
+test('a WAHA that cannot look up hidden numbers is not retried into the ground', async () => {
+  // Without the NOWEB store WAHA answers 400 to every lookup. Answering 500
+  // would have WAHA re-deliver each message fifteen times, all failing the
+  // same way; a 5xx from WAHA, on the other hand, is worth a retry.
+  const supabase = makeFakeSupabase(seed());
+
+  for (const [lidsStatus, expected] of [[400, 200], [503, 500]]) {
+    const waha = makeFakeWaha({ lidsStatus });
+    const restore = installFetch({ supabase, waha, tokens: TOKENS });
+    try {
+      const res = await worker.fetch(
+        hook(incoming('list', { from: '99887766554433@lid' })),
+        wahaEnv(),
+        {}
+      );
+      assert.equal(res.status, expected, `WAHA ${lidsStatus}`);
+      assert.equal(supabase.tables.bot_messages.length, 0);
+      assert.equal(waha.sent.length, 0);
+    } finally {
+      restore();
+    }
   }
 });
 

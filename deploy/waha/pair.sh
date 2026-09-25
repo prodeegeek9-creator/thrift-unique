@@ -41,24 +41,46 @@ if ! command -v qrencode >/dev/null; then
     apt-get install -y -qq qrencode >/dev/null
 fi
 
+# The whole session config, as it should be.
+#
+# The NOWEB store is not optional here: WhatsApp increasingly hides a sender's
+# number behind a privacy id (…@lid), and WAHA only maps those back to numbers
+# (GET /api/<session>/lids/<lid>) with the store and full sync on. Without it
+# the bot cannot tell which store is messaging it. WAHA only applies the store
+# from the moment a session is linked, so turning it on means linking again.
+config() {
+  : "${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env to the app origin, where WAHA sends webhooks}"
+  : "${WAHA_WEBHOOK_SECRET:?set WAHA_WEBHOOK_SECRET in .env to the same value as the Worker secret}"
+  cat <<EOF
+{
+  "noweb": { "store": { "enabled": true, "fullSync": true } },
+  "webhooks": [{
+    "url": "${PUBLIC_ORIGIN%/}/api/waha/webhook",
+    "events": ["message", "session.status"],
+    "customHeaders": [{ "name": "X-Thrift-Secret", "value": "${WAHA_WEBHOOK_SECRET}" }]
+  }]
+}
+EOF
+}
+
 code=$(api -o /dev/null -w '%{http_code}' "${BASE}/api/sessions/${SESSION}")
 if [ "$code" = "404" ]; then
-  : "${PUBLIC_ORIGIN:?session ${SESSION} does not exist yet; set PUBLIC_ORIGIN in .env to create it}"
-  : "${WAHA_WEBHOOK_SECRET:?session ${SESSION} does not exist yet; set WAHA_WEBHOOK_SECRET in .env to create it}"
+  cfg=$(config)
   echo "Creating session ${SESSION}..."
-  api -o /dev/null "${BASE}/api/sessions" -d "{
-    \"name\": \"${SESSION}\",
-    \"config\": {
-      \"webhooks\": [{
-        \"url\": \"${PUBLIC_ORIGIN%/}/api/waha/webhook\",
-        \"events\": [\"message\", \"session.status\"],
-        \"customHeaders\": [{ \"name\": \"X-Thrift-Secret\", \"value\": \"${WAHA_WEBHOOK_SECRET}\" }]
-      }]
-    }
-  }"
+  api -o /dev/null "${BASE}/api/sessions" -d "{\"name\": \"${SESSION}\", \"config\": ${cfg}}"
 elif [ "$code" != "200" ]; then
   echo "WAHA answered ${code} for ${SESSION}; check WAHA_DOMAIN and WAHA_API_KEY in .env." >&2
   exit 1
+else
+  current=$(api "${BASE}/api/sessions/${SESSION}")
+  if ! grep -q '"store":{[^}]*"enabled":true' <<<"$current" ||
+    ! grep -q '"store":{[^}]*"fullSync":true' <<<"$current"; then
+    echo "Turning on the message store for ${SESSION}; this needs one more scan."
+    cfg=$(config)
+    api -o /dev/null -X POST "${BASE}/api/sessions/${SESSION}/stop" || true
+    api -o /dev/null -X PUT "${BASE}/api/sessions/${SESSION}" -d "{\"name\": \"${SESSION}\", \"config\": ${cfg}}"
+    api -o /dev/null -X POST "${BASE}/api/sessions/${SESSION}/logout" || true
+  fi
 fi
 
 case "$(status)" in

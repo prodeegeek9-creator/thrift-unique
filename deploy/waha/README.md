@@ -191,6 +191,13 @@ session `FAILED`. That's why the QR is drawn in place rather than saved as a
 PNG to open elsewhere. If the window closes, run `./pair.sh` again. Run it
 again any time the platform number gets logged out, too.
 
+The session is created with the **NOWEB store and full sync on**. That's
+required, not a tuning choice. WhatsApp increasingly delivers a sender as a
+privacy id (`…@lid`) instead of a phone number, and WAHA can only map that
+back to a number (which is how the Worker finds the store) when the session
+was *linked* with the store on. If `pair.sh` finds an existing session
+without it, it turns the store on and asks for one more scan.
+
 `ut-platform` is the default the Worker expects (`WAHA_SESSION` in
 `worker/lib/env.js`). Only set `WAHA_SESSION` (in `.env` and on the Worker)
 if you deliberately use a different name.
