@@ -5,6 +5,7 @@
 const PATHS = {
   overview: 'M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z',
   listings: 'M4 7h16M4 12h16M4 17h10',
+  inbox: 'M4 13h4.5l1.5 3h4l1.5-3H20M5.5 5h13L20 13v6H4v-6l1.5-8Z',
   orders: 'M6 2h12l2 6H4l2-6Zm-2 6v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M9 12h6',
   payouts: 'M3 7h18v12H3V7Zm0 4h18M7 15h3',
   contacts: 'M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM19 11h3m-1.5-1.5v3',

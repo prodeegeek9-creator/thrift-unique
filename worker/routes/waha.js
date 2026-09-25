@@ -14,10 +14,12 @@ import {
   savedMessage,
 } from '../lib/bot.js';
 import { provisionStore } from '../lib/provision.js';
+import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
 import {
   parseEvent,
   phoneFor,
   sessionName,
+  chatId,
   sendText,
   startTyping,
   typingDelay,
@@ -48,10 +50,12 @@ import {
 //                          is impossible from a platform number, because
 //                          Status goes to *their* contacts.
 //
-// Inbound traffic on a tenant session is deliberately ignored. That session is
-// the seller's real WhatsApp with their real customers in it, and a bot
-// answering their buyers on their behalf is not something to switch on by
-// accident.
+// Inbound traffic on a tenant session is left alone, with one exception. That
+// session is the store's real WhatsApp with its real customers in it, and a
+// bot answering them on the store's behalf is not something to switch on by
+// accident. The exception is somebody who opens with SELL: a person bringing
+// the store an item to sell for them, which is the intake conversation in
+// lib/intake.js and nothing else.
 
 export async function handleWaha(request, env, path) {
   const method = request.method;
@@ -102,9 +106,9 @@ async function webhook(request, env) {
   if (event.kind === 'status') return recordStatus(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
-  // top of this file.
+  // top of this file. A store's own session runs the item intake, if asked.
   if (event.session !== cfg.wahaSession) {
-    return json({ ok: true, ignored: 'tenant session' });
+    return intake(cfg, event);
   }
 
   return message(cfg, event);
@@ -278,7 +282,7 @@ async function listItem(cfg, tenant, chatId, action) {
   await say(cfg, tenant, chatId, listedMessage(product, { origin: cfg.publicOrigin, posted }));
 }
 
-async function uploadAll(cfg, tenantId, images) {
+export async function uploadAll(cfg, tenantId, images) {
   const out = [];
   for (const image of images ?? []) {
     try {
@@ -297,7 +301,7 @@ async function uploadAll(cfg, tenantId, images) {
 // Returns true, false or null: posted, could not post, or nothing to post to.
 // The seller is told which, because believing your listings are reaching your
 // contacts when they are not is the worst way for this to fail.
-async function postToStatus(cfg, tenant, product) {
+export async function postToStatus(cfg, tenant, product) {
   if (!tenant.waha_session || tenant.waha_status !== 'WORKING') return false;
   if (!product.images?.length) return null;
   if (!cfg.wahaUrl) return false;
@@ -343,32 +347,35 @@ async function persist(cfg, tenant, chatId, previous, result) {
   );
 }
 
-// Send, and record what was sent.
+// Send, and record what was sent. True if WhatsApp took it.
+//
+// From the platform number unless a session is given — the intake answers
+// from the store's own.
 //
 // The log write is best-effort on purpose: a message the seller has already
 // received is not un-sent by a failed insert, and throwing here would make
 // WAHA retry the whole conversation turn.
-async function say(cfg, tenant, chatId, text) {
+export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession } = {}) {
   if (!cfg.wahaUrl) {
     console.warn('waha not configured; would have sent:', text.slice(0, 80));
-    return;
+    return false;
   }
 
   const pause = typingDelay(cfg, text);
   if (pause > 0) {
     // Cosmetic, so a refusal costs nothing but the effect.
-    await startTyping(cfg, cfg.wahaSession, chatId).catch(() => {});
+    await startTyping(cfg, session, chatId).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, pause));
   }
 
   try {
-    await sendText(cfg, cfg.wahaSession, chatId, text);
+    await sendText(cfg, session, chatId, text);
   } catch (err) {
     console.error('send failed:', err?.message ?? err);
-    return;
+    return false;
   }
 
-  if (!tenant) return;
+  if (!tenant) return true;
 
   try {
     await db(cfg).insert(
@@ -385,6 +392,7 @@ async function say(cfg, tenant, chatId, text) {
   } catch (err) {
     console.warn('outbound log failed:', err?.message ?? err);
   }
+  return true;
 }
 
 // A stable identity for a message, whichever engine delivered it.
@@ -395,6 +403,122 @@ async function say(cfg, tenant, chatId, text) {
 function inboundId(event) {
   if (event.id) return String(event.id);
   return `${event.from}:${event.timestamp ?? 'na'}`;
+}
+
+// ── ITEMS BROUGHT TO A STORE ─────────────────────────────────────────────────
+
+// A message on a store's own session. See lib/intake.js for the conversation.
+//
+// Nothing is written for a message the intake does not claim: that is a
+// customer talking to the store, and not ours to log.
+async function intake(cfg, event) {
+  const tenant = await db(cfg).one(
+    'tenants',
+    `waha_session=eq.${encodeURIComponent(event.session)}` +
+      '&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status'
+  );
+  if (!tenant || tenant.status === 'suspended' || tenant.store_type === 'brand') {
+    return json({ ok: true, ignored: 'tenant session' });
+  }
+
+  const conversation = await db(cfg).one(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}` +
+      '&select=state,draft,updated_at'
+  );
+
+  const previous = await db(cfg).one(
+    'submissions',
+    `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(event.from)}` +
+      '&seller_name=not.is.null&select=seller_name&order=created_at.desc'
+  );
+
+  const result = intakeStep(conversation, event, {
+    store: tenant.name,
+    knownName: previous?.seller_name ?? null,
+  });
+  if (!result) return json({ ok: true, ignored: 'not an item for sale' });
+
+  // The same replay guard as the listing flow, now that this is ours.
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  await persist(cfg, tenant, event.from, conversation, result);
+
+  const own = { session: tenant.waha_session };
+  for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
+
+  if (result.action?.type === 'submit') {
+    await fileSubmission(cfg, tenant, event, result.action);
+  }
+
+  return json({ ok: true, intake: result.state });
+}
+
+async function fileSubmission(cfg, tenant, event, action) {
+  const own = { session: tenant.waha_session };
+
+  let images = [];
+  try {
+    images = await uploadAll(cfg, tenant.id, action.images);
+  } catch (err) {
+    console.error('submission media failed:', err?.message ?? err);
+  }
+  if (!images.length) {
+    await say(cfg, tenant, event.from, "I couldn't save those photos. Send *SELL* to try again.", own);
+    return;
+  }
+
+  // The number behind the chat, when WhatsApp will say. Only for the store to
+  // call back on; the chat id is what replies go to.
+  const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
+
+  try {
+    await db(cfg).insert(
+      'submissions',
+      {
+        tenant_id: tenant.id,
+        seller_chat_id: event.from,
+        seller_phone: phone,
+        ...action.submission,
+        images,
+      },
+      { returning: false }
+    );
+  } catch (err) {
+    console.error('submission insert failed:', err?.message ?? err);
+    await say(cfg, tenant, event.from, 'Something went wrong sending that. Send *SELL* to try again.', own);
+    return;
+  }
+
+  await say(cfg, tenant, event.from, receivedMessage(tenant.name), own);
+
+  // And the owner, on the platform number where they already talk to us.
+  const owner = chatId(tenant.whatsapp_number);
+  if (owner) {
+    await say(
+      cfg,
+      tenant,
+      owner,
+      newSubmissionMessage({
+        title: action.submission.title,
+        price: action.submission.asking_price,
+        name: action.submission.seller_name,
+        origin: cfg.publicOrigin,
+      })
+    );
+  }
 }
 
 // ── OPENING A STORE ──────────────────────────────────────────────────────────

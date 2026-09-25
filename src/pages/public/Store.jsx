@@ -13,7 +13,9 @@ import LogoLoader from '../../components/ui/LogoLoader.jsx';
 // anybody else's catalogue beside them. It is an add-on to how a store already
 // sells (WhatsApp, Instagram, a link in a DM), not a marketplace: one link a
 // store can put in its bio instead of posting items one at a time. Each item
-// opens its own /p/<code> page, which is where buying starts.
+// opens its own /p/<code> page, which is where buying starts. A thrift store
+// with its WhatsApp linked also offers "Sell with us", the start of the item
+// intake in worker/lib/intake.js.
 //
 // Reads through public_store(), which answers for one live store by slug and
 // nothing adjacent to it. A store still waiting for approval is "not found".
@@ -64,6 +66,10 @@ export default function Store() {
   }
 
   const logo = imageUrl(store.logo_url);
+  const sell =
+    store.takes_items && store.whatsapp_number
+      ? `https://wa.me/${store.whatsapp_number}?text=${encodeURIComponent(`SELL — I'd like ${store.name} to sell an item for me`)}`
+      : null;
   const chat = store.whatsapp_number
     ? `https://wa.me/${store.whatsapp_number}?text=${encodeURIComponent(`Hi ${store.name}! I found your store online.`)}`
     : null;
@@ -126,6 +132,21 @@ export default function Store() {
             Nothing listed right now. Check back soon, or message the store on WhatsApp.
           </p>
         )}
+
+        {sell ? (
+          <section className="card mt-8 p-5 text-center">
+            <h2 className="font-display text-base font-semibold text-ink">Got something to sell?</h2>
+            <p className="mt-1 text-sm text-muted">
+              Send it to {store.name} on WhatsApp. We'll take the details and let you know once it's listed.
+            </p>
+            <a
+              href={sell}
+              className="mt-3 inline-block rounded-pill border border-green px-5 py-2 text-sm font-semibold text-green"
+            >
+              Sell with us
+            </a>
+          </section>
+        ) : null}
 
         <p className="mt-8 text-center text-xs text-muted">Payment protected by Unique Thrift</p>
       </main>

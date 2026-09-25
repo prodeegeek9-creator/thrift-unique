@@ -16,6 +16,9 @@ import { CHANNELS } from '../../lib/features.js';
 export const MAIN_NAV = [
   { to: '/dashboard', icon: 'overview', label: 'Overview', end: true },
   { to: '/dashboard/listings', icon: 'listings', label: 'Listings' },
+  // Items people bring to a thrift store. A brand sells its own stock, so it
+  // has nothing to review; see mainNavFor().
+  { to: '/dashboard/submissions', icon: 'inbox', label: 'Items to review', consignment: true },
   { to: '/dashboard/orders', icon: 'orders', label: 'Orders' },
   { to: '/dashboard/payouts', icon: 'payouts', label: 'Payouts' },
   { to: '/dashboard/contacts', icon: 'contacts', label: 'Contacts', flag: 'contacts' },
@@ -23,6 +26,12 @@ export const MAIN_NAV = [
   { to: '/dashboard/analytics', icon: 'analytics', label: 'Analytics', flag: 'analytics' },
   { to: '/dashboard/team', icon: 'team', label: 'Team', flag: 'team' },
 ];
+
+// MAIN_NAV for this store: without the review queue for a brand store. A store
+// that never said which it is keeps it, since most stores here are thrift.
+export function mainNavFor(tenant) {
+  return MAIN_NAV.filter((item) => !(item.consignment && tenant?.store_type === 'brand'));
+}
 
 // The Channels group. One row per channel, each showing its own connection
 // state, all leading to the same screen — the mockups list them individually

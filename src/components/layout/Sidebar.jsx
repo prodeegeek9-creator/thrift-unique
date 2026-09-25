@@ -4,7 +4,7 @@ import TierBadge from '../ui/TierBadge.jsx';
 import { BrandLockup } from '../ui/BrandMark.jsx';
 import TenantSwitcher from './TenantSwitcher.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { MAIN_NAV, CHANNEL_NAV, FOOTER_NAV } from './navItems.js';
+import { mainNavFor, CHANNEL_NAV, FOOTER_NAV } from './navItems.js';
 
 function NavRow({ item }) {
   const { can } = useTenant();
@@ -34,6 +34,7 @@ function NavRow({ item }) {
 }
 
 export default function Sidebar() {
+  const { tenant } = useTenant();
   return (
     <aside className="hidden w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
       <div className="px-5 py-5">
@@ -41,7 +42,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3 pb-4">
-        {MAIN_NAV.map((item) => (
+        {mainNavFor(tenant).map((item) => (
           <NavRow key={item.to} item={item} />
         ))}
 

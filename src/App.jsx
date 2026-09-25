@@ -16,6 +16,7 @@ import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
 import Listings from './pages/seller/Listings.jsx';
+import Submissions from './pages/seller/Submissions.jsx';
 import Orders from './pages/seller/Orders.jsx';
 import OrderDetail from './pages/seller/OrderDetail.jsx';
 import Payouts from './pages/seller/Payouts.jsx';
@@ -68,6 +69,7 @@ export default function App() {
       >
         <Route index element={<Overview />} />
         <Route path="listings" element={<Listings />} />
+        <Route path="submissions" element={<Submissions />} />
         <Route path="orders" element={<Orders />} />
         <Route path="orders/:orderId" element={<OrderDetail />} />
         <Route path="payouts" element={<Payouts />} />
