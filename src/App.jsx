@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth.jsx';
 import RequireFeature from './components/RequireFeature.jsx';
 import RequireStaffRole from './components/RequireStaffRole.jsx';
@@ -12,6 +12,7 @@ import ConnectChannels from './pages/ConnectChannels.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Product from './pages/public/Product.jsx';
 import Store from './pages/public/Store.jsx';
+import Home from './pages/public/Home.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
@@ -136,7 +137,7 @@ export default function App() {
         }
       />
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Home />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

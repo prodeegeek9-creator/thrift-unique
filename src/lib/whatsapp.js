@@ -20,6 +20,16 @@ export function checkStoreWhatsapp(raw) {
 
 // For somebody with an account but no store yet: the bot is where a store
 // gets set up, so this is the way forward rather than a support ticket.
+// The platform number as a person reads it: 2348154765611 → +234 815 476 5611.
+// Where businesses message to open a store, so the homepage prints it as well
+// as linking it, for somebody who wants to save it or dial it.
+export function botNumberDisplay() {
+  const n = String(BOT_NUMBER ?? '').replace(/\D/g, '');
+  if (!n) return null;
+  const m = /^(234)(\d{3})(\d{3})(\d{4})$/.exec(n);
+  return m ? `+${m[1]} ${m[2]} ${m[3]} ${m[4]}` : `+${n}`;
+}
+
 export function setupDeepLink() {
   if (!BOT_NUMBER) return null;
   return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent('Hi! I want to set up my store.')}`;

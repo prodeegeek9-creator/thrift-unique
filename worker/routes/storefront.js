@@ -76,6 +76,40 @@ export async function renderProductPage(request, env, code) {
   });
 }
 
+// GET / — the platform's homepage, the one page besides product and store
+// pages that should be found by search and preview well when shared. The
+// document ships noindex for the dashboard's sake; here it is flipped.
+export async function renderHomePage(request, env) {
+  const asset = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
+  const html = await asset.text();
+  const origin = new URL(request.url).origin;
+
+  const title = 'Unique Thrift: run your thrift business from WhatsApp';
+  const description =
+    'List items from WhatsApp, auto-post to your Status, get your own store page and protected payments. For thrift stores and brands.';
+
+  const tags = [
+    `<title>${escapeHtml(title)}</title>`,
+    `<meta name="description" content="${escapeHtml(description)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${escapeHtml(title)}">`,
+    `<meta property="og:description" content="${escapeHtml(description)}">`,
+    `<meta property="og:url" content="${escapeHtml(`${origin}/`)}">`,
+    `<meta property="og:site_name" content="Unique Thrift">`,
+    `<meta name="twitter:card" content="summary">`,
+  ];
+
+  const body = html
+    .replace(/<meta\s+name="robots"[^>]*>/i, '<meta name="robots" content="index, follow">')
+    .replace(/<title>[^<]*<\/title>/i, '')
+    .replace('</head>', `${tags.join('\n    ')}\n  </head>`);
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' },
+  });
+}
+
 // GET /s/:slug — a store's own page, rendered at the edge for the same
 // reason: the link a store shares in its bio or a group chat should arrive as
 // its name and a photo, not a bare URL.
