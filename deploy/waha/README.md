@@ -6,9 +6,8 @@ This stands up the WAHA server the Cloudflare Worker talks to — see
 on Cloudflare; this is a small separate box because WAHA needs a persistent
 process and disk, which Workers don't give you.
 
-I don't have SSH access to any server, so these are the commands to run
-yourself. Wherever a value needs to match something on the Worker, it's
-called out.
+These are the commands to run on the server. Wherever a value needs to
+match something on the Worker, it's called out.
 
 ## 1. Provision the VPS
 
@@ -115,6 +114,47 @@ curl -s https://waha.yourdomain.com/api/sessions -H "X-Api-Key: $WAHA_API_KEY"
 An empty array (`[]`) means it's up with no sessions yet — expected on a
 fresh install.
 
+### Hosts that already run nginx on 80/443
+
+Check first with `sudo ss -tlnp | grep -E ':80 |:443 '`. If nginx (or anything
+else) already owns those ports, don't start Caddy — run only WAHA, bound to
+localhost, and add it to the existing nginx like any other site:
+
+```bash
+cat > docker-compose.override.yml <<'EOF'
+services:
+  waha:
+    image: waha-local:latest        # or devlikeapro/waha on x86_64
+    ports:
+      - "127.0.0.1:3000:3000"
+EOF
+sudo docker compose up -d waha      # naming the service keeps Caddy off
+
+sudo tee /etc/nginx/sites-available/waha > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name waha.yourdomain.com;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+sudo ln -s /etc/nginx/sites-available/waha /etc/nginx/sites-enabled/waha
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d waha.yourdomain.com
+```
+
+If the domain is proxied through Cloudflare (orange cloud), set its SSL/TLS
+mode to **Full (strict)**. "Flexible" loops forever against certbot's
+HTTP→HTTPS redirect.
+
 ## 6. Create the platform session
 
 This is the one number every seller messages to list an item — the app
@@ -123,56 +163,37 @@ creates a session per *tenant* on its own when a seller links their WhatsApp
 tenant behind it, so it's created once, by hand, here.
 
 Pick a webhook secret (different from the API key — this is what the
-`X-Thrift-Secret` header on every webhook delivery is checked against):
+`X-Thrift-Secret` header on every webhook delivery is checked against), and
+add it plus the app's origin to `.env`:
 
 ```bash
-openssl rand -hex 32   # this becomes WAHA_WEBHOOK_SECRET on the Worker
+echo "WAHA_WEBHOOK_SECRET=$(openssl rand -hex 32)" >> .env
+echo "PUBLIC_ORIGIN=https://thrift-unique.<subdomain>.workers.dev" >> .env
 ```
 
-Then, with `WAHA_API_KEY`, `WAHA_WEBHOOK_SECRET` and `PUBLIC_ORIGIN` (your
-deployed app's origin, e.g. `https://thrift-unique.<subdomain>.workers.dev`
-or the real domain once it's set) as shell variables:
+`WAHA_WEBHOOK_SECRET` is also set on the Worker in step 8, with the same
+value.
+
+## 7. Link the platform's WhatsApp number
 
 ```bash
-curl -s https://waha.yourdomain.com/api/sessions \
-  -H "X-Api-Key: $WAHA_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "ut-platform",
-    "config": {
-      "webhooks": [{
-        "url": "'"$PUBLIC_ORIGIN"'/api/waha/webhook",
-        "events": ["message", "session.status"],
-        "customHeaders": [{ "name": "X-Thrift-Secret", "value": "'"$WAHA_WEBHOOK_SECRET"'" }]
-      }]
-    }
-  }'
-
-curl -s -X POST https://waha.yourdomain.com/api/sessions/ut-platform/start \
-  -H "X-Api-Key: $WAHA_API_KEY"
+./pair.sh
 ```
+
+It creates the `ut-platform` session (with its webhook pointed at
+`$PUBLIC_ORIGIN/api/waha/webhook`) if it doesn't exist yet, starts it, and
+draws the QR **in the terminal**. On the phone whose number sellers will
+message (a dedicated number/SIM, not a personal one), open WhatsApp →
+Settings → Linked devices → Link a device and scan it.
+
+WAHA only keeps a pairing window open for about a minute before marking the
+session `FAILED`. That's why the QR is drawn in place rather than saved as a
+PNG to open elsewhere. If the window closes, run `./pair.sh` again. Run it
+again any time the platform number gets logged out, too.
 
 `ut-platform` is the default the Worker expects (`WAHA_SESSION` in
-`worker/lib/env.js`); only pass a different `WAHA_SESSION` secret on the
-Worker if you deliberately name it something else here too.
-
-## 7. Scan the QR with the platform's WhatsApp number
-
-```bash
-curl -s https://waha.yourdomain.com/api/ut-platform/auth/qr \
-  -H "X-Api-Key: $WAHA_API_KEY" -o qr.png
-```
-
-Open `qr.png` and scan it with the WhatsApp number you want sellers to
-message (a dedicated number/SIM, not a personal one). Then confirm it came
-up:
-
-```bash
-curl -s https://waha.yourdomain.com/api/sessions/ut-platform \
-  -H "X-Api-Key: $WAHA_API_KEY"
-```
-
-Wait for `"status": "WORKING"`.
+`worker/lib/env.js`). Only set `WAHA_SESSION` (in `.env` and on the Worker)
+if you deliberately use a different name.
 
 ## 8. Hand these back to set as Worker secrets
 
@@ -183,8 +204,14 @@ Wait for `"status": "WORKING"`.
 - `PUBLIC_ORIGIN` = the value you used in step 6, if not already set in
   `wrangler.jsonc`
 
-Tell me these values and, given a Cloudflare API token, I'll run
-`wrangler secret put` for each against the `thrift-unique` Worker.
+Set them with `wrangler secret put` against the `thrift-unique` Worker.
+
+**Check `SUPABASE_URL` while you're there.** The Worker reads the
+`SUPABASE_URL` secret before `VITE_SUPABASE_URL`. A secret left over from the
+old single-store site pointed at a deleted project and silently overrode the
+right one. It showed up as `PostgREST 530` in `wrangler tail` and a 500 on
+every webhook. `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` must both belong to
+the project in `.env.production`.
 
 ## Operating notes
 
