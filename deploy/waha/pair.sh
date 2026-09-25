@@ -35,7 +35,10 @@ status() {
 
 if ! command -v qrencode >/dev/null; then
   echo "Installing qrencode to draw the QR in the terminal..."
-  sudo apt-get install -y -qq qrencode >/dev/null
+  # needrestart would otherwise open an interactive dialog that the silenced
+  # output hides, leaving the script waiting on a keypress nobody can see.
+  sudo env NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y -qq qrencode >/dev/null
 fi
 
 code=$(api -o /dev/null -w '%{http_code}' "${BASE}/api/sessions/${SESSION}")
