@@ -207,6 +207,20 @@ function base64(bytes) {
 
 // ── MESSAGES ─────────────────────────────────────────────────────────────────
 
+// "typing…" in the chat until the next message is sent, which clears it.
+export async function startTyping(cfg, session, to) {
+  const call = client(cfg);
+  return call('/api/startTyping', { method: 'POST', body: { session, chatId: to } });
+}
+
+// A beat before a reply, longer for a longer one, so the bot reads as somebody
+// answering rather than as an instant echo. Brief on purpose: long enough to
+// be seen, never long enough to feel slow.
+export function typingDelay(cfg, text) {
+  if (cfg.wahaTypingMs != null) return Math.max(0, cfg.wahaTypingMs);
+  return Math.min(1800, Math.max(800, 600 + String(text ?? '').length * 12));
+}
+
 export async function sendText(cfg, session, to, text) {
   const call = client(cfg);
   return call('/api/sendText', {

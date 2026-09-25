@@ -47,6 +47,11 @@ export function config(env) {
     // their own secret in tenants.waha_secret; this one has no tenant to hang
     // off, so it is configuration.
     wahaWebhookSecret: env.WAHA_WEBHOOK_SECRET || null,
+
+    // How long the bot shows "typing…" before a reply, in ms. Unset means a
+    // beat scaled to the reply's length; 0 switches it off.
+    wahaTypingMs:
+      env.WAHA_TYPING_MS != null && env.WAHA_TYPING_MS !== '' ? Number(env.WAHA_TYPING_MS) : null,
   };
 }
 

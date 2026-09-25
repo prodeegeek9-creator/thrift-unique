@@ -19,6 +19,8 @@ import {
   phoneFor,
   sessionName,
   sendText,
+  startTyping,
+  typingDelay,
   postImageStatus,
   createSession,
   getSession,
@@ -346,6 +348,13 @@ async function say(cfg, tenant, chatId, text) {
   if (!cfg.wahaUrl) {
     console.warn('waha not configured; would have sent:', text.slice(0, 80));
     return;
+  }
+
+  const pause = typingDelay(cfg, text);
+  if (pause > 0) {
+    // Cosmetic, so a refusal costs nothing but the effect.
+    await startTyping(cfg, cfg.wahaSession, chatId).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, pause));
   }
 
   try {

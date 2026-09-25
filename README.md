@@ -433,6 +433,7 @@ Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 | `0013_revoke_bot_tables.sql` | the default grants those three tables came with |
 | `0014_staff_invitations.sql` | names on memberships, and `user_id_for_email()` |
 | `0015_signups.sql` | `signups`: a seller opening a store over WhatsApp, until approval |
+| `0016_normalize_whatsapp_number.sql` | a store's number stored as `234…` digits, whoever writes it |
 
 `supabase/seed/` holds two files that are **not** migrations and do not run on
 every database: `first_tenant.sql` creates the one account the bot cannot

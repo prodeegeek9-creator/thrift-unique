@@ -15,7 +15,7 @@ import {
   MAX_BUSINESS_NAME,
 } from '../lib/bot.js';
 import { slugFor } from '../lib/provision.js';
-import { parseEvent, chatId, phoneFromChatId, sessionName } from '../lib/waha.js';
+import { parseEvent, chatId, phoneFromChatId, sessionName, typingDelay } from '../lib/waha.js';
 import { storagePath, publicUrl, BUCKET } from '../lib/media.js';
 
 // The listing conversation is a pure function, which is the only reason these
@@ -505,4 +505,12 @@ test('a store name becomes a readable slug', () => {
   assert.equal(slugFor('!!!'), 'store');
   assert.ok(slugFor('x'.repeat(80)).length <= 32);
   assert.match(slugFor('A very long business name that goes on and on'), /^[a-z0-9-]{3,40}$/);
+});
+
+test('the typing pause is brief, and longer for a longer reply', () => {
+  const cfg = { wahaTypingMs: null };
+  assert.equal(typingDelay(cfg, 'ok'), 800);
+  assert.equal(typingDelay(cfg, 'x'.repeat(1000)), 1800);
+  assert.ok(typingDelay(cfg, 'x'.repeat(60)) > typingDelay(cfg, 'x'.repeat(10)));
+  assert.equal(typingDelay({ wahaTypingMs: 0 }, 'anything'), 0);
 });
