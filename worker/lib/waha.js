@@ -158,6 +158,11 @@ export async function startSession(cfg, session) {
   return call(`/api/sessions/${encodeURIComponent(session)}/start`, { method: 'POST' });
 }
 
+export async function stopSession(cfg, session) {
+  const call = client(cfg);
+  return call(`/api/sessions/${encodeURIComponent(session)}/stop`, { method: 'POST' });
+}
+
 export async function deleteSession(cfg, session) {
   const call = client(cfg);
   return call(`/api/sessions/${encodeURIComponent(session)}`, { method: 'DELETE' });
