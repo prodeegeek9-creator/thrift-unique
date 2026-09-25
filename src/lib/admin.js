@@ -74,6 +74,7 @@ export const resolveDispute = (disputeId, outcome, resolution) =>
 export const AUDIT_LABELS = {
   'flag.set': 'Changed a feature flag',
   'tenant.status': 'Changed a store’s status',
+  'tenant.approve': 'Approved a new store',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
 };

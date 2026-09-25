@@ -1,4 +1,7 @@
-import { require_ } from '../lib/env.js';
+import { require_, originOf } from '../lib/env.js';
+import { approveStore } from '../lib/provision.js';
+import { approvedMessage } from '../lib/bot.js';
+import { sendText } from '../lib/waha.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
@@ -153,8 +156,19 @@ async function tenantView(cfg, tenantId) {
   // response, even an operator's. Nothing here needs it.
   delete tenant.paystack_subaccount;
 
+  // Who is asking, for a store waiting on approval: the email the owner login
+  // will be made for, and when they signed up.
+  const signup =
+    tenant.status === 'onboarding' && tenant.whatsapp_number
+      ? await db(cfg).one(
+          'signups',
+          `phone=eq.${tenant.whatsapp_number}&state=eq.pending&select=email,created_at`
+        )
+      : null;
+
   return json({
     tenant,
+    signup,
     flags,
     members,
     stats: {
@@ -242,10 +256,63 @@ async function setStatus(request, cfg, op, tenantId) {
     return json({ error: 'Bad status' }, 400);
   }
 
-  await db(cfg).update('tenants', `id=eq.${tenantId}`, { status }, { returning: false });
-  await audit(cfg, op.userId, 'tenant.status', { tenantId, detail: { status } });
+  const tenant = await db(cfg).one(
+    'tenants',
+    `id=eq.${tenantId}&select=id,name,status,whatsapp_number`
+  );
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
 
-  return json({ ok: true, status });
+  // Approving a store that signed up over WhatsApp: its owner account is made
+  // now, before the status flips, so a failure leaves it pending to try again
+  // rather than live with nobody able to sign in.
+  let approval = null;
+  if (tenant.status === 'onboarding' && status === 'active') {
+    cfg.publicOrigin = originOf(request, cfg);
+    try {
+      approval = await approveStore(cfg, tenant, { origin: cfg.publicOrigin });
+    } catch (err) {
+      console.error('approval failed:', err?.message ?? err);
+      return json({ error: 'Could not create the owner account. Nothing changed; try again.' }, 502);
+    }
+  }
+
+  await db(cfg).update('tenants', `id=eq.${tenantId}`, { status }, { returning: false });
+
+  let notified = null;
+  if (approval) {
+    notified = await tellApproved(cfg, tenant, approval);
+    await db(cfg).del('signups', `phone=eq.${tenant.whatsapp_number}`);
+  }
+
+  await audit(cfg, op.userId, approval ? 'tenant.approve' : 'tenant.status', {
+    tenantId,
+    detail: approval ? { status, notified, existing_account: approval.existingAccount } : { status },
+  });
+
+  return json({
+    ok: true,
+    status,
+    notified,
+    // Only when WhatsApp could not deliver it, so the operator can pass it on
+    // some other way. It is a login link; it is not echoed otherwise.
+    link: notified === false ? approval.link : null,
+  });
+}
+
+async function tellApproved(cfg, tenant, { signup, link }) {
+  if (!cfg.wahaUrl) return false;
+  try {
+    await sendText(
+      cfg,
+      cfg.wahaSession,
+      signup.chat_id,
+      approvedMessage({ name: tenant.name, link, email: signup.email, origin: cfg.publicOrigin })
+    );
+    return true;
+  } catch (err) {
+    console.error('approval message failed:', err?.message ?? err);
+    return false;
+  }
 }
 
 // Releasing a hold by hand — a buyer who confirmed by phone, or a dispute

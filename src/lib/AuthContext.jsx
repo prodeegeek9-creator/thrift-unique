@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from './supabase.js';
+import { supabase, arrivedVia } from './supabase.js';
 
 const AuthContext = createContext({ user: null, loading: true, recovering: false });
 
@@ -12,7 +12,13 @@ export function AuthProvider({ children }) {
   // silently logging someone in and dropping them on the dashboard with the
   // old password still live. This flag lets the router hold them on the reset
   // screen until they have actually set a new one.
-  const [recovering, setRecovering] = useState(false);
+  //
+  // An invitation link is the same problem from the other end: it signs a new
+  // owner or colleague in before they have ever chosen a password, and without
+  // stopping them here they could never sign in a second time.
+  const [recovering, setRecovering] = useState(
+    arrivedVia === 'invite' || arrivedVia === 'recovery'
+  );
 
   useEffect(() => {
     let active = true;

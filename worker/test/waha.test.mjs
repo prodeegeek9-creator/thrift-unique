@@ -231,23 +231,122 @@ test('a tenant session is verified against that tenant own secret', async () => 
 
 // ── WHO IS TALKING ───────────────────────────────────────────────────────────
 
-test('a number belonging to no store is answered once and stored nowhere', async () => {
+// ── OPENING A STORE ──────────────────────────────────────────────────────────
+
+const NEWCOMER = '2349999999999';
+const NEWCOMER_CHAT = `${NEWCOMER}@c.us`;
+
+test('a number belonging to no store is offered one, and nothing else is created', async () => {
   const supabase = makeFakeSupabase(seed());
   const waha = makeFakeWaha();
   const restore = installFetch({ supabase, waha, tokens: TOKENS });
 
   try {
-    const res = await worker.fetch(
-      hook(incoming('list', { from: '2349999999999@c.us' })),
-      wahaEnv(),
-      {}
-    );
+    const res = await worker.fetch(hook(incoming('list', { from: NEWCOMER_CHAT })), wahaEnv(), {});
 
     assert.equal(res.status, 200);
-    assert.equal(supabase.tables.bot_messages.length, 0);
-    assert.equal(supabase.tables.bot_conversations.length, 0);
     assert.equal(waha.sent.length, 1);
     assert.match(waha.sent[0].text, /isn't linked to a store/i);
+    assert.match(waha.sent[0].text, /business name/i);
+    assert.equal(supabase.tables.signups.length, 1);
+    assert.equal(supabase.tables.signups[0].state, 'name');
+    assert.equal(supabase.tables.tenants.length, 1);
+    assert.equal(supabase.tables.bot_messages.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a seller opens a store over WhatsApp, and it waits for approval', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const responses = await converse(
+      [
+        incoming('Hi! I want to set up my store.', { from: NEWCOMER_CHAT }),
+        // A second hello is not a business called "hi".
+        incoming('hi', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Thrift & Vintage", { from: NEWCOMER_CHAT }),
+        incoming('not an email', { from: NEWCOMER_CHAT }),
+        incoming(' Ada@Example.com ', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    assert.ok(responses.every((r) => r.status === 200));
+
+    const store = supabase.tables.tenants.find((t) => t.whatsapp_number === NEWCOMER);
+    assert.ok(store, 'a store registered to the sender');
+    assert.equal(store.name, "Ada's Thrift & Vintage");
+    assert.equal(store.slug, 'adas-thrift-vintage');
+    assert.equal(store.status, 'onboarding');
+    assert.equal(store.tier, 'starter');
+
+    const seeded = supabase.calls.find((c) => c.rpc === 'seed_tenant_features');
+    assert.deepEqual(seeded?.args, { target: store.id, plan: 'starter' });
+
+    // The email waits for approval rather than becoming a login now, so a
+    // sign-up the operator rejects leaves no account behind.
+    const signup = supabase.tables.signups.find((s) => s.phone === NEWCOMER);
+    assert.equal(signup.state, 'pending');
+    assert.equal(signup.email, 'ada@example.com');
+    assert.equal(signup.chat_id, NEWCOMER_CHAT);
+    assert.equal(supabase.tables.tenant_members.filter((m) => m.tenant_id === store.id).length, 0);
+
+    const said = waha.sent.map((m) => m.text);
+    assert.match(said[1], /business name/i);
+    assert.match(said.at(-2), /doesn't look like an email/i);
+    assert.match(said.at(-1), /waiting for approval/i);
+    assert.ok(waha.sent.every((m) => m.chatId === NEWCOMER_CHAT));
+
+    // Until then the bot does not start a listing.
+    await worker.fetch(hook(incoming('list', { from: NEWCOMER_CHAT })), wahaEnv(), {});
+    assert.match(waha.sent.at(-1).text, /still waiting for approval/i);
+    assert.equal(supabase.tables.bot_conversations.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('cancelling a sign-up forgets it', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await converse(
+      [
+        incoming('hello', { from: NEWCOMER_CHAT }),
+        incoming('Ada Stores', { from: NEWCOMER_CHAT }),
+        incoming('cancel', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+
+    assert.equal(supabase.tables.signups.length, 0);
+    assert.equal(supabase.tables.tenants.length, 1);
+    assert.match(waha.sent.at(-1).text, /nothing was set up/i);
+  } finally {
+    restore();
+  }
+});
+
+test('a retried sign-up answer is not applied twice', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await worker.fetch(hook(incoming('hello', { from: NEWCOMER_CHAT })), wahaEnv(), {});
+    const name = incoming('Ada Stores', { from: NEWCOMER_CHAT, id: 'retried' });
+    await worker.fetch(hook(name), wahaEnv(), {});
+    const replay = await worker.fetch(hook(name), wahaEnv(), {});
+
+    assert.deepEqual(await replay.json(), { ok: true, replayed: true });
+    // Read twice, the name would have been taken as the email as well.
+    assert.equal(supabase.tables.signups[0].state, 'email');
+    assert.equal(waha.sent.length, 2);
   } finally {
     restore();
   }

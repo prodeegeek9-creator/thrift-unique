@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker from '../index.js';
-import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
+import { makeFakeSupabase, installFetch, env, requestUrl } from './fake-supabase.mjs';
 
 // The operator console is the one place in the system that reads across
 // tenants. Every RLS policy is strictly tenant-scoped with no admin exception,
@@ -366,5 +366,174 @@ test('/me reports the level the console should draw for', async () => {
       const res = await worker.fetch(call('/api/admin/me', { token }), env(), {});
       assert.equal((await res.json()).level, level);
     }
+  } finally { restore(); }
+});
+
+// ── approving a store that signed up over WhatsApp ───────────────────────────
+
+const PENDING = 'dddddddd-0000-0000-0000-00000000000d';
+const PENDING_PHONE = '2349999999999';
+const PENDING_CHAT = '99887766554433@lid';
+
+// A store waiting on approval, plus the two things approval reaches that the
+// PostgREST fake does not: GoTrue's link generator, and WAHA.
+function approvalCtx({ accounts = {}, generateStatus = 200, wahaStatus = 200 } = {}) {
+  const sb = makeFakeSupabase({
+    ...seed(),
+    tenants: [
+      ...seed().tenants,
+      { id: PENDING, slug: 'ada-stores', name: 'Ada Stores', tier: 'starter',
+        status: 'onboarding', commission_pct: 8, whatsapp_number: PENDING_PHONE },
+    ],
+    signups: [
+      { phone: PENDING_PHONE, chat_id: PENDING_CHAT, state: 'pending',
+        business_name: 'Ada Stores', email: 'ada@example.com' },
+    ],
+  });
+
+  const generated = [];
+  const sent = [];
+  const waha = {
+    url: 'https://waha.test',
+    handler: async (url, init) => {
+      if (new URL(url).pathname !== '/api/sendText') return new Response('?', { status: 500 });
+      if (wahaStatus !== 200) return new Response('down', { status: wahaStatus });
+      sent.push(JSON.parse(init.body));
+      return new Response('{}', { status: 200 });
+    },
+  };
+
+  const restore = installFetch({ supabase: sb, tokens: TOKENS, waha });
+  const routed = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = requestUrl(input);
+    if (url.includes('/rest/v1/rpc/user_id_for_email')) {
+      const { addr } = JSON.parse(init.body);
+      return new Response(JSON.stringify(accounts[addr] ?? null), { status: 200 });
+    }
+    if (url.includes('/auth/v1/admin/generate_link')) {
+      if (generateStatus !== 200) return new Response('{}', { status: generateStatus });
+      const body = JSON.parse(init.body);
+      generated.push({ ...body, url });
+      return new Response(
+        JSON.stringify({
+          user: { id: 'user-new-owner', email: body.email },
+          properties: { action_link: 'https://project.supabase.co/auth/v1/verify?token=owner' },
+        }),
+        { status: 200 }
+      );
+    }
+    return routed(input, init);
+  };
+
+  return { sb, generated, sent, restore };
+}
+
+function approve(status = 'active') {
+  return worker.fetch(
+    call(`/api/admin/tenants/${PENDING}/status`, { token: 'tok-owner', method: 'POST', body: { status } }),
+    env({
+      WAHA_URL: 'https://waha.test',
+      WAHA_API_KEY: 'k',
+      WAHA_SESSION: 'ut-platform',
+      PUBLIC_ORIGIN: 'https://uniquethrift.ng',
+    }),
+    {}
+  );
+}
+
+const pending = (sb) => sb.tables.tenants.find((t) => t.id === PENDING);
+
+test('approving a sign-up makes the owner and tells them on WhatsApp', async () => {
+  const { sb, generated, sent, restore } = approvalCtx();
+  try {
+    const res = await approve();
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      { notified: true, link: null },
+      (({ notified, link }) => ({ notified, link }))(await res.json())
+    );
+
+    assert.equal(pending(sb).status, 'active');
+    assert.equal(generated.length, 1);
+    assert.equal(generated[0].type, 'invite');
+    assert.equal(generated[0].email, 'ada@example.com');
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fdashboard/);
+
+    const owner = sb.tables.tenant_members.find((m) => m.tenant_id === PENDING);
+    assert.equal(owner.user_id, 'user-new-owner');
+    assert.equal(owner.role, 'owner');
+
+    // Back to the chat they signed up from, with their set-password link.
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].session, 'ut-platform');
+    assert.equal(sent[0].chatId, PENDING_CHAT);
+    assert.match(sent[0].text, /Ada Stores\* is approved/);
+    assert.match(sent[0].text, /verify\?token=owner/);
+
+    assert.equal(sb.tables.signups.length, 0);
+    assert.ok(sb.calls.some((c) => c.rpc === 'seed_tenant_features'));
+    assert.equal(sb.tables.operator_audit.at(-1).action, 'tenant.approve');
+  } finally { restore(); }
+});
+
+test('an email that already has an account is linked, and no login link goes out', async () => {
+  // Otherwise typing somebody else's email into the bot, and waiting for an
+  // approval, would hand over a login to their account.
+  const { sb, generated, sent, restore } = approvalCtx({
+    accounts: { 'ada@example.com': 'user-existing' },
+  });
+  try {
+    const res = await approve();
+    assert.equal(res.status, 200);
+    assert.equal(generated.length, 0);
+
+    const owner = sb.tables.tenant_members.find((m) => m.tenant_id === PENDING);
+    assert.equal(owner.user_id, 'user-existing');
+    assert.match(sent[0].text, /existing account \(ada@example\.com\)/);
+    assert.doesNotMatch(sent[0].text, /verify/);
+  } finally { restore(); }
+});
+
+test('when WhatsApp cannot deliver the approval, the operator is handed the link', async () => {
+  const { sb, restore } = approvalCtx({ wahaStatus: 500 });
+  try {
+    const body = await (await approve()).json();
+    assert.equal(body.notified, false);
+    assert.equal(body.link, 'https://project.supabase.co/auth/v1/verify?token=owner');
+    assert.equal(pending(sb).status, 'active');
+  } finally { restore(); }
+});
+
+test('an approval that cannot make the account changes nothing', async () => {
+  const { sb, sent, restore } = approvalCtx({ generateStatus: 500 });
+  try {
+    const res = await approve();
+    assert.equal(res.status, 502);
+    assert.equal(pending(sb).status, 'onboarding');
+    assert.equal(sb.tables.signups.length, 1, 'kept, so approving again can finish it');
+    assert.equal(sent.length, 0);
+  } finally { restore(); }
+});
+
+test('turning a sign-up down creates nobody and says nothing', async () => {
+  const { sb, generated, sent, restore } = approvalCtx();
+  try {
+    const res = await approve('suspended');
+    assert.equal(res.status, 200);
+    assert.equal(pending(sb).status, 'suspended');
+    assert.equal(generated.length, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(sb.tables.tenant_members.filter((m) => m.tenant_id === PENDING).length, 0);
+  } finally { restore(); }
+});
+
+test('an operator sees who is asking for a pending store', async () => {
+  const { restore } = approvalCtx();
+  try {
+    const res = await worker.fetch(call(`/api/admin/tenants/${PENDING}`, { token: 'tok-support' }), env(), {});
+    const body = await res.json();
+    assert.equal(body.signup.email, 'ada@example.com');
+    assert.equal(body.tenant.whatsapp_number, PENDING_PHONE);
   } finally { restore(); }
 });

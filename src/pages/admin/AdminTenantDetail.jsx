@@ -36,9 +36,20 @@ export default function AdminTenantDetail({ operator }) {
 
   const statusMutation = useMutation({
     mutationFn: (status) => setTenantStatus(tenantId, status),
-    onSuccess: (_, status) => {
-      toast(`Store ${status}`, 'success');
+    onSuccess: (result, status) => {
       invalidate();
+
+      if (result?.notified === true) {
+        toast('Approved. The seller has been messaged on WhatsApp.', 'success');
+      } else if (result?.notified === false) {
+        // The store is live either way; the seller just has not been told.
+        toast('Approved, but the WhatsApp message did not go out.', 'error');
+        if (result.link) {
+          window.prompt('Send the seller this link to set their dashboard password:', result.link);
+        }
+      } else {
+        toast(`Store ${status}`, 'success');
+      }
     },
     onError: (e) => toast(e.message, 'error'),
   });
@@ -48,7 +59,8 @@ export default function AdminTenantDetail({ operator }) {
     return <p className="card p-8 text-center text-sm text-muted">No such store.</p>;
   }
 
-  const { tenant, flags, members, stats } = data;
+  const { tenant, signup, flags, members, stats } = data;
+  const pending = tenant.status === 'onboarding';
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -65,7 +77,30 @@ export default function AdminTenantDetail({ operator }) {
           </p>
         </div>
 
-        {isOwner ? (
+        {isOwner && pending ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm(`Turn down ${tenant.name}? The store is suspended and no login is created.`)) {
+                  statusMutation.mutate('suspended');
+                }
+              }}
+              disabled={statusMutation.isPending}
+              className="rounded-pill border border-red/30 px-3 py-1.5 text-xs font-medium text-red hover:bg-red-lt disabled:opacity-50"
+            >
+              Turn down
+            </button>
+            <button
+              type="button"
+              onClick={() => statusMutation.mutate('active')}
+              disabled={statusMutation.isPending}
+              className="rounded-pill bg-green px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {statusMutation.isPending ? 'Approving…' : 'Approve'}
+            </button>
+          </div>
+        ) : isOwner ? (
           <div className="flex gap-2">
             {tenant.status !== 'suspended' ? (
               <button
@@ -93,6 +128,22 @@ export default function AdminTenantDetail({ operator }) {
           </div>
         ) : null}
       </div>
+
+      {pending ? (
+        <section className="mb-4 rounded-card bg-amber-lt p-4 text-sm text-amber">
+          <p className="font-semibold">Waiting for approval</p>
+          <p className="mt-1 leading-relaxed">
+            Signed up over WhatsApp from {tenant.whatsapp_number ?? 'an unknown number'}
+            {signup?.email ? (
+              <>
+                {' '}with <span className="font-medium">{signup.email}</span>
+              </>
+            ) : null}
+            {signup?.created_at ? ` on ${dateOnly(signup.created_at)}` : ''}.
+            {' '}Approving creates their login and sends them the link on WhatsApp.
+          </p>
+        </section>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-4">
         <StatTile label="Orders" value={stats.orders} />

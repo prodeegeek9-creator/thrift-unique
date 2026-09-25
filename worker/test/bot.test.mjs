@@ -10,7 +10,11 @@ import {
   MAX_IMAGES,
   MAX_TITLE,
   STALE_AFTER_HOURS,
+  signupStep,
+  approvedMessage,
+  MAX_BUSINESS_NAME,
 } from '../lib/bot.js';
+import { slugFor } from '../lib/provision.js';
 import { parseEvent, chatId, phoneFromChatId, sessionName } from '../lib/waha.js';
 import { storagePath, publicUrl, BUCKET } from '../lib/media.js';
 
@@ -444,4 +448,61 @@ test('a stored path resolves to the bucket, and an absolute URL is left alone', 
   );
   assert.equal(publicUrl(cfg, 'https://elsewhere.test/a.jpg'), 'https://elsewhere.test/a.jpg');
   assert.equal(publicUrl(cfg, null), null);
+});
+
+// ── OPENING A STORE ──────────────────────────────────────────────────────────
+
+test('a sign-up asks for a name, then an email, then asks for the store', () => {
+  const first = signupStep(null, { body: 'hello' });
+  assert.equal(first.state, 'name');
+  assert.equal(first.action, null);
+
+  const named = signupStep({ state: 'name' }, { body: '  Ada   Stores ' });
+  assert.equal(named.state, 'email');
+  assert.equal(named.patch.business_name, 'Ada Stores');
+
+  const done = signupStep({ state: 'email', business_name: 'Ada Stores' }, { body: 'Ada@Example.com' });
+  assert.equal(done.state, 'pending');
+  assert.deepEqual(done.action, { type: 'provision', name: 'Ada Stores', email: 'ada@example.com' });
+});
+
+test('a business name has to be one', () => {
+  for (const body of ['a', 'hi', 'Hello!', 'x'.repeat(MAX_BUSINESS_NAME + 1)]) {
+    assert.equal(signupStep({ state: 'name' }, { body }).state, 'name', body);
+  }
+  assert.equal(signupStep({ state: 'name' }, { body: 'Hello Kitty Thrift' }).state, 'email');
+});
+
+test('a sign-up left for hours, or one whose store is gone, starts over', () => {
+  const old = new Date(Date.now() - (STALE_AFTER_HOURS + 1) * 3_600_000).toISOString();
+  assert.equal(
+    signupStep({ state: 'email', business_name: 'Ada', updated_at: old }, { body: 'ada@example.com' }).state,
+    'name'
+  );
+  // 'pending' only reaches signupStep when no store has the number any more.
+  assert.equal(signupStep({ state: 'pending' }, { body: 'hi' }).state, 'name');
+});
+
+test('cancel only means cancel once a sign-up has started', () => {
+  assert.equal(signupStep({ state: 'name' }, { body: 'cancel' }).state, null);
+  assert.equal(signupStep(null, { body: 'cancel' }).state, 'name');
+});
+
+test('an approval sends a link only to a new account', () => {
+  const fresh = approvedMessage({ name: 'Ada', link: 'https://x/verify?t=1', email: 'a@b.co' });
+  assert.match(fresh, /https:\/\/x\/verify\?t=1/);
+
+  const existing = approvedMessage({ name: 'Ada', link: null, email: 'a@b.co', origin: 'https://ut.ng' });
+  assert.match(existing, /existing account \(a@b\.co\)/);
+  assert.match(existing, /https:\/\/ut\.ng\/login/);
+  assert.doesNotMatch(existing, /verify/);
+});
+
+test('a store name becomes a readable slug', () => {
+  assert.equal(slugFor("Ada's Thrift & Vintage!"), 'adas-thrift-vintage');
+  assert.equal(slugFor('Café Ọ̀ṣun'), 'cafe-osun');
+  assert.equal(slugFor('AB'), 'store-ab');
+  assert.equal(slugFor('!!!'), 'store');
+  assert.ok(slugFor('x'.repeat(80)).length <= 32);
+  assert.match(slugFor('A very long business name that goes on and on'), /^[a-z0-9-]{3,40}$/);
 });
