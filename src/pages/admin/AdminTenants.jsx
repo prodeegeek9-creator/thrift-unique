@@ -66,7 +66,7 @@ export default function AdminTenants() {
                     <td className="px-4 py-3">
                       <StatusPill
                         status={t.status === 'active' ? 'active' : t.status === 'suspended' ? 'open' : 'pending'}
-                        label={t.status}
+                        label={t.status === 'onboarding' ? 'Awaiting approval' : t.status}
                       />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums">

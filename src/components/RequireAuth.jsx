@@ -2,6 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext.jsx';
 import { useTenant } from '../lib/TenantContext.jsx';
 import LogoLoader from './ui/LogoLoader.jsx';
+import SetPassword from '../pages/SetPassword.jsx';
 
 // Signed in, and belonging to at least one business.
 //
@@ -10,7 +11,7 @@ import LogoLoader from './ui/LogoLoader.jsx';
 // signs up on the web without a tenant has an account but no store. They go to
 // onboarding rather than to an empty dashboard that looks broken.
 export default function RequireAuth({ children }) {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, recovering } = useAuth();
   const { memberships, loading: tenantLoading } = useTenant();
   const location = useLocation();
 
@@ -23,6 +24,10 @@ export default function RequireAuth({ children }) {
     // sign-in instead of dumping them on the overview.
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
+
+  // Arrived through an invitation or reset link: signed in, but with no
+  // password of their own yet. They set one before anything else.
+  if (recovering) return <SetPassword />;
 
   if (!memberships.length) {
     return <Navigate to="/onboarding" replace />;

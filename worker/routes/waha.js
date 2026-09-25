@@ -4,7 +4,16 @@ import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { storeImage, publicUrl, MediaError } from '../lib/media.js';
-import { step, listedMessage, unknownStoreMessage, formatNaira, conditionLabel } from '../lib/bot.js';
+import {
+  step,
+  listedMessage,
+  formatNaira,
+  conditionLabel,
+  signupStep,
+  submittedMessage,
+  pendingMessage,
+} from '../lib/bot.js';
+import { provisionStore } from '../lib/provision.js';
 import {
   parseEvent,
   phoneFor,
@@ -161,17 +170,19 @@ async function message(cfg, event) {
     `whatsapp_number=eq.${phone}&select=id,slug,name,status,whatsapp_number,waha_session,waha_status`
   );
 
-  // Somebody messaged the bot from a number no store is registered to. One
-  // reply pointing at sign-up, and nothing is stored — there is no tenant to
-  // store it against, and bot_conversations is scoped by one.
-  if (!tenant) {
-    await say(cfg, null, event.from, unknownStoreMessage(cfg.publicOrigin));
-    return json({ ok: true, ignored: 'unknown number' });
-  }
+  // A number no store is registered to: the sign-up conversation.
+  if (!tenant) return signup(cfg, event, phone);
 
   if (tenant.status === 'suspended') {
     await say(cfg, tenant, event.from, 'This store is suspended. Please get in touch with support.');
     return json({ ok: true, ignored: 'suspended' });
+  }
+
+  // Signed up, not yet approved. Listing waits until there is somebody on the
+  // other side to sell it.
+  if (tenant.status === 'onboarding') {
+    await say(cfg, tenant, event.from, pendingMessage(tenant));
+    return json({ ok: true, ignored: 'pending approval' });
   }
 
   // The replay guard. WAHA retries a webhook it thinks failed, and a retried
@@ -371,6 +382,67 @@ async function say(cfg, tenant, chatId, text) {
 function inboundId(event) {
   if (event.id) return String(event.id);
   return `${event.from}:${event.timestamp ?? 'na'}`;
+}
+
+// ── OPENING A STORE ──────────────────────────────────────────────────────────
+
+// The sign-up conversation for a number with no store; see signupStep() in
+// lib/bot.js for what is asked. Stored in `signups`, since there is no tenant
+// yet to scope a bot_conversations row by.
+async function signup(cfg, event, phone) {
+  const messageId = inboundId(event);
+  const current = await db(cfg).one(
+    'signups',
+    `phone=eq.${phone}&select=phone,state,business_name,email,last_message_id,updated_at`
+  );
+
+  // The same replay guard as a listing, by hand: WAHA retries what it thinks
+  // failed, and an answer applied twice skips a question.
+  if (current?.last_message_id === messageId) {
+    return json({ ok: true, replayed: true });
+  }
+
+  const result = signupStep(current, event);
+
+  if (result.state === null) {
+    await db(cfg).del('signups', `phone=eq.${phone}`);
+  } else {
+    const row = {
+      chat_id: event.from,
+      state: result.state,
+      last_message_id: messageId,
+      ...result.patch,
+    };
+    if (current) {
+      await db(cfg).update('signups', `phone=eq.${phone}`, row, { returning: false });
+    } else {
+      await db(cfg).insert('signups', { phone, ...row }, { onConflict: 'phone', returning: false });
+    }
+  }
+
+  for (const reply of result.replies) await say(cfg, null, event.from, reply);
+
+  if (result.action?.type === 'provision') {
+    try {
+      const tenant = await provisionStore(cfg, { phone, name: result.action.name });
+      await say(cfg, null, event.from, submittedMessage(tenant.name));
+    } catch (err) {
+      // Put the conversation back one step, so the seller's next message is
+      // read as their email again rather than as a new business name.
+      console.error('provisioning failed:', err?.message ?? err);
+      await db(cfg)
+        .update('signups', `phone=eq.${phone}`, { state: 'email' }, { returning: false })
+        .catch(() => {});
+      await say(
+        cfg,
+        null,
+        event.from,
+        'Sorry, something went wrong setting that up. Send your email again in a minute.'
+      );
+    }
+  }
+
+  return json({ ok: true, signup: result.state ?? 'cancelled' });
 }
 
 // ── SESSION MANAGEMENT ───────────────────────────────────────────────────────

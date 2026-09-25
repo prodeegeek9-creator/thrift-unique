@@ -432,6 +432,7 @@ Project `vhmyzawgtstjtavwzpzn`, built from nothing, in order:
 | `0012_whatsapp_secret.sql` | the webhook secret moved off `tenants` |
 | `0013_revoke_bot_tables.sql` | the default grants those three tables came with |
 | `0014_staff_invitations.sql` | names on memberships, and `user_id_for_email()` |
+| `0015_signups.sql` | `signups`: a seller opening a store over WhatsApp, until approval |
 
 `supabase/seed/` holds two files that are **not** migrations and do not run on
 every database: `first_tenant.sql` creates the one account the bot cannot
@@ -521,6 +522,26 @@ browser — so with no Worker yet, the first one goes in by hand.
 membership and the flags in one pass. It is not a migration and does not live
 in `migrations/`, because it is one person's account with one password and
 should run exactly once.
+
+### Every later tenant: over WhatsApp, approved by the operator
+
+1. A number with no store messages the platform bot. It is asked for a business
+   name, then an email (`signupStep()` in `worker/lib/bot.js`).
+2. The Worker creates the store as `onboarding` on Starter, registered to the
+   sender's number, so the seller never types their number anywhere
+   (`provisionStore()` in `worker/lib/provision.js`). The email waits in
+   `signups`, and no login exists yet. Until approval the bot answers "waiting
+   for approval" instead of listing.
+3. The operator opens the store in `/admin` and presses **Approve**
+   (`approveStore()`). A new email gets an account and a set-password link, sent
+   to the seller on WhatsApp. An email that already has an account is linked and
+   told to sign in; a login link for an existing account never goes to whoever
+   typed its address. If WhatsApp can't deliver, the console shows the link to
+   pass on instead. **Turn down** suspends the store and creates nobody.
+
+An invite or reset link signs the person in with no password yet, so
+`RequireAuth` holds them on `SetPassword` until they choose one. Team
+invitations go through the same screen.
 
 ### Advisor findings that are meant to stay
 

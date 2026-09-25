@@ -23,6 +23,8 @@ export function makeFakeSupabase(seed = {}) {
     bot_conversations: [],
     bot_messages: [],
     whatsapp_secrets: [],
+    signups: [],
+    tenant_members: [],
     ...structuredClone(seed),
   };
 
@@ -33,6 +35,7 @@ export function makeFakeSupabase(seed = {}) {
     payouts: 'reference',
     // What makes a retried WAHA webhook a no-op instead of a second listing.
     bot_messages: 'external_id',
+    signups: 'phone',
   };
 
   let nextId = 1;
@@ -73,7 +76,12 @@ export function makeFakeSupabase(seed = {}) {
     const method = init.method ?? 'GET';
     const { filters, limit } = parse(u.search.slice(1));
 
-    calls.push({ table, method, search: u.search });
+    calls.push({
+      table,
+      method,
+      search: u.search,
+      ...(table === 'rpc' ? { rpc: u.pathname.split('/')[4], args: JSON.parse(init.body ?? '{}') } : {}),
+    });
 
     if (!(table in tables) && !u.pathname.includes('/rpc/')) {
       return new Response(`no such table ${table}`, { status: 404 });

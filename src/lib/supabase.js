@@ -21,4 +21,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+// How this page load signed somebody in, when it came from an emailed-style
+// link: 'invite' or 'recovery'. Both sign the person in without their having a
+// password (yet), so the router holds them on a set-password screen — see
+// RequireAuth. Read here because createClient consumes and clears the hash.
+export const arrivedVia = (() => {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  return params.get('access_token') ? params.get('type') : null;
+})();
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

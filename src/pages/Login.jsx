@@ -4,6 +4,9 @@ import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../lib/AuthContext.jsx';
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import LogoLoader from '../components/ui/LogoLoader.jsx';
+import { setupDeepLink } from '../lib/whatsapp.js';
+
+const setupLink = setupDeepLink();
 
 export default function Login() {
   const { user, loading } = useAuth();
@@ -85,7 +88,15 @@ export default function Login() {
         </form>
 
         <p className="mt-4 text-center text-xs text-muted">
-          No store yet? Message us on WhatsApp and we'll set one up.
+          No store yet?{' '}
+          {setupLink ? (
+            <a href={setupLink} className="font-medium text-green underline-offset-2 hover:underline">
+              Message us on WhatsApp
+            </a>
+          ) : (
+            'Message us on WhatsApp'
+          )}{' '}
+          and we'll set one up.
         </p>
       </div>
     </div>

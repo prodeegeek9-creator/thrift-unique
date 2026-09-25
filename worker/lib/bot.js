@@ -13,6 +13,8 @@
 // the flow is worth writing this way — the parts that need a real server are
 // four HTTP calls in lib/waha.js and nothing else.
 
+import { EMAIL } from './accounts.js';
+
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
 
@@ -113,11 +115,116 @@ const SAY = {
     'Send a photo any time to start.',
 };
 
-export function unknownStoreMessage(origin) {
+// ── OPENING A STORE ──────────────────────────────────────────────────────────
+//
+// Somebody whose number belongs to no store gets asked for a business name and
+// an email, and a store is created for them, pending the operator's approval.
+// Their number is the store's number from then on: messaging from it proves
+// they hold it, so there is nothing to type into a dashboard first — which
+// matters, because there is no dashboard login until approval.
+
+export const MAX_BUSINESS_NAME = 60;
+
+// A bare greeting in answer to "what is your business called?" is somebody
+// saying hello again, not a store called "Hi".
+const BARE_GREETING = /^(hi|hey|hello|help|menu|start|yo)[\s!.?]*$/i;
+
+const SIGNUP = {
+  welcome:
+    "Hi 👋 This number isn't linked to a store on Unique Thrift yet.\n\n" +
+    'Want to open one? Reply with your *business name*.\n\n' +
+    '(Reply *cancel* any time.)',
+  badName: `Reply with your business name — 2 to ${MAX_BUSINESS_NAME} characters.`,
+  askEmail: (name) =>
+    `*${name}* — nice. What email should your dashboard login use?`,
+  badEmail: "That doesn't look like an email address. Try again, e.g. ada@example.com",
+  cancelled: 'No problem, nothing was set up. Message us any time to open a store.',
+};
+
+export function submittedMessage(name) {
   return (
-    "This number isn't linked to a store yet.\n\n" +
-    (origin ? `Set one up at ${origin} and come back — it takes a minute.` : 'Set up a store and come back.')
+    `Thanks! *${name}* is set up and waiting for approval.\n\n` +
+    "We'll message you here as soon as it's approved."
   );
+}
+
+export function pendingMessage(tenant) {
+  return (
+    `*${tenant?.name ?? 'Your store'}* is still waiting for approval. ` +
+    "We'll message you here as soon as it's live."
+  );
+}
+
+// Sent when the operator approves. A new account gets its set-password link; an
+// email that already had an account gets told to sign in with it, because a
+// login link for an existing account must never go to whoever typed its email.
+export function approvedMessage({ name, link, email, origin }) {
+  const lines = [`🎉 *${name}* is approved and live!`, ''];
+
+  if (link) {
+    lines.push('Set your dashboard password here:', link);
+  } else {
+    lines.push(
+      `Sign in to your dashboard with your existing account (${email})` +
+        (origin ? `: ${origin}/login` : '.')
+    );
+  }
+
+  lines.push('', 'To list your first item, just send a photo here 📸');
+  return lines.join('\n');
+}
+
+// signupStep(signup, message, ctx) → { state, patch, replies, action }
+//
+//   signup   { state, business_name, updated_at } as stored, or null
+//   state    what to store next, or null to forget the sign-up
+//   patch    columns to store alongside it
+//   action   { type: 'provision', name, email } once both answers are in
+//
+// Only reached for a number with no store, so a 'pending' row here means the
+// store it was waiting on has gone — rejected and deleted — and the sign-up
+// starts over.
+export function signupStep(signup, message, ctx = {}) {
+  const live =
+    signup && ['name', 'email'].includes(signup.state) && !staleness(signup, ctx) ? signup : null;
+  const text = String(message?.body ?? '').trim();
+
+  if (live && CANCEL.test(text)) {
+    return { state: null, patch: {}, replies: [SIGNUP.cancelled], action: null };
+  }
+
+  if (live?.state === 'name') {
+    const name = text.replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > MAX_BUSINESS_NAME || BARE_GREETING.test(name)) {
+      return { state: 'name', patch: {}, replies: [SIGNUP.badName], action: null };
+    }
+    return {
+      state: 'email',
+      patch: { business_name: name },
+      replies: [SIGNUP.askEmail(name)],
+      action: null,
+    };
+  }
+
+  if (live?.state === 'email') {
+    const email = text.toLowerCase();
+    if (!EMAIL.test(email)) {
+      return { state: 'email', patch: {}, replies: [SIGNUP.badEmail], action: null };
+    }
+    return {
+      state: 'pending',
+      patch: { email },
+      replies: [],
+      action: { type: 'provision', name: live.business_name, email },
+    };
+  }
+
+  return {
+    state: 'name',
+    patch: { business_name: null, email: null },
+    replies: [SIGNUP.welcome],
+    action: null,
+  };
 }
 
 function summary(draft, tenant) {
