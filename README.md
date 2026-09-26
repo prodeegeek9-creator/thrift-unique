@@ -741,8 +741,9 @@ without a network, WAHA or Paystack):
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
 - **Where consignors are paid** (`worker/lib/consignorBank.js`, migration
-  0031): after somebody's first item, the bot on the store's number asks for
-  their bank and account number only; Paystack's account lookup supplies the
+  0031): after every item somebody sends while we have no account for them
+  (in full the first time, a short reminder after), the bot on the store's
+  number asks for their bank and account number only; Paystack's account lookup supplies the
   name, which they confirm with YES. The rules are told in that same message:
   a change must be to an account in the **same name** as the first (compared
   by name parts, in any order, since banks print names differently), at most
@@ -754,6 +755,9 @@ without a network, WAHA or Paystack):
   it and warns the owner. *BANK* on the store's number starts a change. Items
   to review shows the owner and managers where to pay each consignor, and the
   changes waiting for their approval.
+- **Store payout account reminder**: until a store has added the bank account
+  its sales are paid into (the dashboard's Payouts page), every listing made
+  on WhatsApp ends with a reminder and the link to add it.
 - **Share kit** for Instagram, TikTok and Facebook: since none of the three
   can be posted to automatically yet (below), the dashboard's Share button and
   the bot's *SHARE* command hand the seller an item's photos and a caption
