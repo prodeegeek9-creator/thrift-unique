@@ -31,6 +31,7 @@ export const keys = {
 
   analytics: (t, from, to) => ['tenant', t, 'analytics', from, to],
   usage: (t) => ['tenant', t, 'usage'],
+  billingSummary: (t) => ['tenant', t, 'billing-summary'],
 
   staff: (t) => ['tenant', t, 'staff'],
   channels: (t) => ['tenant', t, 'channels'],

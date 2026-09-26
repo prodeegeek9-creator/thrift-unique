@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { FLAG_MIN_TIER, TIERS, hasFeature, minTierFor } from './features.js';
+import { callWorker } from './api.js';
 
 // The plan card, the usage counters and the two feature columns.
 
@@ -100,4 +101,38 @@ export const ALWAYS_INCLUDED = ['WhatsApp bot', 'WhatsApp Status'];
 function startOfMonth() {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
+}
+
+// ── THE PLAN FEE ─────────────────────────────────────────────────────────────
+//
+// Charged by the Worker (worker/lib/billing.js), which holds the prices, the
+// invoices and any saved card. Kept in step with PLAN_PRICES there.
+export const PLAN_PRICES = { starter: 10000, growth: 25000, business: 75000 };
+export const TRIAL_DAYS = 14;
+
+export const fetchBillingSummary = (tenantId) =>
+  callWorker(`/api/billing?tenant=${encodeURIComponent(tenantId)}`, { method: 'GET' });
+
+export const payPlanNow = (tenantId) => callWorker('/api/billing/pay-now', { body: { tenant: tenantId } });
+
+export const setAutoRenew = (tenantId, on) => callWorker('/api/billing/auto-renew', { body: { tenant: tenantId, on } });
+
+// The public pay page, /billing/pay/<ref>: no login, the reference is the key.
+export async function fetchPlanInvoice(ref, reference) {
+  const q = reference ? `?reference=${encodeURIComponent(reference)}` : '';
+  const res = await fetch(`/api/billing/pay/${ref}${q}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
+}
+
+export async function startPlanPayment(ref, autoRenew) {
+  const res = await fetch(`/api/billing/pay/${ref}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_renew: autoRenew }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
 }

@@ -570,7 +570,7 @@ test('an owner moves a store to another plan: tier, commission and features, aud
 
     const row = sb.tables.operator_audit.at(-1);
     assert.equal(row.action, 'tenant.plan');
-    assert.deepEqual(row.detail.from, { tier: 'growth', commission_pct: 8 });
+    assert.deepEqual(row.detail.from, { tier: 'growth', commission_pct: 8, plan_price: null });
     assert.deepEqual(row.detail.to, { tier: 'business', commission_pct: 6.5 });
 
     // And back down: Business features switch off again.

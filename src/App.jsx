@@ -15,6 +15,7 @@ import Store from './pages/public/Store.jsx';
 import Home from './pages/public/Home.jsx';
 import PayLink from './pages/public/PayLink.jsx';
 import OrderStatus from './pages/public/OrderStatus.jsx';
+import PlanPay from './pages/public/PlanPay.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
@@ -58,6 +59,7 @@ export default function App() {
       <Route path="/s/:slug" element={<Store />} />
       <Route path="/pay/:token" element={<PayLink />} />
       <Route path="/order/:reference" element={<OrderStatus />} />
+      <Route path="/billing/pay/:ref" element={<PlanPay />} />
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
 
       <Route path="/login" element={<Login />} />

@@ -6,6 +6,13 @@
 
 export const TIERS = ['starter', 'growth', 'business'];
 
+// The monthly plan fee, in naira, and its terms. Quoted by the sign-up bot and
+// charged by lib/billing.js; the homepage and Billing page carry the same
+// numbers (src/pages/public/Home.jsx, src/lib/billing.js).
+export const PLAN_PRICES = { starter: 10000, growth: 25000, business: 75000 };
+export const TRIAL_DAYS = 14;
+export const GRACE_DAYS = 7;
+
 export const FLAG_MIN_TIER = {
   contacts: 'growth',
   disputes: 'growth',

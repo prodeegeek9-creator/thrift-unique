@@ -308,7 +308,7 @@ test('a business opens a store over WhatsApp, and it waits for approval', async 
     // The acceptance the whole commercial relationship rests on: when, and
     // which wording.
     assert.ok(store.disclaimer_accepted_at);
-    assert.equal(store.disclaimer_version, 'commission-v1');
+    assert.equal(store.disclaimer_version, 'terms-v2');
 
     const seeded = supabase.calls.find((c) => c.rpc === 'seed_tenant_features');
     assert.deepEqual(seeded?.args, { target: store.id, plan: 'growth' });
@@ -324,7 +324,8 @@ test('a business opens a store over WhatsApp, and it waits for approval', async 
     const said = waha.sent.map((m) => m.text);
     assert.match(said[1], /business name/i);
     assert.ok(said.some((t) => /doesn't look like an email/i.test(t)));
-    assert.match(said.at(-2), /commission terms/i);
+    assert.match(said.at(-2), /our terms/i);
+    assert.match(said.at(-2), /₦25,000 a month/);
     assert.match(said.at(-1), /reviewing your store/i);
     assert.ok(waha.sent.every((m) => m.chatId === NEWCOMER_CHAT));
   } finally {

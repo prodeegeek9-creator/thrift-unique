@@ -5,11 +5,12 @@ import Icon from '../../components/ui/Icon.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { fetchUsage, planFeatures, nextTier, ALWAYS_INCLUDED } from '../../lib/billing.js';
 import { keys } from '../../lib/queryKeys.js';
+import PlanFeeCard from '../../components/PlanFeeCard.jsx';
 
 const TIER_NAME = { starter: 'Starter', growth: 'Growth', business: 'Business' };
 
 export default function Billing() {
-  const { tenant } = useTenant();
+  const { tenant, role } = useTenant();
   const tenantId = tenant?.id;
 
   const { data: usage } = useQuery({
@@ -78,6 +79,9 @@ export default function Billing() {
           </div>
         </div>
 
+        <div className="space-y-4">
+        <PlanFeeCard tenantId={tenantId} role={role} />
+
         {upgrade ? (
           <aside className="card h-fit overflow-hidden">
             <div className="bg-sidebar px-5 py-6 text-center">
@@ -101,6 +105,7 @@ export default function Billing() {
             </div>
           </aside>
         ) : null}
+        </div>
       </div>
     </>
   );

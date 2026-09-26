@@ -15,6 +15,7 @@ import {
   paymentLinkMessage,
 } from '../lib/bot.js';
 import { makePaymentLink } from '../lib/paylinks.js';
+import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
 import {
@@ -198,7 +199,7 @@ async function message(cfg, event) {
 
   const tenant = await db(cfg).one(
     'tenants',
-    `whatsapp_number=eq.${phone}&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status`
+    `whatsapp_number=eq.${phone}&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status,paid_until,plan_price,auto_renew`
   );
 
   // A number no store is registered to: the sign-up conversation.
@@ -207,6 +208,13 @@ async function message(cfg, event) {
   if (tenant.status === 'suspended') {
     await say(cfg, tenant, event.from, 'This store is suspended. Please get in touch with support.');
     return json({ ok: true, ignored: 'suspended' });
+  }
+
+  // Paused for an unpaid plan fee: every message gets the way back.
+  if (tenant.status === 'active' && tenant.billing_status === 'paused') {
+    const invoice = await ensureInvoice(cfg, tenant, { force: true }).catch(() => null);
+    await say(cfg, tenant, event.from, pausedMessage(cfg, tenant, invoice));
+    return json({ ok: true, ignored: 'paused' });
   }
 
   // Signed up and not yet approved is no reason to stop listing: the store
@@ -517,9 +525,9 @@ async function intake(cfg, event) {
   const tenant = await db(cfg).one(
     'tenants',
     `waha_session=eq.${encodeURIComponent(event.session)}` +
-      '&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status'
+      '&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status,billing_status'
   );
-  if (!tenant || tenant.status === 'suspended' || tenant.store_type === 'brand') {
+  if (!tenant || tenant.status === 'suspended' || tenant.store_type === 'brand' || tenant.billing_status === 'paused') {
     return json({ ok: true, ignored: 'tenant session' });
   }
 

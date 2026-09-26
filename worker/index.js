@@ -11,8 +11,9 @@ import { handlePaystackWebhook } from './routes/paystack.js';
 import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
 import { renderHomePage, renderProductPage, renderStorePage } from './routes/storefront.js';
-import { releaseExpiredHolds, sendOwedPayouts } from './routes/escrow.js';
+import { releaseExpiredHolds, sendOwedPayouts, runBilling } from './routes/escrow.js';
 import { handlePayouts } from './routes/payouts.js';
+import { handleBilling } from './routes/billing.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
@@ -73,6 +74,9 @@ export default {
         // account, a transfer Paystack refused because the balance was short.
         .then(() => sendOwedPayouts(env))
         .then((r) => r && console.log(`payout sweep: checked ${r.checked}, sent ${r.sent}`))
+        // And plan fees: invoices, reminders, auto-renew, pausing.
+        .then(() => runBilling(env))
+        .then((r) => r && console.log(`billing sweep: ${JSON.stringify(r)}`))
     );
   },
 };
@@ -117,6 +121,11 @@ async function api(request, env, path) {
   // both end in a WhatsApp message from the store's own session.
   if (path.startsWith('/api/submissions')) {
     return handleSubmissions(request, env, path);
+  }
+
+  // The monthly plan fee: the Billing page and the pay page.
+  if (path.startsWith('/api/billing')) {
+    return handleBilling(request, env, path);
   }
 
   // A store's bank account, for its payouts.
