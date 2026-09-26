@@ -3,7 +3,6 @@ import { Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth.jsx';
 import RequireFeature from './components/RequireFeature.jsx';
 import RequireStaffRole from './components/RequireStaffRole.jsx';
-import RequireOperator from './components/RequireOperator.jsx';
 import SellerShell from './components/layout/SellerShell.jsx';
 
 import Login from './pages/Login.jsx';
@@ -39,9 +38,8 @@ import More from './pages/seller/More.jsx';
 // downloads the chunk at all.
 const Analytics = lazy(() => import('./pages/seller/Analytics.jsx'));
 
-// Same reasoning, stronger: the platform console is six screens that exactly
-// one person on the platform can open. RequireOperator resolves before this
-// does, so a seller who types /admin never downloads the chunk at all.
+// Same reasoning, stronger: the platform console is a handful of screens only
+// the admin team can open, so a seller never downloads them.
 const AdminRoutes = lazy(() => import('./pages/admin/AdminRoutes.jsx'));
 
 // Note the shape of the guarded routes: RequireFeature wraps the *element*,
@@ -128,18 +126,17 @@ export default function App() {
         <Route path="more" element={<More />} />
       </Route>
 
-      {/* The platform side. Every route under here reads across tenants,
-          which nothing else in the system may do — the actual boundary is in
-          the Worker, and this only avoids drawing a console to somebody whose
-          every request would 403. */}
+      {/* The platform console: the admin team's, not a room inside a store.
+          It has its own login at /admin/login and its own session (see
+          lib/adminAuth.jsx), and nothing in a store's dashboard links here.
+          Every route under it reads across tenants, which nothing else in the
+          system may do; the actual boundary is in the Worker. */}
       <Route
         path="/admin/*"
         element={
-          <RequireOperator>
-            <Suspense fallback={<div className="min-h-dvh bg-bg" />}>
-              <AdminRoutes />
-            </Suspense>
-          </RequireOperator>
+          <Suspense fallback={<div className="min-h-dvh bg-sidebar" />}>
+            <AdminRoutes />
+          </Suspense>
         }
       />
 

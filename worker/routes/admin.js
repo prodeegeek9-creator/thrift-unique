@@ -12,6 +12,7 @@ import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
+import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
 
 // The platform-operator console's API.
 //
@@ -38,7 +39,20 @@ export async function handleAdmin(request, env, path) {
   const rest = path.slice('/api/admin'.length) || '/';
 
   if (rest === '/me' && method === 'GET') {
-    return json({ level: op.level, email: op.email });
+    return json({ level: op.level, email: op.email, user_id: op.userId });
+  }
+
+  if (rest === '/team' && method === 'GET') return listTeam(cfg, op);
+  if (rest === '/team' && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return addToTeam(request, cfg, op);
+  }
+  const teamMember = rest.match(/^\/team\/([0-9a-f-]{36})$/i);
+  if (teamMember && method === 'POST') return changeTeam(request, cfg, op, teamMember[1]);
+  const teamLinkFor = rest.match(/^\/team\/([0-9a-f-]{36})\/link$/i);
+  if (teamLinkFor && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return teamLink(cfg, op, teamLinkFor[1]);
   }
 
   if (rest === '/overview' && method === 'GET') return overview(cfg, request);

@@ -630,6 +630,22 @@ and a client that lies about step 1 fails step 1. `RequireOperator` in the
 bundle only avoids drawing a console to somebody whose every request would 403 —
 editing it in devtools gets you an empty shell.
 
+**Its own door and its own session.** The console is the admin team's, not a
+room inside a store. It signs in at `/admin/login` with a Supabase client of
+its own (`consoleSupabase`, storage key `ut-console-auth`, see
+`src/lib/adminAuth.jsx`), so being signed in to a store opens nothing here,
+signing out of the console leaves the store signed in, and no store dashboard
+links to it. A sign-in link that lands under `/admin` is read only by the
+console's client.
+
+**The admin team is managed in the console** (`/admin/team`, migration 0025).
+Owners add people by email: somebody new gets a one-time link to choose a
+password, shown once to copy or send on WhatsApp, and somebody with an account
+signs in with the password they have. Owners change levels, remove people, and
+make a new sign-in link for anybody who has lost theirs. Nobody can change
+their own access, so the platform can never lose its last owner, and every
+change is in the audit log.
+
 **Two levels.** `support` can look and can resolve disputes; `owner` can also
 move money and change what a tenant pays. "Can read every customer's orders" and
 "can release forty thousand naira" should not be the same grant.
@@ -681,7 +697,8 @@ without a network, WAHA or Paystack):
   "Renew automatically" is on (migration 0024; the card's authorization stays
   in a table only the Worker can read). The operator can set a store's price
   (0 for free) and record a payment made outside Paystack.
-- **The operator console** at `/admin`: approvals, plans and commission, store
+- **The operator console** at `/admin`, with its own login at `/admin/login`
+  and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
   disputes, platform WhatsApp health, and an append-only audit log.
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
@@ -705,8 +722,7 @@ From the spec, this README's earlier notes, and decisions made while building:
    stock?"), a dedicated support bot, a structured dispute workflow.
 6. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-7. **A separate operator login** at its own address, apart from store accounts.
-8. **Live payments**: switch Paystack from test to live once the business
+7. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup
@@ -727,6 +743,10 @@ hourly cron raises plan invoices, sends reminders, charges saved cards and
 pauses stores that stay unpaid; it needs nothing beyond the secrets above. For live transfers, enable
 Transfers, turn off OTP for API transfers, and keep enough balance to pay out,
 because transfers are drawn from the Paystack balance.
+
+In Supabase, under Authentication → URL Configuration, the redirect list must
+allow the site's paths (for example `https://<your-domain>/**`): sign-in links
+land on `/dashboard` for stores and `/admin/login` for the admin team.
 
 `PUBLIC_ORIGIN` is not a secret. It is the origin in every link the product
 sends, so it belongs in `wrangler.jsonc` under `vars` once there is a canonical

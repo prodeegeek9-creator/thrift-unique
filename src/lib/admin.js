@@ -1,4 +1,4 @@
-import { supabase } from './supabase.js';
+import { consoleSupabase } from './supabase.js';
 
 // The operator console's data layer.
 //
@@ -11,8 +11,10 @@ import { supabase } from './supabase.js';
 // with Supabase rather than decoding it — the browser is never asked whether
 // it is an admin, it is told what it may see.
 
+// The token is the console's own session (src/lib/adminAuth.jsx), never a
+// store's: being signed in to a store opens nothing here.
 async function call(path, { method = 'GET', body } = {}) {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await consoleSupabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Not signed in');
 
@@ -80,6 +82,14 @@ export const setDetails = (tenantId, details) =>
 // terms quote these (COMMISSION in worker/lib/bot.js); keep them in step.
 export const DEFAULT_COMMISSION = { starter: 8, growth: 7, business: 7 };
 
+// The admin team. Adding somebody new returns a one-time sign-in link to pass
+// on to them; somebody who already has an account just signs in.
+export const fetchTeam = () => call('/team');
+export const addToTeam = (email, level) => call('/team', { method: 'POST', body: { email, level } });
+export const setTeamLevel = (userId, level) => call(`/team/${userId}`, { method: 'POST', body: { level } });
+export const removeFromTeam = (userId) => call(`/team/${userId}`, { method: 'POST', body: { remove: true } });
+export const newTeamLink = (userId) => call(`/team/${userId}/link`, { method: 'POST', body: {} });
+
 export const setPayoutsPaused = (tenantId, paused) =>
   call(`/tenants/${tenantId}/payouts-paused`, { method: 'POST', body: { paused } });
 
@@ -106,4 +116,8 @@ export const AUDIT_LABELS = {
   'billing.record': 'Recorded a plan fee paid another way',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
+  'team.add': 'Added somebody to the admin team',
+  'team.level': 'Changed an admin’s level',
+  'team.remove': 'Removed somebody from the admin team',
+  'team.link': 'Made a new sign-in link for an admin',
 };
