@@ -611,6 +611,78 @@ routes are named in `worker/index.js` so the boundary is visible rather than a
 
 WAHA was on this list and is not any more — see below.
 
+### Planned: checkout, two ways in
+
+Everything above this line is the *release* half of the money pipeline —
+`markPaid`, `releaseEscrow`, the payout sweep — and it is solid and tested.
+What does not exist yet, anywhere in the repo, is the other half: **nothing
+creates an order.** `orders` has no INSERT call site in `worker/` or `src/`.
+"Buy on WhatsApp" on `/p/:code` is a plain `wa.me` deep link that opens an
+ordinary chat with the seller's own number; nothing calls Paystack to start a
+payment; `products.quantity_available` is never read or decremented.
+
+The plan is one order-creation path feeding both entry points a buyer can
+actually use, rather than two separate implementations that could drift:
+
+```
+WhatsApp: buyer texts the seller's own session ─┐
+                                                  ├─▶ worker/lib/orders.js
+Web: Checkout.jsx on /p/:code ──────────────────┘     createOrder()
+                                                        - upsert buyer by (tenant_id, phone)
+                                                        - atomically reserve stock
+                                                        - insert the order, awaiting_payment
+                                                             │
+                                                             ▼
+                                                  worker/lib/paystack.js
+                                                  initializeTransaction()
+                                                  → authorization_url
+                                                             │
+                                       WhatsApp: sent back as a message
+                                       Web: browser redirected to it
+                                                             │
+                                                             ▼
+                                    Paystack webhook → markPaid() — already built
+```
+
+Four decisions this rests on:
+
+- **Inventory is reserved by an atomic conditional decrement at order
+  creation** (`quantity_available = quantity_available - 1 WHERE
+  quantity_available > 0`), not a separate `RESERVED` state — the same
+  zero-rows-means-someone-beat-you-to-it idiom `markPaid` and `releaseEscrow`
+  already use. An abandon sweep, alongside the existing escrow sweep, cancels
+  orders left `awaiting_payment` past ~30 minutes and puts the stock back —
+  without it, a buyer who starts checkout and vanishes locks the item
+  forever.
+- **Paystack requires an email to initialize a transaction; a WhatsApp buyer
+  doesn't have one.** One gets synthesized —
+  `<phone>@buyers.<tenant-slug>.uniquethrift` — since Paystack never checks
+  deliverability, only that the field is present.
+- **The WhatsApp side runs on the tenant's own linked session**, gated on a
+  keyword the same way `intake.js` already gates `SELL`-prefixed messages,
+  not on the platform session. That keeps a buyer's message from ever
+  reaching a seller's ordinary customer chats, and reuses a pattern already
+  shipped rather than inventing a second one.
+- **Web checkout is a hosted-page redirect first**, not an inline popup:
+  `initialize` → `authorization_url` → the browser is sent there → Paystack
+  redirects back to a status page that polls a signed, expiring reference —
+  the same no-login-link pattern `sign.js`/`confirm.js` already use for
+  receipt confirmation. An inline popup is a fine follow-up once the redirect
+  path is proven; it is not the safer place to start.
+
+In build order:
+
+1. `initializeTransaction()` in `worker/lib/paystack.js`
+2. `createOrder()` in `worker/lib/orders.js` — buyer upsert, reservation, order code
+3. `worker/routes/checkout.js` — `POST /api/checkout`, `GET /api/checkout/:reference`
+4. Wire `/api/checkout` into `worker/index.js`
+5. The abandoned-order sweep, next to `releaseExpiredHolds`
+6. `src/pages/public/Checkout.jsx` + a `/checkout/return` status page, off the Buy button on `/p/:code`
+7. The WhatsApp buy conversation — a pure function, same shape as `bot.js` — wired into `worker/routes/waha.js`'s dispatch
+8. A real `POST /api/orders/:id/ship`, replacing the client-side `markShipped` in `src/lib/orders.js` that today just 403s
+9. Tests for all of the above, at the rigor the rest of the Worker holds to
+10. This section rewritten in the past tense once it ships
+
 ## Two consoles, not one
 
 The ten screens in the spec are all seller-facing. Multi-tenancy needs a second
