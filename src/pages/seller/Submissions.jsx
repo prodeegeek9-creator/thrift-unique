@@ -9,13 +9,16 @@ import { useToast } from '../../lib/ToastContext.jsx';
 import {
   markConsignorPaid,
   decideSubmission,
+  fetchConsignorAccounts,
+  fetchAccountChanges,
+  decideAccountChange,
   fetchSubmissionCounts,
   fetchSubmissions,
   sellLink,
 } from '../../lib/submissions.js';
 import { formatNaira } from '../../lib/money.js';
 import { imageUrl } from '../../lib/images.js';
-import { relative } from '../../lib/time.js';
+import { relative, dateTime } from '../../lib/time.js';
 import { keys, tenantScope } from '../../lib/queryKeys.js';
 
 // Items people have brought to the store, waiting for a yes or a no.
@@ -66,6 +69,19 @@ export default function Submissions() {
     enabled: Boolean(tenantId),
   });
 
+  // Where to pay each seller, and changes to it waiting on the store. Empty
+  // for staff: only the owner and managers can read them.
+  const { data: accounts } = useQuery({
+    queryKey: keys.consignorAccounts(tenantId),
+    queryFn: () => fetchConsignorAccounts(tenantId),
+    enabled: Boolean(tenantId),
+  });
+  const { data: changes } = useQuery({
+    queryKey: keys.accountChanges(tenantId),
+    queryFn: () => fetchAccountChanges(tenantId),
+    enabled: Boolean(tenantId),
+  });
+
   return (
     <>
       <PageHeader
@@ -74,6 +90,8 @@ export default function Submissions() {
       />
 
       <InviteCard tenant={tenant} />
+
+      {changes?.length ? <AccountChanges changes={changes} tenantId={tenantId} /> : null}
 
       {counts?.topay ? (
         <button
@@ -121,7 +139,7 @@ export default function Submissions() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {items.map((item) => (
-            <SubmissionCard key={item.id} item={item} tenantId={tenantId} />
+            <SubmissionCard key={item.id} item={item} tenantId={tenantId} account={accounts?.[item.seller_chat_id]} canSeeAccounts={Boolean(accounts)} />
           ))}
         </div>
       )}
@@ -181,7 +199,7 @@ function InviteCard({ tenant }) {
   );
 }
 
-function SubmissionCard({ item, tenantId }) {
+function SubmissionCard({ item, tenantId, account, canSeeAccounts }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [price, setPrice] = useState(String(Number(item.asking_price)));
@@ -255,7 +273,7 @@ function SubmissionCard({ item, tenantId }) {
           <p className="mt-2 text-xs text-muted">Reason: {item.decline_reason}</p>
         ) : null}
 
-        {item.sold_at ? <ConsignorPayment item={item} tenantId={tenantId} /> : null}
+        {item.sold_at ? <ConsignorPayment item={item} tenantId={tenantId} account={account} canSeeAccounts={canSeeAccounts} /> : null}
 
         {pending && !declining ? (
           <div className="mt-4 border-t border-line pt-4">
@@ -336,7 +354,7 @@ function SubmissionCard({ item, tenantId }) {
 
 // Sold: what the store owes this seller, and "Mark paid" once it has paid them
 // (by transfer, cash, however it always has). The seller is told on WhatsApp.
-function ConsignorPayment({ item, tenantId }) {
+function ConsignorPayment({ item, tenantId, account, canSeeAccounts }) {
   const toast = useToast();
   const qc = useQueryClient();
   const { role } = useTenant();
@@ -373,6 +391,7 @@ function ConsignorPayment({ item, tenantId }) {
         Sold {relative(item.sold_at).toLowerCase()} · you owe {item.seller_name ?? 'them'}{' '}
         <b>{formatNaira(owed)}</b>
       </p>
+      {canPay && canSeeAccounts ? <PayTo account={account} /> : null}
       {!canPay ? null : open ? (
         <div className="mt-2 space-y-2">
           <input
@@ -406,5 +425,118 @@ function ConsignorPayment({ item, tenantId }) {
         </button>
       )}
     </div>
+  );
+}
+
+// Where to send a seller's money: the account they gave on WhatsApp, with the
+// name their bank has on it. Tap the number to copy it.
+function PayTo({ account }) {
+  const toast = useToast();
+  if (!account) {
+    return (
+      <p className="mt-2 rounded-lg bg-surface-2 px-3 py-2 text-[12px] text-muted">
+        No bank details yet. They were asked on WhatsApp, and can send <b>BANK</b> to your number any time.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-lg bg-surface-2 px-3 py-2 text-[12px] text-text">
+      <p className="text-[11px] text-muted">Pay to</p>
+      <p className="font-medium text-ink">{account.account_name}</p>
+      <p>
+        {account.bank_name} ·{' '}
+        <button
+          type="button"
+          className="font-mono font-semibold text-green"
+          onClick={() =>
+            navigator.clipboard
+              ?.writeText(account.account_number)
+              .then(() => toast('Account number copied', 'success'))
+              .catch(() => {})
+          }
+        >
+          {account.account_number}
+        </button>
+      </p>
+    </div>
+  );
+}
+
+// A seller asked to be paid into a different account. It needs the store's
+// yes, and theirs (the bot asks them about 2 hours after they asked, in case
+// somebody else had their phone). It happens when both have said yes.
+function AccountChanges({ changes, tenantId }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { role } = useTenant();
+  const canDecide = role === 'owner' || role === 'manager';
+
+  const decide = useMutation({
+    mutationFn: ({ id, decision }) => decideAccountChange(tenantId, id, decision),
+    onSuccess: (r) => {
+      qc.invalidateQueries(tenantScope(tenantId));
+      toast(
+        r.status === 'applied'
+          ? 'Approved. Their new account is in use, and they have been told.'
+          : r.status === 'rejected'
+            ? 'Rejected. Their account stays as it was, and they have been told.'
+            : 'Approved. It takes effect once they confirm on WhatsApp.',
+        'success'
+      );
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  return (
+    <section className="card mb-4 p-4">
+      <h2 className="text-sm font-semibold text-ink">Payout account changes</h2>
+      <p className="mt-0.5 text-xs text-muted">
+        A seller asked to be paid into a different account. The name is checked with the bank and must match their first
+        account. It changes once you approve and they confirm.
+      </p>
+      <ul className="mt-3 divide-y divide-line rounded-lg border border-line">
+        {changes.map((c) => (
+          <li key={c.id} className="p-3">
+            <p className="text-[13px] font-medium text-ink">{c.account_name}</p>
+            <p className="mt-0.5 text-[12px] text-text">
+              {c.old_bank_name} ••••{String(c.old_account_number ?? '').slice(-4)}
+              <span className="px-1.5 text-muted">→</span>
+              <b>
+                {c.bank_name} {c.account_number}
+              </b>
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted">
+              Asked {dateTime(c.requested_at)} ·{' '}
+              {c.verified_at
+                ? 'they confirmed it'
+                : c.verify_sent_at
+                  ? 'waiting for them to confirm'
+                  : 'we ask them to confirm about 2 hours after'}
+              {c.store_decision === 'approved' ? ' · you approved' : ''}
+            </p>
+            {canDecide && c.store_decision === 'pending' ? (
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  disabled={decide.isPending}
+                  onClick={() => decide.mutate({ id: c.id, decision: 'approve' })}
+                  className="flex-1 rounded-pill bg-green py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  disabled={decide.isPending}
+                  onClick={() => decide.mutate({ id: c.id, decision: 'reject' })}
+                  className="flex-1 rounded-pill border border-line py-1.5 text-xs font-semibold text-ink hover:bg-surface-2 disabled:opacity-60"
+                >
+                  Reject
+                </button>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

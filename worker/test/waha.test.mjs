@@ -1088,7 +1088,9 @@ test("somebody offers an item on the store's own number, and it waits for review
     const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
     assert.ok(toSeller.length >= 7);
     assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
-    assert.match(toSeller.at(-1).text, /Sent!/);
+    assert.match(toSeller.at(-2).text, /Sent!/);
+    // Then, since it's their first item: where to pay them, with the rules.
+    assert.match(toSeller.at(-1).text, /bank\* and \*account number[\s\S]*2 times in 6 months[\s\S]*same name/);
 
     // And the owner heard about it on the platform number.
     const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);

@@ -1,4 +1,4 @@
-import { require_, originOf } from '../lib/env.js';
+import { require_, originOf, config } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
@@ -24,6 +24,19 @@ import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { cartStep, codesIn, isBuy, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
+import {
+  BANK,
+  INTAKE_BUSY,
+  SAY as BANK_SAY,
+  VERIFY_AFTER_HOURS,
+  VERIFY_EXPIRES_HOURS,
+  accountFor,
+  bankTurn,
+  firstAsk,
+  wantsBank,
+  ownerChangeMessage,
+  ownerNotYouMessage,
+} from '../lib/consignorBank.js';
 import {
   parseEvent,
   phoneFor,
@@ -678,7 +691,13 @@ async function storeSession(cfg, event) {
   // unless it is asked for by name. SELL or BUY <code> is somebody wanting the
   // bot (often because the owner just told them to send it), so that lifts
   // the pause.
-  const asked = SELL.test(String(event.body ?? '')) || isBuy(event.body);
+  const body = String(event.body ?? '');
+  const asked =
+    SELL.test(body) ||
+    isBuy(event.body) ||
+    (tenant.store_type !== 'brand' && BANK.test(body)) ||
+    // Confirming a payout account change: the bot asked, and this answers it.
+    (conversation?.state === 'bank_verify' && /^\s*(yes|no|y|n)\b/i.test(body));
   if (conversation?.paused_until && new Date(conversation.paused_until) > new Date()) {
     if (!asked) return json({ ok: true, ignored: 'owner is handling this chat' });
     await db(cfg).update(
@@ -688,7 +707,13 @@ async function storeSession(cfg, event) {
     );
   }
 
-  const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(String(event.body ?? ''));
+  // Where a consignor is paid (lib/consignorBank.js). SELL always starts an
+  // item, even halfway through giving bank details.
+  if (tenant.store_type !== 'brand' && !SELL.test(body) && wantsBank(conversation, body)) {
+    return bankChat(cfg, event, tenant, conversation);
+  }
+
+  const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(body);
   if (tenant.store_type !== 'brand' && selling) return intake(cfg, event, tenant, conversation);
 
   if (await checkoutOn(cfg, tenant)) {
@@ -985,6 +1010,16 @@ async function fileSubmission(cfg, tenant, event, action) {
 
   await say(cfg, tenant, event.from, receivedMessage(tenant.name), own);
 
+  // Their first item: where to pay them when it sells.
+  const ask = await firstAsk(cfg, tenant, event.from).catch((err) => {
+    console.warn('bank ask skipped:', err?.message ?? err);
+    return null;
+  });
+  if (ask) {
+    await setConversation(cfg, tenant, event.from, ask);
+    for (const reply of ask.replies) await say(cfg, tenant, event.from, reply, own);
+  }
+
   // And the owner, on the platform number where they already talk to us.
   const owner = chatId(tenant.whatsapp_number);
   if (owner) {
@@ -1000,6 +1035,127 @@ async function fileSubmission(cfg, tenant, event, action) {
       })
     );
   }
+}
+
+// ── WHERE CONSIGNORS ARE PAID ────────────────────────────────────────────────
+
+// Bank details on the store's own number: after a first item, on BANK, and
+// the confirmation of a change (lib/consignorBank.js).
+async function bankChat(cfg, event, tenant, conversation) {
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  let result;
+  try {
+    result = await bankTurn(cfg, tenant, event.from, conversation, event.body);
+  } catch (err) {
+    console.error('bank turn failed:', err?.message ?? err);
+    result = { state: conversation?.state ?? 'idle', draft: conversation?.draft ?? {}, replies: ["Something went wrong. Please send that again in a minute."] };
+  }
+  if (!result) return json({ ok: true, ignored: 'not about bank details' });
+
+  await setConversation(cfg, tenant, event.from, result);
+  const own = { session: tenant.waha_session };
+  for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
+
+  if (result.notifyOwner) await tellOwnerAboutChange(cfg, tenant, event.from, result.notifyOwner);
+  return json({ ok: true, bank: result.state });
+}
+
+// The owner hears about a change on the platform number: one to approve, or
+// one the consignor said they never asked for.
+export async function tellOwnerAboutChange(cfg, tenant, chat, { kind, change }) {
+  const owner = chatId(tenant.whatsapp_number);
+  if (!owner) return;
+  const named = await db(cfg)
+    .one('submissions', `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(chat)}&seller_name=not.is.null&select=seller_name&order=created_at.desc`)
+    .catch(() => null);
+  const name = named?.seller_name ?? null;
+  const text =
+    kind === 'not_you'
+      ? ownerNotYouMessage({ name, change })
+      : ownerChangeMessage({ name, change, origin: cfg.publicOrigin });
+  await say(cfg, tenant, owner, text);
+}
+
+// The hourly sweep for payout account changes (index.js scheduled):
+//
+//   * a change asked for VERIFY_AFTER_HOURS ago gets its confirmation message
+//     now, from the store's number, so it reaches the phone after whoever
+//     asked may have put it down. Not while they're halfway through offering
+//     an item; the next hour will do.
+//   * a confirmation unanswered for VERIFY_EXPIRES_HOURS cancels the change.
+export async function consignorBankSweep(env, { now = new Date() } = {}) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey || !cfg.wahaUrl) return null;
+  const due = new Date(now.getTime() - VERIFY_AFTER_HOURS * 3_600_000).toISOString();
+  const lapsed = new Date(now.getTime() - VERIFY_EXPIRES_HOURS * 3_600_000).toISOString();
+  let sent = 0;
+  let expired = 0;
+
+  const toVerify = await db(cfg).select(
+    'consignor_account_changes',
+    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=*&order=requested_at.asc&limit=50`
+  );
+  for (const change of toVerify) {
+    const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status,whatsapp_number`);
+    if (!tenant?.waha_session || tenant.waha_status !== 'WORKING') continue;
+    const conv = await db(cfg).one(
+      'bot_conversations',
+      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(change.seller_chat_id)}&select=state,updated_at`
+    );
+    if (INTAKE_BUSY(conv, now)) continue;
+    const claimed = await db(cfg).update(
+      'consignor_account_changes',
+      `id=eq.${change.id}&status=eq.pending&verify_sent_at=is.null`,
+      { verify_sent_at: now.toISOString() }
+    );
+    if (!claimed.length) continue;
+    await setConversation(cfg, tenant, change.seller_chat_id, { state: 'bank_verify', draft: { change_id: change.id } });
+    await say(cfg, tenant, change.seller_chat_id, BANK_SAY.verify(change), { session: tenant.waha_session });
+    sent += 1;
+  }
+
+  const stale = await db(cfg).select(
+    'consignor_account_changes',
+    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=*&limit=50`
+  );
+  for (const change of stale) {
+    const hit = await db(cfg).update(
+      'consignor_account_changes',
+      `id=eq.${change.id}&status=eq.pending&verified_at=is.null`,
+      { status: 'expired' }
+    );
+    if (!hit.length) continue;
+    expired += 1;
+    const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status`);
+    if (!tenant?.waha_session) continue;
+    const account = await accountFor(cfg, tenant.id, change.seller_chat_id);
+    await setConversation(cfg, tenant, change.seller_chat_id, { state: 'idle', draft: {} });
+    if (account) await say(cfg, tenant, change.seller_chat_id, BANK_SAY.expired(account), { session: tenant.waha_session });
+  }
+
+  return { sent, expired };
+}
+
+// Upsert: the row may or may not be there, and whatever is there is replaced.
+export async function setConversation(cfg, tenant, chat, { state, draft }) {
+  await db(cfg).insert(
+    'bot_conversations',
+    { tenant_id: tenant.id, chat_id: chat, state, draft: draft ?? {}, updated_at: new Date().toISOString() },
+    { onConflict: 'tenant_id,chat_id', merge: true, returning: false }
+  );
 }
 
 // ── OPENING A STORE ──────────────────────────────────────────────────────────

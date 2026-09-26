@@ -93,10 +93,13 @@ export function declinedSellerMessage({ store, title, reason }) {
 }
 
 // To the consignor, from the store's number, when their item sells.
-export function soldConsignorMessage({ store, title, owed }) {
+export function soldConsignorMessage({ store, title, owed, needsBank = false }) {
   return (
     `🎉 Your *${title}* has sold!\n\n` +
-    `${store} owes you ${formatNaira(owed)} and will message you when it's paid.`
+    `${store} owes you ${formatNaira(owed)} and will message you when it's paid.` +
+    (needsBank
+      ? `\n\nWe don't have your bank details yet. Send *BANK* to add them, so ${store} can pay you.`
+      : '')
   );
 }
 
