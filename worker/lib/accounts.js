@@ -19,7 +19,10 @@ export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // sending anything. Shape read from @supabase/auth-js (GoTrueAdminApi.js):
 // the body carries `type` and `email`, `redirectTo` goes on the query string
 // as `redirect_to`, and the response has `properties.action_link` and `user`.
-export async function generateInvite(cfg, email, { redirectTo, data }) {
+//
+// type 'invite' creates a new account; 'recovery' is for one that exists, and
+// signs its owner in to choose a new password.
+export async function generateInvite(cfg, email, { redirectTo, data, type = 'invite' }) {
   const url = new URL(`${cfg.supabaseUrl}/auth/v1/admin/generate_link`);
   if (redirectTo) url.searchParams.set('redirect_to', redirectTo);
 
@@ -30,7 +33,7 @@ export async function generateInvite(cfg, email, { redirectTo, data }) {
       Authorization: `Bearer ${cfg.serviceKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ type: 'invite', email, data }),
+    body: JSON.stringify({ type, email, ...(data ? { data } : {}) }),
   });
 
   if (!res.ok) {
