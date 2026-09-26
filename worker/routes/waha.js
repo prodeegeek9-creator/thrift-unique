@@ -435,8 +435,9 @@ export async function postToStatus(cfg, tenant, product) {
     .filter(Boolean)
     .join('\n');
 
+  let messageId;
   try {
-    await postImageStatus(cfg, tenant.waha_session, {
+    messageId = await postImageStatus(cfg, tenant.waha_session, {
       url: publicUrl(cfg, product.images[0]),
       caption,
     });
@@ -447,7 +448,35 @@ export async function postToStatus(cfg, tenant, product) {
   }
 
   await recordPost(cfg, tenant, product, true, null);
+  await rememberStatus(cfg, tenant, product, messageId);
   return true;
+}
+
+// Which item a Status post was, by its WhatsApp ID, so a reply to it names the
+// item even without the caption (lib/cart.js). Every post is kept, not just
+// the latest: a buyer can reply to yesterday's. Best-effort, like recordPost.
+async function rememberStatus(cfg, tenant, product, messageId) {
+  if (!messageId || !product.id) return;
+  try {
+    await db(cfg).insert(
+      'status_posts',
+      { tenant_id: tenant.id, product_id: product.id, message_id: messageId },
+      { onConflict: 'tenant_id,message_id', returning: false }
+    );
+  } catch (err) {
+    console.warn('status post not remembered:', err?.message ?? err);
+  }
+}
+
+// The item a reply is about, from the saved post it quotes.
+async function productForPost(cfg, tenant, messageId) {
+  if (!messageId) return null;
+  const post = await db(cfg).one(
+    'status_posts',
+    `tenant_id=eq.${tenant.id}&message_id=eq.${encodeURIComponent(messageId)}&select=product_id`
+  );
+  if (!post) return null;
+  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status`);
 }
 
 // One row per listing and channel (the table's unique key), updated in place
@@ -648,9 +677,15 @@ async function ownerTyped(cfg, tenant, event) {
 
 // See lib/cart.js for the conversation and lib/cartCheckout.js for the money.
 async function checkout(cfg, event, tenant, conversation) {
-  const { own: typed, quoted } = codesIn(event);
+  const { own: typed, quoted: captioned } = codesIn(event);
   const products = {};
+  // A reply to a post Vendwyze made: its saved ID names the item, and wins
+  // over anything in the caption.
+  const posted = await productForPost(cfg, tenant, event.quotedId);
+  if (posted?.public_code) products[posted.public_code] = posted;
+  const quoted = posted?.public_code ?? captioned;
   for (const code of new Set([typed, quoted].filter(Boolean))) {
+    if (code in products) continue;
     products[code] = await db(cfg).one(
       'products',
       `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status`
@@ -661,7 +696,7 @@ async function checkout(cfg, event, tenant, conversation) {
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`
   );
 
-  const result = cartStep(conversation, event, { store: tenant.name, products, knownName: known?.buyer_name ?? null });
+  const result = cartStep(conversation, event, { store: tenant.name, products, quotedCode: quoted, knownName: known?.buyer_name ?? null });
   if (!result) return null;
 
   // The same replay guard as everywhere else, now that this is ours.

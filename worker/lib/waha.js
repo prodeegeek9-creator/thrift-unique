@@ -272,16 +272,28 @@ export async function sendText(cfg, session, to, text) {
 // Always the tenant's own session, never the platform's — Status goes to the
 // seller's contacts, which is the whole point and is impossible from a number
 // those contacts have never saved.
+//
+// Returns the post's message ID, or null when it can't be had: WAHA hands out
+// an ID to post under (status/new-message-id), and failing that the post's
+// own answer may carry one. A reply to the post quotes this ID.
 export async function postImageStatus(cfg, session, { url, caption, mimetype = 'image/jpeg' }) {
   const call = client(cfg);
+  const base = `/api/${encodeURIComponent(session)}/status`;
 
-  return call(`/api/${encodeURIComponent(session)}/status/image`, {
+  const planned = await call(`${base}/new-message-id`)
+    .then((r) => r?.id ?? null)
+    .catch(() => null);
+
+  const sent = await call(`${base}/image`, {
     method: 'POST',
     body: {
+      ...(planned ? { id: planned } : {}),
       file: { url, mimetype, filename: 'listing.jpg' },
       caption,
     },
   });
+  const answered = [sent?.key?.id, sent?.id?.id, sent?.id?._serialized, sent?.id].find((v) => typeof v === 'string' && v);
+  return bareMessageId(planned ?? answered ?? null);
 }
 
 export async function postTextStatus(cfg, session, { text, backgroundColor = '#12301E' }) {
@@ -361,17 +373,41 @@ export function parseEvent(body) {
     // The message this one replies to, if any: for a reply to a Status post,
     // the post's caption, which names the item (lib/cart.js).
     quoted: quotedText(p),
+    // And that message's WhatsApp ID. A Status post Vendwyze made is saved
+    // under its ID (status_posts), which names the item even when the caption
+    // doesn't come through.
+    quotedId: quotedId(p),
   };
+}
+
+function quoteContext(p) {
+  return (
+    p._data?.message?.extendedTextMessage?.contextInfo ??
+    p._data?.message?.imageMessage?.contextInfo ??
+    p._data?.contextInfo ??
+    null
+  );
+}
+
+// WAHA gives the bare ID (BAE5…) on NOWEB and a serialised one
+// (false_status@broadcast_BAE5…_…@c.us) elsewhere; the bare part is what a
+// post is saved under.
+export function bareMessageId(id) {
+  if (id == null || id === '') return null;
+  const s = String(id);
+  if (!s.includes('_')) return s;
+  const parts = s.split('_');
+  // true_<chat>_<id> or true_<chat>_<id>_<participant>
+  return parts[2] || parts.at(-1) || null;
+}
+
+function quotedId(p) {
+  return bareMessageId(p.replyTo?.id ?? quoteContext(p)?.stanzaId ?? null);
 }
 
 function quotedText(p) {
   if (typeof p.replyTo?.body === 'string' && p.replyTo.body) return p.replyTo.body;
-  const ctx =
-    p._data?.message?.extendedTextMessage?.contextInfo ??
-    p._data?.message?.imageMessage?.contextInfo ??
-    p._data?.contextInfo ??
-    null;
-  const q = ctx?.quotedMessage;
+  const q = quoteContext(p)?.quotedMessage;
   if (!q) return null;
   return (
     q.imageMessage?.caption ??

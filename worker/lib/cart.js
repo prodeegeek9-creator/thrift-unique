@@ -9,8 +9,9 @@ import { normalizeNumber } from './phone.js';
 //   BUY <code>          adds an item (the product and store pages pre-type it,
 //                       and every Status post says it)
 //   a reply to a Status post that names an item, saying "I want this", "buy"
-//   or similar, adds it; any other reply to a post gets the item and how to
-//   buy it, and the owner answers the rest
+//   or similar, adds it; "how much?" or "is it still available?" gets the
+//   price, whether it's still there and how to buy it; any other reply to a
+//   post ("does it come in blue?") is a question for the owner
 //
 // then, with something in the cart: more BUY codes, REMOVE <code>, CART to
 // see it, CHECKOUT, a name, a delivery address, and PAY for one Paystack link
@@ -34,6 +35,25 @@ const EDIT = /^\s*(edit|change)( address| name)?\b/i;
 const PAY = /^\s*(pay|yes|ok|okay|confirm|go)\b/i;
 // "I want this", "I'll take it", "buy", "order": wanting the item in a post.
 const WANT = /^\s*(buy( it| this)?|i want (it|this|one)|i'?ll take (it|this)|want|order( it| this)?|add( it| this)?)\s*[.!]*\s*$/i;
+// The two questions the bot can answer about an item on its own: its price,
+// and whether it's still there. Only when that is the whole message: "is it
+// available in size 42?" needs the owner, so the bot says nothing.
+const ASK = new RegExp(
+  '^\\s*(?:(?:hi|hello|pls|please|good (?:morning|afternoon|evening))[,!.\\s]+)?' +
+    '(?:' +
+    [
+      "how much(?: is (?:it|this|that))?(?: now)?",
+      "(?:what'?s |what is )?(?:the )?price(?: pls| please)?",
+      'hm',
+      '(?:is (?:it|this|that) )?(?:still )?(?:available|avail|in stock)',
+      '(?:e |is it |it )?still dey',
+      'e dey',
+      '(?:is (?:it|this) )?sold(?: out)?',
+      '(?:do you )?still have (?:it|this)',
+    ].join('|') +
+    ')\\s*(?:pls|please)?\\s*[?.!]*\\s*$',
+  'i'
+);
 
 // The item a message is about: its own BUY code, or the code in the Status
 // post (or shared link) it replies to. Status captions carry "BUY <code>" and
@@ -58,7 +78,10 @@ export function cartStep(conversation, message, ctx = {}) {
   const store = ctx.store ?? 'the store';
   const now = ctx.now ? new Date(ctx.now) : new Date();
   const text = String(message?.body ?? '').trim();
-  const { own, quoted } = codesIn(message);
+  const { own, quoted: captioned } = codesIn(message);
+  // The caller may know the item better, from the saved ID of the post being
+  // replied to (status_posts).
+  const quoted = ctx.quotedCode !== undefined ? ctx.quotedCode : captioned;
 
   const live =
     conversation && STATES.includes(conversation.state) && !stale(conversation, now) ? conversation : null;
@@ -66,27 +89,23 @@ export function cartStep(conversation, message, ctx = {}) {
   const state = live?.state ?? 'idle';
 
   // BUY <code> works from anywhere: it is the one thing that always means this.
-  if (own && BUY.test(text)) {
-    // After a payment link: a new cart, and the unpaid link is dropped.
-    if (state === 'cart_pay') {
-      const fresh = { items: [] };
-      const added = add(fresh, ctx.products?.[own], own, store);
-      return { ...added, action: { type: 'abandon' } };
-    }
-    return add(draft, ctx.products?.[own], own, store);
-  }
+  // After a payment link it starts a new cart, and the unpaid link is dropped.
+  const adding = (code) => {
+    if (state === 'cart_pay') return { ...add({ items: [] }, ctx.products?.[code], code, store), action: { type: 'abandon' } };
+    return add(draft, ctx.products?.[code], code, store);
+  };
+  if (own && BUY.test(text)) return adding(own);
 
-  // A reply to a Status post about an item.
-  if (quoted && !live) {
+  // A reply to a Status post about an item. Wanting it adds it, the price or
+  // availability the bot can answer, and anything else is for the owner. A
+  // reply to a post that isn't an item (no code, nothing saved) never gets
+  // here: that's a chat with the store.
+  if (quoted) {
     const product = ctx.products?.[quoted];
     if (!product) return null;
-    if (WANT.test(text)) return add(draft, product, quoted, store);
-    return {
-      state: 'idle',
-      draft: {},
-      replies: [offer(product, quoted)],
-      action: null,
-    };
+    if (WANT.test(text)) return adding(quoted);
+    if (ASK.test(text)) return reply(live ? state : 'idle', draft, offer(product, quoted));
+    return null;
   }
 
   if (!live) return null;
@@ -212,7 +231,7 @@ function nextHint(state) {
 
 function offer(product, code) {
   if (product.status !== 'active') return `Sorry, *${product.title}* has sold.`;
-  return `That's *${product.title}*, ${formatNaira(product.price)}. Reply *BUY ${code}* to order it.`;
+  return `*${product.title}* is ${formatNaira(product.price)}, and it's still available. Reply *BUY ${code}* to order it.`;
 }
 
 function askAddress(name) {

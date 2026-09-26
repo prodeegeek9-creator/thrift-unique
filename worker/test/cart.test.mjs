@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import worker from '../index.js';
 import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
 import { cartStep, codesIn } from '../lib/cart.js';
-import { parseEvent } from '../lib/waha.js';
+import { parseEvent, bareMessageId } from '../lib/waha.js';
+import { postToStatus } from '../routes/waha.js';
+import { config } from '../lib/env.js';
 
 // Checkout inside WhatsApp: a buyer builds a cart in a chat with the store's
 // own number, pays once through Paystack, and gets an order per item.
@@ -42,17 +44,24 @@ function seed({ tier = 'growth', checkout = true, escrow = true } = {}) {
     bot_messages: [],
     submissions: [],
     refunds: [],
+    status_posts: [],
+    listing_channel_posts: [],
   };
 }
 
 function fakeWaha() {
   const sent = [];
+  const statuses = [];
   return {
     sent,
+    statuses,
     waha: {
       url: WAHA_URL,
       handler: async (url, init) => {
-        if (new URL(url).pathname === '/api/sendText') sent.push(JSON.parse(init.body));
+        const path = new URL(url).pathname;
+        if (path === '/api/sendText') sent.push(JSON.parse(init.body));
+        if (path.endsWith('/status/new-message-id')) return new Response(JSON.stringify({ id: 'BAE5STATUS1' }), { status: 200 });
+        if (path.endsWith('/status/image')) statuses.push(JSON.parse(init.body));
         return new Response('{}', { status: 200 });
       },
     },
@@ -79,7 +88,7 @@ function fakePaystack() {
 const E = () => env({ WAHA_URL, WAHA_API_KEY: 'k', WAHA_SESSION: 'ut-platform', PUBLIC_ORIGIN: 'https://vendwyze.test', WAHA_TYPING_MS: '0', TOKEN_SECRET: 'tok' });
 
 let n = 0;
-function msg(body, { from = BUYER, quoted = null } = {}) {
+function msg(body, { from = BUYER, quoted = null, quotedId = 'status-1' } = {}) {
   n += 1;
   return {
     event: 'message.any',
@@ -90,7 +99,7 @@ function msg(body, { from = BUYER, quoted = null } = {}) {
       from,
       fromMe: false,
       body,
-      ...(quoted ? { replyTo: { id: 'status-1', body: quoted } } : {}),
+      ...(quoted != null ? { replyTo: { id: quotedId, body: quoted } } : {}),
     },
   };
 }
@@ -124,7 +133,7 @@ function setup(opts = {}, fetchOpts = {}) {
   const w = fakeWaha();
   const ps = fakePaystack();
   const restore = installFetch({ supabase: sb, waha: w.waha, paystack: ps.paystack, ...fetchOpts });
-  return { sb, sent: w.sent, ps, restore };
+  return { sb, sent: w.sent, statuses: w.statuses, ps, restore };
 }
 
 const toBuyer = (sent) => sent.filter((m) => m.chatId === BUYER);
@@ -233,15 +242,81 @@ test('an item sold to someone else before payment is refunded straight away', as
   } finally { restore(); }
 });
 
-test('replying to a Status post: "I want this" adds it, a question gets the item and how to buy', async () => {
+test('replying to a Status post: "I want this" adds it, a price or availability question is answered', async () => {
   const { sent, restore } = setup();
   const caption = 'Leather jacket\n₦20,000 · Excellent\nReply BUY JKT001 to order\nhttps://vendwyze.test/p/JKT001';
   try {
     await say(msg('Is it still available?', { quoted: caption }));
-    assert.match(last(sent), /That's \*Leather jacket\*, ₦20,000\. Reply \*BUY JKT001\*/);
+    assert.match(last(sent), /\*Leather jacket\* is ₦20,000, and it's still available\. Reply \*BUY JKT001\*/);
     await say(msg('I want this', { quoted: caption }));
     assert.match(last(sent), /Added \*Leather jacket\*/);
   } finally { restore(); }
+});
+
+test('any other question about a post, or a reply to a post that is not an item, is left for the owner', async () => {
+  const { sb, sent, restore } = setup();
+  const caption = 'Leather jacket\n₦20,000 · Excellent\nReply BUY JKT001 to order';
+  try {
+    await say(
+      msg('Is it available in size 42?', { quoted: caption }),
+      msg('Can I see the back?', { quoted: caption }),
+      msg('I want this', { quoted: 'Happy Sunday from Ada Shop!' }),
+      msg('How much?', { quoted: 'New stock landing Friday' })
+    );
+    assert.equal(toBuyer(sent).length, 0);
+    assert.equal(sb.tables.bot_messages.length, 0, 'not the bot\'s, so not logged');
+  } finally { restore(); }
+});
+
+test('the bot answers price and availability questions only when that is the whole message', () => {
+  const P = { JKT001: { id: P1, title: 'Leather jacket', price: 20000, status: 'active' } };
+  const ask = (body) => cartStep(null, { body, quoted: 'Reply BUY JKT001 to order' }, { products: P });
+  for (const q of ['How much?', 'price pls', 'Good morning, how much is this?', 'is this still available?', 'still dey?', 'Sold?']) {
+    assert.match(ask(q)?.replies[0] ?? '', /still available/, q);
+  }
+  for (const q of ['Is it available in size 42?', 'how much for two?', 'does it come in blue?', 'nice']) {
+    assert.equal(ask(q), null, q);
+  }
+  const sold = cartStep(null, { body: 'available?', quoted: 'BUY JKT001' }, { products: { JKT001: { ...P.JKT001, status: 'sold' } } });
+  assert.match(sold.replies[0], /has sold/);
+});
+
+test('a Status post Vendwyze makes is saved under its WhatsApp ID, and a reply to it names the item without the caption', async () => {
+  const { sb, sent, statuses, restore } = setup();
+  try {
+    const tenant = sb.tables.tenants[0];
+    const posted = await postToStatus(config(E()), tenant, sb.tables.products[0]);
+    assert.equal(posted, true);
+    assert.equal(statuses[0].id, 'BAE5STATUS1', 'posted under the ID WAHA handed out');
+    assert.match(statuses[0].caption, /Reply BUY JKT001 to order/);
+    assert.deepEqual(
+      sb.tables.status_posts.map((r) => [r.product_id, r.message_id]),
+      [[P1, 'BAE5STATUS1']]
+    );
+
+    // WhatsApp sent the reply with an empty quote, and the serialised ID.
+    await say(msg('how much?', { quoted: '', quotedId: 'false_status@broadcast_BAE5STATUS1_2348022222222@c.us' }));
+    assert.match(last(sent), /Leather jacket\* is ₦20,000/);
+    await say(msg('I want this', { quoted: '', quotedId: 'BAE5STATUS1' }));
+    assert.match(last(sent), /Added \*Leather jacket\*/);
+  } finally { restore(); }
+});
+
+test('a quoted message ID is read bare, whichever way WAHA writes it', () => {
+  assert.equal(bareMessageId('BAE5ABC'), 'BAE5ABC');
+  assert.equal(bareMessageId('false_status@broadcast_BAE5ABC_2348022222222@c.us'), 'BAE5ABC');
+  assert.equal(bareMessageId('true_2348011111111@c.us_3EB0XYZ'), '3EB0XYZ');
+  assert.equal(bareMessageId(null), null);
+  const noweb = parseEvent({
+    event: 'message',
+    session: SESSION,
+    payload: {
+      id: 'x', from: BUYER, fromMe: false, body: 'I want this',
+      _data: { message: { extendedTextMessage: { text: 'I want this', contextInfo: { stanzaId: 'BAE5ABC', remoteJid: 'status@broadcast', quotedMessage: { imageMessage: {} } } } } },
+    },
+  });
+  assert.equal(noweb.quotedId, 'BAE5ABC');
+  assert.equal(noweb.quoted, null);
 });
 
 test('when the owner types in a chat, the bot steps back from it', async () => {
