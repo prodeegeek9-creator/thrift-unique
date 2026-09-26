@@ -62,6 +62,16 @@ export const setFlag = (tenantId, flag, enabled) =>
 export const setTenantStatus = (tenantId, status) =>
   call(`/tenants/${tenantId}/status`, { method: 'POST', body: { status } });
 
+export const setPlan = (tenantId, tier, commissionPct) =>
+  call(`/tenants/${tenantId}/plan`, { method: 'POST', body: { tier, commission_pct: commissionPct } });
+
+export const setDetails = (tenantId, details) =>
+  call(`/tenants/${tenantId}/details`, { method: 'POST', body: details });
+
+// Each plan's standard commission, to prefill the plan editor. The sign-up
+// terms quote these (COMMISSION in worker/lib/bot.js); keep them in step.
+export const DEFAULT_COMMISSION = { starter: 8, growth: 7, business: 7 };
+
 export const forceRelease = (orderId, reason) =>
   call(`/escrow/${orderId}/release`, { method: 'POST', body: { reason } });
 
@@ -75,6 +85,8 @@ export const AUDIT_LABELS = {
   'flag.set': 'Changed a feature flag',
   'tenant.status': 'Changed a store’s status',
   'tenant.approve': 'Approved a new store',
+  'tenant.plan': 'Changed a store’s plan or commission',
+  'tenant.details': 'Edited a store’s details',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
 };

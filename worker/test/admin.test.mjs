@@ -541,3 +541,201 @@ test('an operator sees who is asking for a pending store', async () => {
     assert.equal(body.tenant.whatsapp_number, PENDING_PHONE);
   } finally { restore(); }
 });
+
+// ── managing stores ──────────────────────────────────────────────────────────
+
+test('an owner moves a store to another plan: tier, commission and features, audited', async () => {
+  const { sb, restore } = ctx();
+  // An override set by hand, which the plan change is meant to replace.
+  sb.tables.tenant_features.push({ tenant_id: TENANT, flag: 'contacts', enabled: false });
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/plan`, {
+        token: 'tok-owner', method: 'POST', body: { tier: 'business', commission_pct: 6.5 },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 200);
+
+    const t = sb.tables.tenants[0];
+    assert.equal(t.tier, 'business');
+    assert.equal(t.commission_pct, 6.5);
+
+    const flag = (f) => sb.tables.tenant_features.find((r) => r.tenant_id === TENANT && r.flag === f)?.enabled;
+    assert.equal(flag('analytics'), true);
+    assert.equal(flag('contacts'), true);
+    assert.equal(flag('team'), true);
+    // One row per flag, updated in place.
+    assert.equal(sb.tables.tenant_features.filter((r) => r.flag === 'contacts').length, 1);
+
+    const row = sb.tables.operator_audit.at(-1);
+    assert.equal(row.action, 'tenant.plan');
+    assert.deepEqual(row.detail.from, { tier: 'growth', commission_pct: 8 });
+    assert.deepEqual(row.detail.to, { tier: 'business', commission_pct: 6.5 });
+
+    // And back down: Business features switch off again.
+    await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/plan`, {
+        token: 'tok-owner', method: 'POST', body: { tier: 'starter', commission_pct: 8 },
+      }),
+      env(), {}
+    );
+    assert.equal(flag('analytics'), false);
+    assert.equal(flag('contacts'), false);
+  } finally { restore(); }
+});
+
+test('a plan change needs an owner and a sensible plan and commission', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const support = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/plan`, {
+        token: 'tok-support', method: 'POST', body: { tier: 'business', commission_pct: 5 },
+      }),
+      env(), {}
+    );
+    assert.equal(support.status, 403);
+
+    for (const body of [{ tier: 'platinum', commission_pct: 5 }, { tier: 'growth', commission_pct: 150 }, { tier: 'growth' }]) {
+      const res = await worker.fetch(
+        call(`/api/admin/tenants/${TENANT}/plan`, { token: 'tok-owner', method: 'POST', body }),
+        env(), {}
+      );
+      assert.equal(res.status, 400, JSON.stringify(body));
+    }
+    assert.equal(sb.tables.tenants[0].tier, 'growth');
+    assert.equal(sb.tables.tenants[0].commission_pct, 8);
+  } finally { restore(); }
+});
+
+test("an owner corrects a store's details, and the number is normalised", async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/details`, {
+        token: 'tok-owner', method: 'POST',
+        body: { name: '  Ada   Thrift ', whatsapp_number: '0801 234 5678', store_type: 'brand', category: 'fashion' },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 200);
+    const t = sb.tables.tenants[0];
+    assert.equal(t.name, 'Ada Thrift');
+    assert.equal(t.whatsapp_number, '2348012345678');
+    assert.equal(t.store_type, 'brand');
+    assert.equal(t.category, 'fashion');
+    // The slug is untouched: it is in every link already shared.
+    assert.equal(t.slug, 'store');
+    assert.equal(sb.tables.operator_audit.at(-1).action, 'tenant.details');
+  } finally { restore(); }
+});
+
+test('bad details are refused, and a number another store has is a 409', async () => {
+  const { sb, restore } = ctx();
+  sb.tables.tenants.push({ id: 'eeeeeeee-0000-0000-0000-00000000000e', slug: 'other', name: 'Other', whatsapp_number: '2348011111111' });
+  try {
+    for (const body of [{ name: 'x' }, { whatsapp_number: '12' }, { store_type: 'shop' }, { category: 'cars' }, {}]) {
+      const res = await worker.fetch(
+        call(`/api/admin/tenants/${TENANT}/details`, { token: 'tok-owner', method: 'POST', body }),
+        env(), {}
+      );
+      assert.equal(res.status, 400, JSON.stringify(body));
+    }
+
+    const taken = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/details`, {
+        token: 'tok-owner', method: 'POST', body: { whatsapp_number: '08011111111' },
+      }),
+      env(), {}
+    );
+    assert.equal(taken.status, 409);
+    assert.match((await taken.json()).error, /another store/);
+  } finally { restore(); }
+});
+
+test("a pending store's new number carries its sign-up with it", async () => {
+  const { sb, restore } = approvalCtx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/tenants/${PENDING}/details`, {
+        token: 'tok-owner', method: 'POST', body: { whatsapp_number: '2348022222222' },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal(pending(sb).whatsapp_number, '2348022222222');
+    assert.equal(sb.tables.signups[0].phone, '2348022222222');
+  } finally { restore(); }
+});
+
+test("a store view shows what it has listed and what is waiting on it", async () => {
+  const { sb, restore } = ctx();
+  sb.tables.products.push(
+    { id: 'p1', tenant_id: TENANT, public_code: 'AA11', title: 'Bag', price: 10000, status: 'active', images: [] },
+    { id: 'p2', tenant_id: TENANT, public_code: 'BB22', title: 'Shoe', price: 5000, status: 'sold', images: [] },
+    { id: 'p3', tenant_id: 'someone-else', public_code: 'CC33', title: 'Not theirs', price: 1, status: 'active', images: [] },
+  );
+  sb.tables.submissions.push(
+    { id: 's1', tenant_id: TENANT, title: 'Dress', asking_price: 8000, status: 'pending', images: [] },
+    { id: 's2', tenant_id: TENANT, title: 'Hat', asking_price: 2000, status: 'declined', images: [] },
+  );
+  sb.tables.tenant_members.push({ tenant_id: TENANT, user_id: 'u1', role: 'owner', email: 'ada@example.com' });
+  try {
+    const res = await worker.fetch(call(`/api/admin/tenants/${TENANT}`, { token: 'tok-support' }), env(), {});
+    const body = await res.json();
+    assert.deepEqual(body.listings.counts, { active: 1, sold: 1 });
+    assert.deepEqual(body.listings.recent.map((p) => p.public_code).sort(), ['AA11', 'BB22']);
+    assert.deepEqual(body.submissions.counts, { pending: 1, declined: 1 });
+    assert.deepEqual(body.submissions.pending.map((x) => x.title), ['Dress']);
+    assert.equal(body.members[0].email, 'ada@example.com');
+  } finally { restore(); }
+});
+
+test('the overview reports the platform number: what WAHA says and when we last heard', async () => {
+  const sb = makeFakeSupabase({
+    ...seed(),
+    webhook_activity: [{ session: 'ut-platform', last_event_at: '2026-09-26T10:00:00Z', last_message_at: '2026-09-26T09:59:00Z' }],
+  });
+  const waha = {
+    url: 'https://waha.test',
+    handler: async (url) => {
+      if (new URL(url).pathname === '/api/sessions/ut-platform') {
+        return new Response(JSON.stringify({
+          name: 'ut-platform', status: 'WORKING',
+          me: { id: '2348154765611@c.us', pushName: 'Unique Thrift' },
+          config: { webhooks: [{ url: 'https://uniquethrift.ng/api/waha/webhook' }] },
+        }), { status: 200 });
+      }
+      return new Response('?', { status: 404 });
+    },
+  };
+  const restore = installFetch({ supabase: sb, tokens: TOKENS, waha });
+  try {
+    const res = await worker.fetch(
+      call('/api/admin/overview', { token: 'tok-support' }),
+      env({ WAHA_URL: 'https://waha.test', WAHA_API_KEY: 'k', WAHA_SESSION: 'ut-platform', PUBLIC_ORIGIN: 'https://uniquethrift.ng' }),
+      {}
+    );
+    const { platform } = await res.json();
+    assert.equal(platform.status, 'WORKING');
+    assert.equal(platform.number, '2348154765611');
+    assert.equal(platform.webhookOk, true);
+    assert.equal(platform.lastMessageAt, '2026-09-26T09:59:00Z');
+  } finally { restore(); }
+
+  // WAHA unreachable is reported, not thrown.
+  const sb2 = makeFakeSupabase(seed());
+  const restore2 = installFetch({
+    supabase: sb2, tokens: TOKENS,
+    waha: { url: 'https://waha.test', handler: async () => new Response('down', { status: 502 }) },
+  });
+  try {
+    const res = await worker.fetch(
+      call('/api/admin/overview', { token: 'tok-support' }),
+      env({ WAHA_URL: 'https://waha.test', WAHA_API_KEY: 'k', WAHA_SESSION: 'ut-platform' }),
+      {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).platform.status, 'UNREACHABLE');
+  } finally { restore2(); }
+});

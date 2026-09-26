@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import StatusPill from '../../components/ui/StatusPill.jsx';
@@ -13,11 +14,52 @@ const TIER_TONE = {
   business: 'bg-tier-business-lt text-tier-business',
 };
 
+// The status chips. "WhatsApp down" is a store whose own number was linked
+// and has since stopped working: it is still live, and quietly reaching nobody.
+const FILTERS = [
+  { id: 'all', label: 'All', test: () => true },
+  { id: 'onboarding', label: 'Awaiting approval', test: (t) => t.status === 'onboarding' },
+  { id: 'active', label: 'Active', test: (t) => t.status === 'active' },
+  { id: 'suspended', label: 'Suspended', test: (t) => t.status === 'suspended' },
+  { id: 'whatsapp', label: 'WhatsApp down', test: (t) => whatsappBroken(t) },
+];
+
+export function whatsappBroken(t) {
+  return Boolean(t.waha_session) && !['WORKING', 'STARTING', 'SCAN_QR_CODE'].includes(t.waha_status);
+}
+
 export default function AdminTenants() {
   const { data: tenants, isLoading } = useQuery({
     queryKey: ['admin', 'tenants'],
     queryFn: fetchTenants,
   });
+  // ?filter=whatsapp, from the Overview's "Needs attention" rows.
+  const [params] = useSearchParams();
+  const [filter, setFilter] = useState(() =>
+    FILTERS.some((f) => f.id === params.get('filter')) ? params.get('filter') : 'all'
+  );
+  const [plan, setPlan] = useState('all');
+  const [search, setSearch] = useState('');
+
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const digits = q.replace(/\D/g, '');
+    const test = FILTERS.find((f) => f.id === filter)?.test ?? (() => true);
+    return (tenants ?? []).filter(
+      (t) =>
+        test(t) &&
+        (plan === 'all' || t.tier === plan) &&
+        (!q ||
+          t.name?.toLowerCase().includes(q) ||
+          t.slug?.includes(q) ||
+          (digits.length >= 4 && String(t.whatsapp_number ?? '').includes(digits.replace(/^0/, ''))))
+    );
+  }, [tenants, filter, plan, search]);
+
+  const counts = useMemo(
+    () => Object.fromEntries(FILTERS.map((f) => [f.id, (tenants ?? []).filter(f.test).length])),
+    [tenants]
+  );
 
   return (
     <>
@@ -25,6 +67,46 @@ export default function AdminTenants() {
         title="Stores"
         subtitle={tenants ? `${tenants.length} on the platform` : 'Every tenant.'}
       />
+
+      <div className="mb-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, address or number…"
+            className="w-full max-w-xs rounded-pill border border-line bg-surface px-4 py-2 text-sm outline-none placeholder:text-muted focus:border-green/40"
+          />
+          <select
+            value={plan}
+            onChange={(e) => setPlan(e.target.value)}
+            className="rounded-pill border border-line bg-surface px-3 py-2 text-sm text-ink outline-none"
+            aria-label="Plan"
+          >
+            <option value="all">All plans</option>
+            <option value="starter">Starter</option>
+            <option value="growth">Growth</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFilter(f.id)}
+              className={`rounded-pill border px-3 py-1.5 text-xs font-medium transition-colors ${
+                filter === f.id
+                  ? 'border-sidebar bg-sidebar text-white'
+                  : 'border-line bg-surface text-muted hover:text-ink'
+              }`}
+            >
+              {f.label}
+              {tenants ? ` (${counts[f.id]})` : ''}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="card overflow-hidden">
         {isLoading ? (
@@ -34,6 +116,8 @@ export default function AdminTenants() {
             No stores yet. The first one is provisioned by the bot, or by hand —
             see supabase/seed/first_tenant.sql.
           </p>
+        ) : !shown.length ? (
+          <p className="px-4 py-12 text-center text-sm text-muted">No stores match.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -50,7 +134,7 @@ export default function AdminTenants() {
                 </tr>
               </thead>
               <tbody>
-                {tenants.map((t) => (
+                {shown.map((t) => (
                   <tr key={t.id} className="border-b border-line/60 last:border-0 hover:bg-surface-2/60">
                     <td className="px-4 py-3">
                       <Link to={`/admin/tenants/${t.id}`} className="font-medium text-ink hover:underline">
