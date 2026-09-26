@@ -14,6 +14,8 @@ import {
   savedMessage,
   paymentLinkMessage,
   passwordLinkMessage,
+  shareCaption,
+  shareKitIntro,
 } from '../lib/bot.js';
 import { makePaymentLink } from '../lib/paylinks.js';
 import { generateInvite } from '../lib/accounts.js';
@@ -32,6 +34,7 @@ import {
   startTyping,
   typingDelay,
   postImageStatus,
+  sendImage,
   createSession,
   getSession,
   startSession,
@@ -291,7 +294,57 @@ async function message(cfg, event) {
     await sendPasswordLink(cfg, tenant, event.from);
   }
 
+  if (result.action?.type === 'share_kit') {
+    await sendShareKit(cfg, tenant, event.from, result.action);
+  }
+
   return json({ ok: true });
+}
+
+// SHARE, or SHARE <code>: the item's photos and a caption, for the owner to
+// post on Instagram, TikTok or Facebook themselves. Without a code, the item
+// listed most recently. The caption goes on its own, last, so it is one
+// press-and-hold to copy.
+const SHARE_PHOTOS = 4;
+
+async function sendShareKit(cfg, tenant, chat, { code }) {
+  const product = await db(cfg).one(
+    'products',
+    `tenant_id=eq.${tenant.id}&status=eq.active` +
+      (code ? `&public_code=eq.${encodeURIComponent(code)}` : '') +
+      '&select=id,public_code,title,description,price,condition,images&order=created_at.desc'
+  );
+  if (!product) {
+    await say(
+      cfg,
+      tenant,
+      chat,
+      code
+        ? `I can't find an item for sale with the code *${code}*. The code is at the end of the item's link.`
+        : "You don't have anything for sale yet. Send a photo to list your first item."
+    );
+    return;
+  }
+  if (tenant.status !== 'active') {
+    await say(cfg, tenant, chat, 'Your items get their own links once your store is approved. SHARE works from then on.');
+    return;
+  }
+
+  await say(cfg, tenant, chat, shareKitIntro(product));
+  let sent = 0;
+  for (const path of (product.images ?? []).slice(0, SHARE_PHOTOS)) {
+    try {
+      await sendImage(cfg, cfg.wahaSession, chat, { url: publicUrl(cfg, path) });
+      sent += 1;
+    } catch (err) {
+      console.warn('share kit photo failed:', err?.message ?? err);
+    }
+  }
+  // Photos that wouldn't send are still one tap away on the item's page.
+  if (!sent && product.images?.length) {
+    await say(cfg, tenant, chat, `The photos are on the item's page: ${cfg.publicOrigin ?? ''}/p/${product.public_code}`);
+  }
+  await say(cfg, tenant, chat, shareCaption(product, { origin: cfg.publicOrigin }));
 }
 
 // PASSWORD from a store owner: a new set-password link for the store's owner

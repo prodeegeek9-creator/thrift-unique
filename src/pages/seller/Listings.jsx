@@ -6,6 +6,7 @@ import StatusPill from '../../components/ui/StatusPill.jsx';
 import ChannelDots from '../../components/ui/ChannelDots.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import ListingEditor from '../../components/ListingEditor.jsx';
+import ShareSheet from '../../components/ShareSheet.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
 import { fetchListings, fetchListingCounts, fetchChannelPosts } from '../../lib/products.js';
@@ -30,6 +31,7 @@ export default function Listings() {
   const [search, setSearch] = useState('');
   // null: closed. 'new': adding. Otherwise the id being edited.
   const [editing, setEditing] = useState(null);
+  const [sharing, setSharing] = useState(null);
 
   const { data: counts } = useQuery({
     queryKey: keys.listingCounts(tenantId),
@@ -200,21 +202,31 @@ export default function Listings() {
                   >
                     Edit
                   </button>
-                  <button
-                    type="button"
-                    title="Copy share link"
-                    onClick={() => {
-                      const url = productUrl(item.public_code);
-                      navigator.clipboard
-                        ?.writeText(url)
-                        .then(() => toast('Link copied', 'success'))
-                        .catch(() => toast('Could not copy that link', 'error'));
-                    }}
-                    className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted hover:text-ink"
-                  >
-                    <span className="sr-only">Copy share link for {item.title}</span>
-                    <Icon name="more" className="h-4 w-4" />
-                  </button>
+                  {item.status === 'active' ? (
+                    <button
+                      type="button"
+                      onClick={() => setSharing(item)}
+                      className="flex-1 rounded-lg border border-line py-1.5 text-xs font-medium text-ink hover:bg-surface-2"
+                    >
+                      Share
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      title="Copy link"
+                      onClick={() => {
+                        const url = productUrl(item.public_code);
+                        navigator.clipboard
+                          ?.writeText(url)
+                          .then(() => toast('Link copied', 'success'))
+                          .catch(() => toast('Could not copy that link', 'error'));
+                      }}
+                      className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted hover:text-ink"
+                    >
+                      <span className="sr-only">Copy link for {item.title}</span>
+                      <Icon name="more" className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
 
                 {/* The code is what a buyer quotes back to the bot, so it is
@@ -227,6 +239,8 @@ export default function Listings() {
           ))}
         </div>
       )}
+
+      {sharing ? <ShareSheet item={sharing} onClose={() => setSharing(null)} /> : null}
 
       {editing ? (
         <ListingEditor

@@ -13,7 +13,7 @@ import { callWorker } from './api.js';
 // The grid. No description — the cards do not show one, and descriptions are
 // the longest column on the table.
 const LIST_COLUMNS =
-  'id, public_code, title, price, condition, images, status, ' +
+  'id, public_code, title, description, price, condition, images, status, ' +
   'quantity_available, sold_at, created_at';
 
 // The editor needs the negotiation settings and the body copy as well.

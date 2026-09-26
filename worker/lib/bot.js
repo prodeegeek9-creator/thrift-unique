@@ -406,8 +406,42 @@ export function listedMessage(product, { origin, posted } = {}) {
     lines.push('', 'Link your WhatsApp in the dashboard to post listings to your Status automatically.');
   }
 
-  lines.push('', 'Send another photo to list the next one.');
+  lines.push(
+    '',
+    'Reply *SHARE* for the photo and a caption to post on Instagram, TikTok or Facebook.',
+    '',
+    'Send another photo to list the next one.'
+  );
   return lines.join('\n');
+}
+
+// ── THE SHARE KIT ────────────────────────────────────────────────────────────
+//
+// Instagram, TikTok and Facebook can't be posted to from here yet (each needs
+// its own approval), so the seller posts, and this hands them everything to
+// post with: the photos, and a caption that sells. Keep the caption in step
+// with shareCaption() in src/lib/shareKit.js.
+
+export function shareCaption(product, { origin } = {}) {
+  const link = origin ? `${origin}/p/${product.public_code}` : `/p/${product.public_code}`;
+  return [
+    product.title,
+    `${formatNaira(product.price)} · ${conditionLabel(product.condition)}`,
+    product.description ? `\n${String(product.description).trim()}\n` : null,
+    `Order here 👉 ${link}`,
+  ]
+    .filter((l) => l != null)
+    .join('\n');
+}
+
+export function shareKitIntro(product) {
+  return (
+    `📣 Here's *${product.title}*, ready to post.\n\n` +
+    '1. Save the photo (open it, then ⋮ or the share button → Save)\n' +
+    '2. Post it on Instagram, TikTok or Facebook\n' +
+    '3. Copy the caption below (press and hold it → Copy) and paste it in\n\n' +
+    'The link in the caption takes buyers straight to the item.'
+  );
 }
 
 // A listing from a store still waiting for approval: saved, not yet public.
@@ -523,6 +557,8 @@ function idleStep(text, image, ctx = {}) {
   if (MENU_STORE.test(text)) return done(storeLinkMessage(ctx));
   if (MENU_REVIEW.test(text)) return done(reviewMessage(ctx));
   if (MENU_PASSWORD.test(text)) return { state: 'idle', draft: {}, replies: [], action: { type: 'password_link' } };
+  const share = MENU_SHARE.exec(text);
+  if (share) return { state: 'idle', draft: {}, replies: [], action: { type: 'share_kit', code: share[1]?.toUpperCase() ?? null } };
   if (MENU_DASHBOARD.test(text)) return done(dashboardMessage(ctx));
 
   if (START.test(text)) {
@@ -545,6 +581,8 @@ const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s
 const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
 const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
 const MENU_PASSWORD = /^(password|reset password|forgot password|forgot my password|new password|set password)\b/i;
+// SHARE, or SHARE <code>: the photo and a caption, ready to post elsewhere.
+const MENU_SHARE = /^share(?:\s+([a-z0-9]{4,10}))?\s*[.!]*$/i;
 
 const isBrand = (ctx) => ctx.tenant?.store_type === 'brand';
 
@@ -561,6 +599,7 @@ export function menuMessage(ctx = {}) {
   }
   lines.push(
     '💳 *LINK code price* for a payment link to send a buyer (e.g. LINK JBU4PE 30k)',
+    '📣 *SHARE code* for a photo and caption to post on Instagram, TikTok or Facebook',
     '💻 *DASHBOARD* to manage listings, orders and payouts',
     '🔑 *PASSWORD* for a link to set a new dashboard password',
     '',

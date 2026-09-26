@@ -263,6 +263,15 @@ export async function sendText(cfg, session, to, text) {
   });
 }
 
+// A photo in a chat, by URL (WAHA fetches it). Used for the share kit.
+export async function sendImage(cfg, session, to, { url, caption = '', mimetype = 'image/jpeg' }) {
+  const call = client(cfg);
+  return call('/api/sendImage', {
+    method: 'POST',
+    body: { session, chatId: to, file: { url, mimetype, filename: 'item.jpg' }, caption },
+  });
+}
+
 // ── WHATSAPP STATUS ──────────────────────────────────────────────────────────
 
 // The Starter tier's entire distribution channel, and the reason product
