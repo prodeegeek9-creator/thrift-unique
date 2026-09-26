@@ -372,6 +372,21 @@ test('the homepage is indexable and previews as the platform', async () => {
   } finally { restore(); }
 });
 
+// The blank-page bug: the Worker must never answer with an empty document,
+// whether the browser is revalidating its cache or not.
+test('the homepage is never an empty page, even when the browser revalidates', async () => {
+  const restore = installFetch({ supabase: makeFakeSupabase(seed()) });
+  try {
+    for (const headers of [{}, { 'if-none-match': '"abc"' }]) {
+      const res = await worker.fetch(new Request('https://example.com/', { headers }), env(), {});
+      assert.equal(res.status, 200);
+      const html = await res.text();
+      assert.match(html, /<div id="root">/, `empty page with ${JSON.stringify(headers)}`);
+      assert.match(html, /<script type="module"/);
+    }
+  } finally { restore(); }
+});
+
 // ── a store's own page ───────────────────────────────────────────────────────
 
 test("a store's page previews as the store, and an unknown one is just the page", async () => {
