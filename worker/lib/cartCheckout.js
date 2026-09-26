@@ -3,7 +3,6 @@ import { initializeTransaction } from './paystack.js';
 import { nairaToKobo } from './money.js';
 import { formatNaira } from './bot.js';
 import { chatId } from './waha.js';
-import { refundOrder } from './refunds.js';
 import { settle } from '../routes/checkout.js';
 import { confirmToken } from '../routes/confirm.js';
 import { say } from '../routes/waha.js';
@@ -17,7 +16,7 @@ import { takeHold, releaseHold, heldMinutes } from './holds.js';
 // the total. When it succeeds (webhook or the return page), every order in
 // the cart is settled exactly like a single purchase: marked paid, held in
 // escrow or owed to the store, the item taken off sale. An item somebody else
-// bought in the meantime is refunded at once, automatically.
+// bought in the meantime is refunded at once and in full, automatically.
 //
 // Each item is held for the cart while its link is live (lib/holds.js), so
 // that last case needs a link paid after its hold ran out and somebody else
@@ -226,24 +225,13 @@ export async function settleCart(cfg, ref, { kobo }) {
     `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=*&order=payment_ref.asc`
   );
 
+  // An item sold to somebody else first is refunded in full inside settle()
+  // (lateSale), and nobody is paid for it; the messages are sent below, one
+  // for the lot.
   const done = [];
   for (const order of orders) {
     const r = await settle(cfg, order, { kobo: nairaToKobo(order.amount), channel: 'whatsapp', notify: false });
-    done.push({ order: r.order ?? order, doubleSale: Boolean(r.doubleSale), title: r.title });
-  }
-
-  // Sold to somebody else first: the buyer gets that one back straight away.
-  for (const d of done.filter((x) => x.doubleSale)) {
-    try {
-      const refund = await refundOrder(cfg, d.order, {
-        reason: 'Sold to someone else just before your payment',
-        via: 'auto',
-      });
-      d.refunded = refund?.amount ?? null;
-    } catch (err) {
-      console.error('cart: auto-refund failed for', d.order.order_code, err?.message ?? err);
-      d.refundFailed = true;
-    }
+    done.push({ order: r.order ?? order, doubleSale: Boolean(r.doubleSale), refundFailed: Boolean(r.refundFailed), title: r.title });
   }
 
   // The chat is finished with; the next BUY starts a new cart.
@@ -281,8 +269,8 @@ async function tellCart(cfg, cart, done) {
     for (const d of lost) {
       buyer.push(
         d.refundFailed
-          ? `⚠️ *${d.title}* was sold to someone else just before you paid. ${tenant.name} will refund you for it.`
-          : `↩️ *${d.title}* was sold to someone else just before you paid, so it's being refunded to you now.`
+          ? `⚠️ *${d.title}* was sold to someone else just before you paid. Vendwyze will refund you in full for it and message you here when it's on its way.`
+          : `↩️ *${d.title}* was sold to someone else just before you paid, so its full ${formatNaira(d.order.amount)} is being refunded to you. Banks usually take 3 to 10 working days to show it.`
       );
     }
   }
@@ -314,7 +302,7 @@ async function tellCart(cfg, cart, done) {
         : 'Your payout is on its way.',
     ];
     if (lost.length) {
-      lines.push('', `${lost.map((d) => d.title).join(', ')} had already sold, so ${lost.length === 1 ? 'it was' : 'they were'} refunded to the buyer.`);
+      lines.push('', `${lost.map((d) => d.title).join(', ')} had already sold, so Vendwyze is refunding the buyer in full for ${lost.length === 1 ? 'it' : 'them'}. Nothing for you to do.`);
     }
     await say(cfg, tenant, owner, lines.join('\n'));
   }

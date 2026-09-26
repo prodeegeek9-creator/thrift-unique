@@ -15,7 +15,7 @@ function seed({ escrow = true, commission_pct = 8, order = {} } = {}) {
   return {
     tenants: [{ id: TENANT, slug: 'store', name: 'Store', commission_pct }],
     tenant_features: [{ tenant_id: TENANT, flag: 'escrow', enabled: escrow }],
-    products: [{ id: 'prod-1', title: 'Jacket', images: [], condition: 'good' }],
+    products: [{ id: 'prod-1', tenant_id: TENANT, title: 'Jacket', images: [], condition: 'good', status: 'active' }],
     orders: [
       {
         id: 'order-1',

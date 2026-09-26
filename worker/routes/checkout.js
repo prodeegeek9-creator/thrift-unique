@@ -4,7 +4,8 @@ import { json } from '../lib/http.js';
 import { verify } from '../lib/sign.js';
 import { initializeTransaction, fetchTransaction } from '../lib/paystack.js';
 import { koboToNaira, nairaToKobo } from '../lib/money.js';
-import { markPaid, byPaymentRef } from '../lib/orders.js';
+import { markPaid, oweSeller, byPaymentRef } from '../lib/orders.js';
+import { refundOrder, lateSaleBuyerMessage, lateSaleOwnerMessage } from '../lib/refunds.js';
 import { normalizeNumber } from '../lib/phone.js';
 import { chatId } from '../lib/waha.js';
 import { formatNaira } from '../lib/bot.js';
@@ -296,8 +297,11 @@ async function cartStatus(request, env, ref) {
   return json(view);
 }
 
-// A payment Paystack says succeeded, applied to its order: mark it paid (and
-// owe the seller, via markPaid), take the item off sale, and tell both sides.
+// A payment Paystack says succeeded, applied to its order: mark it paid, take
+// the item off sale, owe the seller, and tell both sides. In that order: the
+// store is owed nothing until the item is known to be this buyer's. If it had
+// already sold to somebody else, the payment is refunded in full instead
+// (lateSale) and the store is not paid for it.
 // Shared by the webhook and the return page; markPaid only matches an order
 // still awaiting payment, so whichever arrives second does nothing.
 // notify: false leaves the WhatsApp messages to the caller (a cart sends one
@@ -321,33 +325,85 @@ export async function settle(cfg, order, { kobo, channel, notify = true }) {
     return { order, replayed: true, ignored: 'no tenant' };
   }
 
+  // Recorded first, owing nobody yet. markPaid matches only an order still
+  // awaiting payment, so of the webhook and the return page arriving together
+  // exactly one goes on past here.
   const result = await markPaid(cfg, order, tenant, {
     amountNaira,
     reference: order.payment_ref,
     channel: channel ?? order.source_channel,
+    owe: false,
   });
-  if (!result.replayed) {
-    const after = await afterPayment(cfg, result.order, tenant, { notify }).catch((err) => {
-      // The money is recorded; a failed notice is not worth failing the webhook.
-      console.error('after-payment notices failed:', err?.message ?? err);
-      return null;
-    });
-    return { ...result, doubleSale: Boolean(after?.doubleSale), title: after?.title ?? null };
-  }
-  return result;
-}
+  if (result.replayed) return result;
 
-async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
   // Off sale, for this payment: the item is its if it holds it, or if nobody
-  // else is paying for it (lib/holds.js). A second buyer who paid for
-  // something already gone is the store's to refund, and it is told so below.
-  // A cart's orders hold their items under the cart's reference.
-  const doubleSale = !(await markSold(cfg, {
+  // else is paying for it (lib/holds.js). A cart's orders hold their items
+  // under the cart's reference.
+  const won = await markSold(cfg, {
     productId: order.product_id,
     tenantId: tenant.id,
     ref: cartRefOf(order.payment_ref) ?? order.payment_ref,
-  }));
+  });
+  if (!won) {
+    const lost = await lateSale(cfg, result.order, tenant, { notify });
+    return { ...result, doubleSale: true, title: lost.title, refundFailed: lost.failed };
+  }
 
+  await oweSeller(cfg, result.order);
+  const after = await afterPayment(cfg, result.order, tenant, { notify }).catch((err) => {
+    // The money is recorded; a failed notice is not worth failing the webhook.
+    console.error('after-payment notices failed:', err?.message ?? err);
+    return null;
+  });
+  return { ...result, doubleSale: false, title: after?.title ?? null };
+}
+
+// A payment for an item that had already gone to somebody else: a Paystack
+// page left open past its hold (lib/holds.js), paid after the item was sold.
+// Nobody is credited: no payout, no commission, and the buyer gets all of it
+// back, Vendwyze carrying Paystack's fee (lib/refunds.js, via 'auto'). A
+// refund Paystack refuses is left failed for the operator to retry, and the
+// buyer is told Vendwyze will refund them.
+async function lateSale(cfg, order, tenant, { notify = true } = {}) {
+  await db(cfg)
+    .update('orders', `id=eq.${order.id}&tenant_id=eq.${tenant.id}`, { commission: 0 }, { returning: false })
+    .catch(() => {});
+
+  let failed = false;
+  try {
+    const refund = await refundOrder(cfg, { ...order, commission: 0 }, {
+      reason: 'Sold to someone else just before your payment went through',
+      via: 'auto',
+      tenant,
+      notify: false,
+    });
+    failed = refund?.status === 'failed';
+  } catch (err) {
+    console.error('late sale: refund not started for', order.order_code, err?.message ?? err);
+    failed = true;
+  }
+
+  const [product, buyer] = await Promise.all([
+    db(cfg).one('products', `id=eq.${order.product_id}&select=title`),
+    db(cfg).one('buyers', `id=eq.${order.buyer_id}&select=phone`),
+  ]);
+  const title = product?.title ?? 'your item';
+
+  if (notify) {
+    const own = tenant.waha_session && tenant.waha_status === 'WORKING' ? { session: tenant.waha_session } : {};
+    const toBuyer = chatId(buyer?.phone);
+    const toOwner = chatId(tenant.whatsapp_number);
+    await Promise.all([
+      toBuyer
+        ? say(cfg, tenant, toBuyer, lateSaleBuyerMessage({ store: tenant.name, title, amount: order.amount, failed }), own)
+        : null,
+      toOwner ? say(cfg, tenant, toOwner, lateSaleOwnerMessage({ title, code: order.order_code, amount: order.amount })) : null,
+    ]).catch((err) => console.error('late sale notices failed:', err?.message ?? err));
+  }
+  return { title, failed };
+}
+
+async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
   const [product, buyer, account] = await Promise.all([
     db(cfg).one('products', `id=eq.${order.product_id}&select=title,public_code`),
     db(cfg).one('buyers', `id=eq.${order.buyer_id}&select=name,phone`),
@@ -376,9 +432,6 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
           ? `Your payout is on its way to your ${account.bank_name} account ending ${account.account_last4}.`
           : `Add your bank account under Payouts in your dashboard to receive it: ${cfg.publicOrigin ?? ''}/dashboard/payouts`
     );
-    if (doubleSale) {
-      lines.push('', '⚠️ This item was already sold to someone else. Contact the buyer to arrange a refund or a swap.');
-    }
     await say(cfg, tenant, owner, lines.join('\n'));
   }
 
@@ -389,7 +442,7 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
     'submissions',
     `product_id=eq.${order.product_id}&tenant_id=eq.${tenant.id}&select=seller_chat_id,title,asking_price,owed_amount`
   );
-  if (brought?.seller_chat_id && !doubleSale && tenant.waha_session && tenant.waha_status === 'WORKING') {
+  if (brought?.seller_chat_id && tenant.waha_session && tenant.waha_status === 'WORKING') {
     await say(
       cfg,
       tenant,
@@ -428,7 +481,7 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
     await say(cfg, tenant, to, lines.join('\n'), own);
   }
 
-  return { doubleSale, title };
+  return { title };
 }
 
 function random(length, alphabet = CODE_ALPHABET) {

@@ -738,7 +738,10 @@ without a network, WAHA or Paystack):
   price, or moving down.
 - **Refunds**: from the order page, a dispute or the release queue, back to the
   buyer's card through Paystack less Paystack's fee, only while the payment is
-  still held. Paystack's `refund.*` webhooks settle them.
+  still held. Paystack's `refund.*` webhooks settle them. A payment for an item
+  that had already sold is refunded automatically and in full, with Vendwyze
+  paying the fee, and the store is not paid for it (item 2 under "Before
+  live money").
 - **The operator console** at `/admin`, with its own login at `/admin/login`
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
@@ -796,17 +799,20 @@ in this order, before Paystack is switched to live (item 4 below).
    - A hold running out is not the end of that payment: the order stays
      awaiting payment, so a Paystack page left open can still be paid. If
      someone else has the item by then, that is item 2.
-2. **A late second payment is refunded in full, and nobody is credited.** A
-   Paystack page left open past its hold can still be paid after someone else
-   has bought the item. Today the seller's payout is created before the item is
-   taken off sale (`settle()` in `worker/routes/checkout.js`), so the seller is
-   paid for an item they can't deliver and the refund is then refused. Fix: take
-   the item off sale first; if it has already gone, create no payout, take no
-   commission, and refund the buyer automatically. The buyer gets everything
-   back and Vendwyze absorbs Paystack's fee, because it isn't the buyer's fault.
-   Both sides are told on WhatsApp, and the buyer's message says to allow a few
-   working days. Still to confirm with Paystack: whether a bank-transfer payment
-   can be refunded without the buyer's account details.
+2. **A late second payment is refunded in full, and nobody is credited.**
+   *Done* (`settle()` and `lateSale()` in `worker/routes/checkout.js`,
+   migration 0033). A Paystack page left open past its hold can still be paid
+   after someone else has bought the item. A payment is now recorded first,
+   then the item is taken off sale for it, and only then is the store owed
+   anything. If the item had already gone, no payout is created, no
+   commission is taken, and the buyer is refunded automatically and in full:
+   Vendwyze carries Paystack's fee, recorded on the refund as `platform_fee`.
+   The same applies to an item in a WhatsApp cart and to escrow stores. The
+   buyer is told their full amount is on its way (allow 3 to 10 working
+   days), and the store that nothing is needed from it. A refund Paystack
+   refuses is left failed for the operator to retry, and the buyer is told
+   Vendwyze will refund them. Still to confirm with Paystack: whether a
+   bank-transfer payment can be refunded without the buyer's account details.
 3. **Money problems visible in `/admin`.** Today these only reach the Worker's
    logs: a Paystack payment with no matching order, a webhook with a bad
    signature, a failed payout, a failed refund. (WhatsApp webhook health

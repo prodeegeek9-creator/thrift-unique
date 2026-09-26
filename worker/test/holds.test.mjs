@@ -221,13 +221,26 @@ test('a payment made after its hold was taken over does not take the item from t
     restore();
 
     // Ada finishes paying on the page she left open.
-    const restore2 = installFetch({ supabase, waha, paystackAmountKobo: 3_500_000, paystackStatus: 'success' });
+    const refunds = [];
+    const restore2 = installFetch({
+      supabase,
+      waha,
+      paystackAmountKobo: 3_500_000,
+      paystackStatus: 'success',
+      paystack: async (url, init) => {
+        if (url.endsWith('/refund')) refunds.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ status: true, data: { id: 5, status: 'pending' } }), { status: 200 });
+      },
+    });
     try {
       await get(`/api/checkout/${ada.body.reference}`);
       const jacket = supabase.tables.products.find((p) => p.id === JACKET);
       assert.equal(jacket.status, 'active', 'still Bola’s to pay for');
       assert.equal(jacket.held_by_ref, bolaRef);
-      assert.equal(supabase.tables.orders[0].status, 'paid', 'the money is recorded against her order');
+      // Her money goes straight back, all of it, and the store is owed nothing.
+      assert.equal(supabase.tables.orders[0].status, 'refunded');
+      assert.equal(refunds[0]?.amount, 3_500_000);
+      assert.equal(supabase.tables.payouts.length, 0);
     } finally { restore2(); }
   } finally { restore(); }
 });

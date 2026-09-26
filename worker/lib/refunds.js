@@ -22,6 +22,11 @@ import { say } from '../routes/waha.js';
 // that didn't happen, so it is not the store's or the platform's to absorb.
 // Vendwyze waives its commission on a refunded sale.
 //
+// The exception is an automatic refund (via 'auto'): a second payment for an
+// item that had already sold (lateSale in routes/checkout.js). That is not
+// the buyer's doing, so they get everything back and Vendwyze pays the fee,
+// recorded as platform_fee (migration 0033).
+//
 // The order of operations is what keeps this safe to run twice or alongside
 // the escrow sweep:
 //
@@ -61,12 +66,13 @@ export async function refundPreview(cfg, order) {
   };
 }
 
-// refundOrder(cfg, order, { reason, via, by, relist, tenant })
-//   via     'store' | 'operator' | 'dispute'
+// refundOrder(cfg, order, { reason, via, by, relist, tenant, notify })
+//   via     'store' | 'operator' | 'dispute' | 'auto' (in full, see above)
 //   relist  put the item back on sale (only if nobody else has bought it)
+//   notify  false when the caller tells the buyer and the store itself
 //
 // Returns the refund row. Throws RefundError with a message fit to show.
-export async function refundOrder(cfg, order, { reason = null, via, by = null, relist = false, tenant = null } = {}) {
+export async function refundOrder(cfg, order, { reason = null, via, by = null, relist = false, tenant = null, notify = true } = {}) {
   const blocked = await whyNot(cfg, order);
   if (blocked) throw new RefundError(blocked);
 
@@ -126,9 +132,11 @@ export async function refundOrder(cfg, order, { reason = null, via, by = null, r
   // 4. The money.
   refund = await sendRefund(cfg, refund, order);
 
-  await tellPeople(cfg, order, refund, tenant).catch((err) =>
-    console.error('refund notices failed:', order.order_code, err?.message ?? err)
-  );
+  if (notify) {
+    await tellPeople(cfg, order, refund, tenant).catch((err) =>
+      console.error('refund notices failed:', order.order_code, err?.message ?? err)
+    );
+  }
 
   return refund;
 }
@@ -281,15 +289,21 @@ async function sendRefund(cfg, refund, order) {
 
   const split = await feeSplit(cfg, order);
   if (!split) return markFailed(cfg, refund, "Couldn't read the payment from Paystack to work out its fee");
-  if (split.refundKobo <= 0) return markFailed(cfg, refund, "Paystack's fee is the whole payment; nothing to refund");
 
-  const amounts = { paid: split.paid, fee: split.fee, amount: split.amount };
+  // In full when Vendwyze carries the fee; otherwise less it.
+  const full = refund.requested_via === 'auto';
+  const refundKobo = full ? split.paidKobo : split.refundKobo;
+  if (refundKobo <= 0) return markFailed(cfg, refund, "Paystack's fee is the whole payment; nothing to refund");
+
+  const amounts = full
+    ? { paid: split.paid, fee: 0, amount: split.paid, platform_fee: split.fee }
+    : { paid: split.paid, fee: split.fee, amount: split.amount };
   try {
     const data = await paystack(cfg, '/refund', {
       method: 'POST',
       body: {
         transaction: split.txRef,
-        amount: split.refundKobo,
+        amount: refundKobo,
         currency: 'NGN',
         merchant_note: `Refund for order ${order.order_code}${refund.reason ? `: ${refund.reason}` : ''}`.slice(0, 250),
         ...(refund.reason ? { customer_note: refund.reason.slice(0, 250) } : {}),
@@ -354,6 +368,24 @@ export function refundedBuyerMessage({ store, title, code, paid, fee, amount, re
       : '') +
     (reason ? `\n\nReason: ${reason}` : '') +
     '\n\nBanks usually take 3 to 10 working days to show it.'
+  );
+}
+
+// A second payment for an item that had already sold (lateSale in
+// routes/checkout.js). In full: see the top of this file.
+export function lateSaleBuyerMessage({ store, title, amount, failed = false }) {
+  return (
+    `↩️ Sorry, *${title}* from ${store} sold to someone else just before your payment went through.` +
+    (failed
+      ? `\n\nVendwyze will refund your full ${formatNaira(amount)} and message you here when it's on its way.`
+      : `\n\nYour full ${formatNaira(amount)} is being refunded to the card or account you paid with. Banks usually take 3 to 10 working days to show it.`)
+  );
+}
+
+export function lateSaleOwnerMessage({ title, code, amount }) {
+  return (
+    `ℹ️ A second payment (${formatNaira(amount)}, order ${code}) came in for *${title}* after it had sold. ` +
+    "Vendwyze is refunding that buyer in full, so there's nothing for you to do, and your payouts aren't affected."
   );
 }
 

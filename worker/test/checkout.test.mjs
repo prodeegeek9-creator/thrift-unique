@@ -258,11 +258,96 @@ test('an escrow order sends the buyer the link that releases the money', async (
   } finally { restore(); }
 });
 
-test('a second buyer paying for a sold item is flagged to the store', async () => {
-  const { sent, restore } = await paidOrder({ alreadySold: true });
+// A payment for an item that had already sold: a Paystack page left open past
+// its hold. Nobody is paid for it and the buyer gets everything back.
+async function lateSale({ escrow = false, refundStatus = 200 } = {}) {
+  const supabase = makeFakeSupabase(seed({ escrow, product: { status: 'sold' } }));
+  supabase.tables.buyers.push({ id: 'b1', tenant_id: TENANT, phone: '2348031234567', name: 'Ada Obi' });
+  supabase.tables.orders.push({
+    id: 'o1', tenant_id: TENANT, order_code: 'UT-ABC234', product_id: PRODUCT, buyer_id: 'b1',
+    amount: 35000, commission: 0, status: 'awaiting_payment', escrow_status: 'none',
+    payment_ref: 'utp_testreference0001', source_channel: 'direct',
+    delivery_address: '12 Allen Avenue, Ikeja', buyer_note: null,
+  });
+  supabase.tables.payout_accounts = [{ tenant_id: TENANT, bank_name: 'GTBank', account_last4: '1234', recipient_code: 'RCP_1' }];
+  const { waha, sent } = fakeWaha();
+  const refunds = [];
+  const transfers = [];
+  const restore = installFetch({
+    supabase,
+    waha,
+    paystackAmountKobo: 3_500_000,
+    paystackFeesKobo: 62_500,
+    paystack: async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path === '/refund') {
+        refunds.push(JSON.parse(init.body));
+        return refundStatus === 200
+          ? new Response(JSON.stringify({ status: true, data: { id: 91, status: 'pending' } }), { status: 200 })
+          : new Response(JSON.stringify({ status: false, message: 'Customer bank details required' }), { status: 400 });
+      }
+      if (path === '/transfer') transfers.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ status: true, data: { transfer_code: 'TRF', status: 'pending' } }), { status: 200 });
+    },
+  });
+  const res = await worker.fetch(get('/api/checkout/utp_testreference0001'), E(), {});
+  return { supabase, sent, refunds, transfers, restore, res };
+}
+
+test('a payment for an item already sold is refunded in full, and the store is not paid for it', async () => {
+  const { supabase, sent, refunds, transfers, restore } = await lateSale();
   try {
-    const toOwner = sent.find((m) => m.chatId === `${OWNER_PHONE}@c.us`);
-    assert.match(toOwner.text, /already sold to someone else/);
+    const order = supabase.tables.orders[0];
+    assert.equal(order.status, 'refunded');
+    assert.equal(order.commission, 0, 'no commission on a sale that did not happen');
+    assert.equal(supabase.tables.payouts.length, 0, 'nothing owed to the store');
+    assert.equal(transfers.length, 0, 'nothing sent to the store');
+
+    // Everything back: Vendwyze carries Paystack's ₦625 fee.
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0].transaction, 'utp_testreference0001');
+    assert.equal(refunds[0].amount, 3_500_000);
+    const refund = supabase.tables.refunds[0];
+    assert.equal(refund.requested_via, 'auto');
+    assert.equal(refund.amount, 35000);
+    assert.equal(refund.fee, 0);
+    assert.equal(refund.platform_fee, 625);
+
+    const toBuyer = sent.find((m) => m.chatId === '2348031234567@c.us');
+    assert.match(toBuyer.text, /sold to someone else just before your payment went through/);
+    assert.match(toBuyer.text, /Your full ₦35,000 is being refunded/);
+    assert.match(toBuyer.text, /3 to 10 working days/);
+    assert.doesNotMatch(toBuyer.text, /Payment received/);
+
+    const toOwner = sent.filter((m) => m.chatId === `${OWNER_PHONE}@c.us`);
+    assert.equal(toOwner.length, 1, 'one message, not a new-order message');
+    assert.match(toOwner[0].text, /second payment.*came in for \*Leather Jacket\* after it had sold/);
+    assert.match(toOwner[0].text, /nothing for you to do/);
+
+    // Asking again changes nothing.
+    await worker.fetch(get('/api/checkout/utp_testreference0001'), E(), {});
+    assert.equal(refunds.length, 1);
+    assert.equal(supabase.tables.refunds.length, 1);
+  } finally { restore(); }
+});
+
+test('on an escrow store, a payment for an item already sold is refunded from the hold', async () => {
+  const { supabase, refunds, restore } = await lateSale({ escrow: true });
+  try {
+    const order = supabase.tables.orders[0];
+    assert.equal(order.status, 'refunded');
+    assert.equal(order.escrow_status, 'refunded', 'escrow can no longer release it');
+    assert.equal(refunds[0].amount, 3_500_000);
+  } finally { restore(); }
+});
+
+test('a refund Paystack refuses is left for the operator, and the buyer is told Vendwyze will refund them', async () => {
+  const { supabase, sent, restore } = await lateSale({ refundStatus: 400 });
+  try {
+    assert.equal(supabase.tables.refunds[0].status, 'failed');
+    assert.equal(supabase.tables.payouts.length, 0);
+    const toBuyer = sent.find((m) => m.chatId === '2348031234567@c.us');
+    assert.match(toBuyer.text, /Vendwyze will refund your full ₦35,000 and message you here/);
   } finally { restore(); }
 });
 
