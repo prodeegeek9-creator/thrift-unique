@@ -691,7 +691,7 @@ without a network, WAHA or Paystack):
   sale, owner and buyer told on WhatsApp, escrow link for escrow plans.
 - **One buyer at a time for each item**: pressing Pay holds the item for 15
   minutes, and every route shows "Payment in progress" meanwhile
-  (`worker/lib/holds.js`, migration 0031). See item 1 under "Before live
+  (`worker/lib/holds.js`, migration 0032). See item 1 under "Before live
   money".
 - **Paying stores**: the owner adds a bank account (checked with the bank
   through Paystack; only the last four digits are kept), and payouts go out as
@@ -745,7 +745,7 @@ Decided after an outside review of this README, to be done one at a time and
 in this order, before Paystack is switched to live (item 4 below).
 
 1. **One buyer at a time for each item.** *Done* (`worker/lib/holds.js`,
-   migration 0031). When a buyer has entered their details and pressed Pay,
+   migration 0032). When a buyer has entered their details and pressed Pay,
    the item is held for them for 15 minutes, before an order or a Paystack
    page exists. Everyone else sees "Payment in progress" instead of the Pay
    button: on the product page, on a payment link, and for WhatsApp BUY. The

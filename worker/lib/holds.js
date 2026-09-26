@@ -4,7 +4,7 @@ import { byPaymentRef } from './orders.js';
 import { settle } from '../routes/checkout.js';
 import { settleCart, isCartRef } from './cartCheckout.js';
 
-// One buyer at a time for each item (migration 0031).
+// One buyer at a time for each item (migration 0032).
 //
 // A thrift item is usually the only one, and it can be bought from its page,
 // from a payment link or in a WhatsApp cart. Every one of those routes takes
