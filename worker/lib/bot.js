@@ -502,6 +502,7 @@ function idleStep(text, image, ctx = {}) {
   // The menu's own words, before START: "review items" is not a listing.
   if (MENU_STORE.test(text)) return done(storeLinkMessage(ctx));
   if (MENU_REVIEW.test(text)) return done(reviewMessage(ctx));
+  if (MENU_PASSWORD.test(text)) return { state: 'idle', draft: {}, replies: [], action: { type: 'password_link' } };
   if (MENU_DASHBOARD.test(text)) return done(dashboardMessage(ctx));
 
   if (START.test(text)) {
@@ -523,6 +524,7 @@ const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
 const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s+(.+))?$/i;
 const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
 const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
+const MENU_PASSWORD = /^(password|reset password|forgot password|forgot my password|new password|set password)\b/i;
 
 const isBrand = (ctx) => ctx.tenant?.store_type === 'brand';
 
@@ -540,6 +542,7 @@ export function menuMessage(ctx = {}) {
   lines.push(
     '💳 *LINK code price* for a payment link to send a buyer (e.g. LINK JBU4PE 30k)',
     '💻 *DASHBOARD* to manage listings, orders and payouts',
+    '🔑 *PASSWORD* for a link to set a new dashboard password',
     '',
     'Reply *cancel* any time to stop.'
   );
@@ -577,7 +580,10 @@ export function reviewMessage(ctx = {}) {
 
 export function dashboardMessage(ctx = {}) {
   const where = ctx.origin ? `${ctx.origin}/dashboard` : '/dashboard';
-  return `💻 Your dashboard:\n${where}\n\nSign in with the email you signed up with.`;
+  return (
+    `💻 Your dashboard:\n${where}\n\nSign in with the email you signed up with.` +
+    '\n\nNo password yet, or forgotten it? Reply *PASSWORD* for a link to set one.'
+  );
 }
 
 // The store's "Sell with us" link: its own number, with SELL typed. Keep the
@@ -767,4 +773,14 @@ export function staleness(conversation, ctx) {
   const then = new Date(conversation.updated_at).getTime();
   if (!Number.isFinite(then)) return false;
   return now - then > STALE_AFTER_HOURS * 3_600_000;
+}
+
+// The reply to PASSWORD: a one-time link to set a dashboard password, sent to
+// the store's own WhatsApp number, which is how the store is known here. It
+// opens our /welcome page and is only used when they press Continue there.
+export function passwordLinkMessage({ link, email }) {
+  return (
+    `🔑 Here's your link to set a new dashboard password${email ? ` for ${email}` : ''}:\n${link}\n\n` +
+    "It works once. Open it, press Continue, then choose your password. Don't share it with anyone."
+  );
 }

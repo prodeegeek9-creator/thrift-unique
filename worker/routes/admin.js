@@ -13,6 +13,7 @@ import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js'
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
+import { generateInvite } from '../lib/accounts.js';
 import { refundOrder, refundPreview, retryRefund, RefundError } from '../lib/refunds.js';
 
 // The platform-operator console's API.
@@ -79,6 +80,12 @@ export async function handleAdmin(request, env, path) {
 
   const recorded = rest.match(/^\/tenants\/([0-9a-f-]{36})\/billing\/record$/i);
   if (recorded && method === 'POST') return recordPlanPayment(request, cfg, op, recorded[1]);
+
+  const memberLink = rest.match(/^\/tenants\/([0-9a-f-]{36})\/members\/([0-9a-f-]{36})\/link$/i);
+  if (memberLink && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return storeMemberLink(cfg, op, memberLink[1], memberLink[2]);
+  }
 
   const paused = rest.match(/^\/tenants\/([0-9a-f-]{36})\/payouts-paused$/i);
   if (paused && method === 'POST') return setPayoutsPaused(request, cfg, op, paused[1]);
@@ -775,6 +782,31 @@ async function resolveDispute(request, cfg, op, disputeId) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// POST /api/admin/tenants/:id/members/:userId/link
+//
+// A fresh set-password link for somebody on a store's team: an invitation that
+// never worked, or a forgotten password. Shown to copy or send; it lands on
+// /welcome, which only redeems it when they press Continue.
+async function storeMemberLink(cfg, op, tenantId, userId) {
+  const member = await db(cfg).one(
+    'tenant_members',
+    `tenant_id=eq.${tenantId}&user_id=eq.${userId}&select=user_id,email,role`
+  );
+  if (!member) return json({ error: 'Not on this store’s team.' }, 404);
+  if (!member.email) return json({ error: 'No email on file for them.' }, 409);
+
+  let link = null;
+  try {
+    ({ link } = await generateInvite(cfg, member.email, { type: 'recovery', origin: cfg.publicOrigin ?? null, landing: '/welcome' }));
+  } catch (err) {
+    console.error('member link failed:', err?.message ?? err);
+  }
+  if (!link) return json({ error: 'Could not make a link just now. Try again shortly.' }, 502);
+
+  await audit(cfg, op.userId, 'member.link', { tenantId, subject: member.email, detail: { role: member.role } });
+  return json({ ok: true, link });
+}
 
 // ── REFUNDS ──────────────────────────────────────────────────────────────────
 

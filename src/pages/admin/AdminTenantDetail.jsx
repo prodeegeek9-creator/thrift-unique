@@ -14,6 +14,7 @@ import {
   setPayoutsPaused,
   retryPayout,
   recordPlanPayment,
+  newMemberLink,
 } from '../../lib/admin.js';
 import { PLAN_PRICES } from '../../lib/billing.js';
 import { payoutStatusLabel } from '../../lib/payouts.js';
@@ -220,7 +221,7 @@ export default function AdminTenantDetail({ operator }) {
           <PlanCard tenant={tenant} isOwner={isOwner} onSaved={invalidate} />
           <BillingCard tenant={tenant} billing={billing} isOwner={isOwner} onSaved={invalidate} />
           <DetailsCard tenant={tenant} isOwner={isOwner} onSaved={invalidate} />
-          <TeamCard members={members} />
+          <TeamCard tenant={tenant} members={members} isOwner={isOwner} />
         </div>
       </div>
 
@@ -546,21 +547,44 @@ function detailsForm(tenant) {
   };
 }
 
-function TeamCard({ members }) {
+function TeamCard({ tenant, members, isOwner }) {
+  const toast = useToast();
+  const [shown, setShown] = useState(null); // { email, link }
+  const make = useMutation({
+    mutationFn: (m) => newMemberLink(tenant.id, m.user_id).then((r) => ({ email: m.email, link: r.link })),
+    onSuccess: setShown,
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  const number = String(tenant.whatsapp_number ?? '').replace(/\D/g, '');
+  const message = shown
+    ? `Here's a link to set your Vendwyze dashboard password (${shown.email}): ${shown.link}`
+    : '';
+
   return (
     <section className="card p-4">
       <h2 className="text-sm font-semibold text-ink">Team</h2>
       {members.length ? (
-        <ul className="mt-2 space-y-1.5 text-sm">
+        <ul className="mt-2 space-y-2 text-sm">
           {members.map((m) => (
             <li key={m.user_id} className="flex items-center justify-between gap-2">
               <span className="min-w-0 truncate text-ink">
                 {m.display_name || m.email || 'Unnamed'}
                 {m.display_name && m.email ? <span className="block truncate text-[11px] text-muted">{m.email}</span> : null}
               </span>
-              <span className="shrink-0 text-[11px] capitalize text-muted">
+              <span className="flex shrink-0 items-center gap-2 text-[11px] capitalize text-muted">
                 {m.role}
                 {m.accepted_at ? '' : ' · invited'}
+                {isOwner && m.email ? (
+                  <button
+                    type="button"
+                    disabled={make.isPending}
+                    onClick={() => make.mutate(m)}
+                    className="rounded-pill border border-line px-2 py-0.5 text-[11px] normal-case text-ink hover:bg-surface-2 disabled:opacity-60"
+                  >
+                    New sign-in link
+                  </button>
+                ) : null}
               </span>
             </li>
           ))}
@@ -568,6 +592,40 @@ function TeamCard({ members }) {
       ) : (
         <p className="mt-1 text-sm text-muted">Nobody yet. The owner's login is created on approval.</p>
       )}
+
+      {shown ? (
+        <div className="mt-3 space-y-2 rounded-lg border border-gold/40 p-3">
+          <p className="text-xs text-text">
+            Sign-in link for {shown.email}. It works once and is shown only now.
+          </p>
+          <p className="break-all rounded bg-bg px-2 py-1.5 font-mono text-[10px] text-text">{shown.link}</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                navigator.clipboard
+                  ?.writeText(shown.link)
+                  .then(() => toast('Link copied', 'success'))
+                  .catch(() => toast('Copy it by hand', 'error'))
+              }
+              className="rounded-pill bg-ink px-3 py-1 text-[11px] font-semibold text-white"
+            >
+              Copy link
+            </button>
+            <a
+              href={`https://wa.me/${number}?text=${encodeURIComponent(message)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-pill bg-green px-3 py-1 text-[11px] font-semibold text-white"
+            >
+              Send to the store on WhatsApp
+            </a>
+            <button type="button" onClick={() => setShown(null)} className="px-1 text-[11px] text-muted">
+              Done
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -455,7 +455,11 @@ function approvalCtx({ accounts = {}, generateStatus = 200, wahaStatus = 200 } =
       return new Response(
         JSON.stringify({
           user: { id: 'user-new-owner', email: body.email },
-          properties: { action_link: 'https://project.supabase.co/auth/v1/verify?token=owner' },
+          properties: {
+            action_link: 'https://project.supabase.co/auth/v1/verify?token=owner',
+            hashed_token: 'hashed-owner',
+            verification_type: body.type,
+          },
         }),
         { status: 200 }
       );
@@ -495,7 +499,7 @@ test('approving a sign-up makes the owner and tells them on WhatsApp', async () 
     assert.equal(generated.length, 1);
     assert.equal(generated[0].type, 'invite');
     assert.equal(generated[0].email, 'ada@example.com');
-    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fdashboard/);
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fwelcome/);
 
     const owner = sb.tables.tenant_members.find((m) => m.tenant_id === PENDING);
     assert.equal(owner.user_id, 'user-new-owner');
@@ -506,7 +510,10 @@ test('approving a sign-up makes the owner and tells them on WhatsApp', async () 
     assert.equal(sent[0].session, 'ut-platform');
     assert.equal(sent[0].chatId, PENDING_CHAT);
     assert.match(sent[0].text, /Ada Stores\* is approved/);
-    assert.match(sent[0].text, /verify\?token=owner/);
+    // Our welcome page, never Supabase's own one-time link: WAHA fetches every
+    // URL it sends for a preview, and that fetch would spend Supabase's.
+    assert.match(sent[0].text, /https:\/\/uniquethrift\.ng\/welcome#token_hash=hashed-owner&type=invite/);
+    assert.doesNotMatch(sent[0].text, /auth\/v1\/verify/);
     // And the address of their store's own page, live from now.
     assert.match(sent[0].text, /\/s\/ada-stores/);
 
@@ -541,7 +548,7 @@ test('when WhatsApp cannot deliver the approval, the operator is handed the link
   try {
     const body = await (await approve()).json();
     assert.equal(body.notified, false);
-    assert.equal(body.link, 'https://project.supabase.co/auth/v1/verify?token=owner');
+    assert.equal(body.link, 'https://uniquethrift.ng/welcome#token_hash=hashed-owner&type=invite');
     assert.equal(pending(sb).status, 'active');
   } finally { restore(); }
 });

@@ -15,8 +15,9 @@ import { EMAIL, generateInvite } from '../lib/accounts.js';
 //
 // Sign-in links are handed back to the console to copy, not sent: the person
 // adding a colleague knows how to reach them, and nothing here depends on the
-// project's email being set up. The link lands on /admin/login, where the
-// console's own session picks it up (src/lib/adminAuth.jsx).
+// project's email being set up. The link lands on /admin/welcome, which
+// redeems it into the console's own session when they press Continue
+// (src/lib/adminAuth.jsx, src/pages/Welcome.jsx).
 
 const LEVELS = ['support', 'owner'];
 
@@ -49,7 +50,7 @@ export async function addToTeam(request, cfg, op) {
     if (already) return json({ error: 'They are already on the admin team.' }, 409);
   } else {
     try {
-      const created = await generateInvite(cfg, email, { redirectTo: consoleUrl(cfg) });
+      const created = await generateInvite(cfg, email, { origin: cfg.publicOrigin ?? null, landing: '/admin/welcome' });
       userId = created?.userId ?? null;
       link = created?.link ?? null;
     } catch (err) {
@@ -115,7 +116,7 @@ export async function teamLink(cfg, op, userId) {
 
   let link = null;
   try {
-    ({ link } = await generateInvite(cfg, member.email, { type: 'recovery', redirectTo: consoleUrl(cfg) }));
+    ({ link } = await generateInvite(cfg, member.email, { type: 'recovery', origin: cfg.publicOrigin ?? null, landing: '/admin/welcome' }));
   } catch (err) {
     console.error('admin link failed:', err?.message ?? err);
   }
@@ -125,6 +126,3 @@ export async function teamLink(cfg, op, userId) {
   return json({ ok: true, link });
 }
 
-function consoleUrl(cfg) {
-  return cfg.publicOrigin ? `${cfg.publicOrigin}/admin/login` : null;
-}
