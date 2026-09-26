@@ -4,7 +4,8 @@ import TierBadge from '../ui/TierBadge.jsx';
 import { BrandLockup } from '../ui/BrandMark.jsx';
 import TenantSwitcher from './TenantSwitcher.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { mainNavFor, CHANNEL_NAV, FOOTER_NAV } from './navItems.js';
+import { mainNavFor, CHANNEL_NAV, FOOTER_NAV, OPERATOR_NAV } from './navItems.js';
+import { useOperator } from '../../lib/useOperator.js';
 
 function NavRow({ item }) {
   const { can } = useTenant();
@@ -35,6 +36,7 @@ function NavRow({ item }) {
 
 export default function Sidebar() {
   const { tenant } = useTenant();
+  const operator = useOperator();
   return (
     <aside className="hidden w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
       <div className="px-5 py-5">
@@ -57,6 +59,7 @@ export default function Sidebar() {
         {FOOTER_NAV.map((item) => (
           <NavRow key={item.to} item={item} />
         ))}
+        {operator ? <NavRow item={OPERATOR_NAV} /> : null}
       </nav>
 
       {/* The tenant switcher sits in the sidebar footer, which is where the

@@ -51,6 +51,9 @@ export const FOOTER_NAV = [
   { to: '/dashboard/help', icon: 'help', label: 'Help' },
 ];
 
+// Only drawn for platform operators; see useOperator().
+export const OPERATOR_NAV = { to: '/admin', icon: 'lock', label: 'Operator console' };
+
 // Mobile. Five slots is what a thumb reach allows, so the four that survive
 // are the four a seller opens daily and everything else goes behind More.
 export const TAB_NAV = [

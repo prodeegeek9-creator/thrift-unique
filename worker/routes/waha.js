@@ -103,6 +103,8 @@ async function webhook(request, env) {
     return json({ error: 'Not authorised' }, 403);
   }
 
+  await touchActivity(cfg, event);
+
   if (event.kind === 'status') return recordStatus(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
@@ -141,6 +143,27 @@ async function checkSecret(request, cfg, session) {
   if (!row?.webhook_secret) return false;
 
   return timingSafeEqual(presented, row.webhook_secret);
+}
+
+// That WhatsApp reached us, for the operator console's health check. See
+// migration 0020. Best-effort: a missed heartbeat is not worth a retry.
+async function touchActivity(cfg, event) {
+  if (!event.session) return;
+  const now = new Date().toISOString();
+  try {
+    await db(cfg).insert(
+      'webhook_activity',
+      {
+        session: event.session,
+        last_event_at: now,
+        ...(event.kind === 'message' ? { last_message_at: now } : {}),
+        ...(event.kind === 'status' && event.status ? { last_status: event.status } : {}),
+      },
+      { onConflict: 'session', merge: true, returning: false }
+    );
+  } catch (err) {
+    console.warn('webhook activity not recorded:', err?.message ?? err);
+  }
 }
 
 // A session changed state: starting, waiting for a scan, working, dead.

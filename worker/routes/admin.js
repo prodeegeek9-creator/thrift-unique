@@ -1,8 +1,9 @@
 import { require_, originOf } from '../lib/env.js';
 import { approveStore } from '../lib/provision.js';
 import { approvedMessage } from '../lib/bot.js';
-import { sendText } from '../lib/waha.js';
-import { db } from '../lib/supabase.js';
+import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
+import { TIERS, FLAG_MIN_TIER, planIncludes } from '../lib/plans.js';
+import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
 import { releaseEscrow } from '../lib/orders.js';
@@ -36,7 +37,7 @@ export async function handleAdmin(request, env, path) {
     return json({ level: op.level, email: op.email });
   }
 
-  if (rest === '/overview' && method === 'GET') return overview(cfg);
+  if (rest === '/overview' && method === 'GET') return overview(cfg, request);
   if (rest === '/tenants' && method === 'GET') return listTenants(cfg);
   if (rest === '/escrow' && method === 'GET') return releaseQueue(cfg);
   if (rest === '/disputes' && method === 'GET') return listDisputes(cfg);
@@ -51,6 +52,12 @@ export async function handleAdmin(request, env, path) {
   const status = rest.match(/^\/tenants\/([0-9a-f-]{36})\/status$/i);
   if (status && method === 'POST') return setStatus(request, cfg, op, status[1]);
 
+  const plan = rest.match(/^\/tenants\/([0-9a-f-]{36})\/plan$/i);
+  if (plan && method === 'POST') return setPlan(request, cfg, op, plan[1]);
+
+  const details = rest.match(/^\/tenants\/([0-9a-f-]{36})\/details$/i);
+  if (details && method === 'POST') return setDetails(request, cfg, op, details[1]);
+
   const release = rest.match(/^\/escrow\/([0-9a-f-]{36})\/release$/i);
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
 
@@ -62,12 +69,13 @@ export async function handleAdmin(request, env, path) {
 
 // ── READS ────────────────────────────────────────────────────────────────────
 
-async function overview(cfg) {
-  const [tenants, orders, held, disputes] = await Promise.all([
+async function overview(cfg, request) {
+  const [tenants, orders, held, disputes, platform] = await Promise.all([
     db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
+    platformHealth(cfg, request),
   ]);
 
   const gross = sum(orders, (o) => Number(o.amount));
@@ -77,6 +85,7 @@ async function overview(cfg) {
     tenants: {
       total: tenants.length,
       active: tenants.filter((t) => t.status === 'active').length,
+      awaiting: tenants.filter((t) => t.status === 'onboarding').length,
       byTier: countBy(tenants, (t) => t.tier),
     },
     gmv: gross,
@@ -102,6 +111,7 @@ async function overview(cfg) {
       overdue: held.filter((o) => o.confirm_deadline && new Date(o.confirm_deadline) < now).length,
     },
     openDisputes: disputes.length,
+    platform,
 
     // WhatsApp, across the platform.
     //
@@ -120,11 +130,70 @@ async function overview(cfg) {
   });
 }
 
+// The platform number, which every store signs up and lists through. Two
+// views of it, because either can be wrong while the other looks fine:
+//
+//   what WAHA says    the session's state, the number it is logged in as,
+//                     and where it sends messages
+//   what we saw       when a webhook last actually reached this Worker
+//
+// WAHA can say WORKING while every message it sends is turned away before
+// the Worker runs; only the second view shows that.
+async function platformHealth(cfg, request) {
+  const session = cfg.wahaSession || null;
+  const out = {
+    session,
+    configured: Boolean(cfg.wahaUrl && session),
+    status: null,
+    number: null,
+    name: null,
+    webhooks: [],
+    expectedWebhook: null,
+    webhookOk: null,
+    lastEventAt: null,
+    lastMessageAt: null,
+    error: null,
+  };
+  if (!out.configured) return out;
+
+  const origin = originOf(request, cfg);
+  out.expectedWebhook = origin ? `${origin}/api/waha/webhook` : null;
+
+  const [live, activity] = await Promise.all([
+    withTimeout(getSession(cfg, session), 5000).catch((err) => ({ error: err?.message ?? 'unreachable' })),
+    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=*`).catch(() => null),
+  ]);
+
+  if (live?.error) {
+    out.status = 'UNREACHABLE';
+    out.error = String(live.error).slice(0, 200);
+  } else if (!live) {
+    out.status = 'MISSING';
+  } else {
+    out.status = live.status ?? null;
+    out.number = phoneFromChatId(live.me?.id) ?? null;
+    out.name = live.me?.pushName ?? null;
+    out.webhooks = (live.config?.webhooks ?? []).map((w) => w.url).filter(Boolean);
+    out.webhookOk = out.expectedWebhook ? out.webhooks.includes(out.expectedWebhook) : null;
+  }
+
+  out.lastEventAt = activity?.last_event_at ?? null;
+  out.lastMessageAt = activity?.last_message_at ?? null;
+  return out;
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer in ${ms / 1000}s`)), ms)),
+  ]);
+}
+
 async function listTenants(cfg) {
   const tenants = await db(cfg).select(
     'tenants',
     'select=id,slug,name,tier,status,commission_pct,whatsapp_number,waha_session,' +
-      'waha_status,created_at' +
+      'waha_status,store_type,category,created_at' +
       '&order=created_at.desc&limit=200'
   );
 
@@ -143,11 +212,26 @@ async function listTenants(cfg) {
 }
 
 async function tenantView(cfg, tenantId) {
-  const [tenant, flags, members, orders] = await Promise.all([
+  const [tenant, flags, members, orders, products, submissions] = await Promise.all([
     db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
-    db(cfg).select('tenant_members', `tenant_id=eq.${tenantId}&select=user_id,role,created_at`),
+    db(cfg).select(
+      'tenant_members',
+      `tenant_id=eq.${tenantId}&select=user_id,role,email,display_name,accepted_at,created_at`
+    ),
     db(cfg).select('orders', `tenant_id=eq.${tenantId}&select=amount,commission,status,escrow_status`),
+    // What the store has up, and what is waiting on it. Capped: this is a look
+    // inside, not a second copy of the store's own dashboard.
+    db(cfg).select(
+      'products',
+      `tenant_id=eq.${tenantId}&select=id,public_code,title,price,status,images,created_at` +
+        '&order=created_at.desc&limit=500'
+    ),
+    db(cfg).select(
+      'submissions',
+      `tenant_id=eq.${tenantId}&select=id,title,asking_price,seller_name,status,images,created_at` +
+        '&order=created_at.desc&limit=200'
+    ),
   ]);
 
   if (!tenant) return json({ error: 'No such tenant' }, 404);
@@ -166,11 +250,21 @@ async function tenantView(cfg, tenantId) {
         )
       : null;
 
+  const countStatus = (rows) => countBy(rows, (r) => r.status);
+
   return json({
     tenant,
     signup,
     flags,
     members,
+    listings: {
+      counts: countStatus(products),
+      recent: products.slice(0, 24),
+    },
+    submissions: {
+      counts: countStatus(submissions),
+      pending: submissions.filter((x) => x.status === 'pending').slice(0, 20),
+    },
     stats: {
       orders: orders.length,
       gmv: sum(orders.filter((o) => ['paid', 'completed'].includes(o.status)), (o) => Number(o.amount)),
@@ -248,6 +342,132 @@ async function setFlag(request, cfg, op, tenantId) {
 
   await audit(cfg, op.userId, 'flag.set', { tenantId, subject: flag, detail: { enabled } });
   return json({ ok: true, flag, enabled });
+}
+
+// Moving a store to another plan, and what it pays.
+//
+// The features are reset to the new plan's: this is the deliberate "move
+// between tiers" operation seed_tenant_features() leaves to somebody else, so
+// an override set by hand is replaced. Flags can be adjusted again after.
+async function setPlan(request, cfg, op, tenantId) {
+  const body = await request.json().catch(() => ({}));
+  const tier = body?.tier;
+  const commission = Number(body?.commission_pct);
+
+  if (!TIERS.includes(tier)) return json({ error: 'Pick a plan.' }, 400);
+  if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
+    return json({ error: 'Commission is a percentage between 0 and 100.' }, 400);
+  }
+  const pct = Math.round(commission * 100) / 100;
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,tier,commission_pct`);
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+
+  await db(cfg).update(
+    'tenants',
+    `id=eq.${tenantId}`,
+    { tier, commission_pct: pct },
+    { returning: false }
+  );
+
+  for (const flag of Object.keys(FLAG_MIN_TIER)) {
+    await db(cfg).insert(
+      'tenant_features',
+      { tenant_id: tenantId, flag, enabled: planIncludes(tier, flag) },
+      { onConflict: 'tenant_id,flag', merge: true, returning: false }
+    );
+  }
+
+  await audit(cfg, op.userId, 'tenant.plan', {
+    tenantId,
+    detail: {
+      from: { tier: tenant.tier, commission_pct: Number(tenant.commission_pct) },
+      to: { tier, commission_pct: pct },
+    },
+  });
+
+  return json({ ok: true, tier, commission_pct: pct });
+}
+
+const STORE_TYPES = ['consignment', 'brand'];
+const CATEGORIES = ['thrift', 'fashion', 'bags-shoes', 'beauty', 'gadgets', 'home', 'other'];
+
+// Correcting a store's details: its name, number, type and category. The slug
+// stays: it is inside every link the store has already shared.
+async function setDetails(request, cfg, op, tenantId) {
+  const body = await request.json().catch(() => ({}));
+
+  const tenant = await db(cfg).one(
+    'tenants',
+    `id=eq.${tenantId}&select=id,name,status,whatsapp_number,store_type,category`
+  );
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+
+  const patch = {};
+
+  if (body.name !== undefined) {
+    const name = String(body.name ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 60) return json({ error: 'A name is 2 to 60 characters.' }, 400);
+    patch.name = name;
+  }
+
+  if (body.whatsapp_number !== undefined) {
+    const number = normalizeNumber(body.whatsapp_number);
+    if (number === undefined) {
+      return json({ error: "That isn't a WhatsApp number. Use e.g. 08012345678 or 2348012345678." }, 400);
+    }
+    patch.whatsapp_number = number;
+  }
+
+  if (body.store_type !== undefined) {
+    if (body.store_type !== null && !STORE_TYPES.includes(body.store_type)) {
+      return json({ error: 'Bad store type' }, 400);
+    }
+    patch.store_type = body.store_type;
+  }
+
+  if (body.category !== undefined) {
+    if (body.category !== null && !CATEGORIES.includes(body.category)) {
+      return json({ error: 'Bad category' }, 400);
+    }
+    patch.category = body.category;
+  }
+
+  if (!Object.keys(patch).length) return json({ error: 'Nothing to change.' }, 400);
+
+  try {
+    await db(cfg).update('tenants', `id=eq.${tenantId}`, patch, { returning: false });
+  } catch (err) {
+    if (err instanceof SupabaseError && err.status === 409) {
+      return json({ error: 'That number already belongs to another store.' }, 409);
+    }
+    throw err;
+  }
+
+  // A store still waiting for approval finds its sign-up by number, which is
+  // how approval knows whom to create and where to send the news.
+  const moved = patch.whatsapp_number && patch.whatsapp_number !== tenant.whatsapp_number;
+  if (moved && tenant.status === 'onboarding' && tenant.whatsapp_number) {
+    await db(cfg)
+      .update('signups', `phone=eq.${tenant.whatsapp_number}`, { phone: patch.whatsapp_number }, { returning: false })
+      .catch((err) => console.warn('signup not moved:', err?.message ?? err));
+  }
+
+  const from = Object.fromEntries(Object.keys(patch).map((k) => [k, tenant[k] ?? null]));
+  await audit(cfg, op.userId, 'tenant.details', { tenantId, detail: { from, to: patch } });
+
+  return json({ ok: true, ...patch });
+}
+
+// The same rules as the database trigger in migration 0016, applied here so a
+// bad number is a sentence back to the operator rather than a constraint error.
+// null clears the number; undefined means it is not a number at all.
+function normalizeNumber(raw) {
+  if (raw === null || String(raw).trim() === '') return null;
+  let digits = String(raw).replace(/\D/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = `234${digits.slice(1)}`;
+  return /^[1-9][0-9]{9,14}$/.test(digits) ? digits : undefined;
 }
 
 async function setStatus(request, cfg, op, tenantId) {

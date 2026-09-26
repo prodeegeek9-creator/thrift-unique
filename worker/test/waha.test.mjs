@@ -1440,3 +1440,26 @@ test('an owner saying hi gets the menu, with the items waiting for them', async 
     restore();
   }
 });
+
+test('every webhook that gets through records when WhatsApp last reached us', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('hi')], wahaEnv());
+    const row = supabase.tables.webhook_activity.find((r) => r.session === PLATFORM);
+    assert.ok(row?.last_message_at, 'message time recorded');
+
+    await worker.fetch(hook({ event: 'session.status', session: PLATFORM, payload: { status: 'FAILED' } }), wahaEnv(), {});
+    assert.equal(supabase.tables.webhook_activity.length, 1);
+    assert.equal(row.last_status, 'FAILED');
+    // A status event keeps the last message time.
+    assert.ok(row.last_message_at);
+
+    // A refused webhook is not activity.
+    await worker.fetch(hook(incoming('hi', { session: 'ut-nobody' }), { secret: 'wrong' }), wahaEnv(), {});
+    assert.equal(supabase.tables.webhook_activity.length, 1);
+  } finally {
+    restore();
+  }
+});

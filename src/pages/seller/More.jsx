@@ -4,7 +4,8 @@ import Icon from '../../components/ui/Icon.jsx';
 import TierBadge from '../../components/ui/TierBadge.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { signOut } from '../../lib/AuthContext.jsx';
-import { mainNavFor, CHANNEL_NAV, FOOTER_NAV, TAB_NAV } from '../../components/layout/navItems.js';
+import { mainNavFor, CHANNEL_NAV, FOOTER_NAV, OPERATOR_NAV, TAB_NAV } from '../../components/layout/navItems.js';
+import { useOperator } from '../../lib/useOperator.js';
 
 // Everything the five-slot tab bar cannot hold.
 //
@@ -15,11 +16,13 @@ import { mainNavFor, CHANNEL_NAV, FOOTER_NAV, TAB_NAV } from '../../components/l
 export default function More() {
   const { can, tenant } = useTenant();
   const inTabBar = new Set(TAB_NAV.map((t) => t.to));
+  const operator = useOperator();
 
   const sections = [
     { title: 'Your store', items: mainNavFor(tenant).filter((i) => !inTabBar.has(i.to)) },
     { title: 'Channels', items: CHANNEL_NAV },
     { title: 'Account', items: FOOTER_NAV },
+    ...(operator ? [{ title: 'Platform', items: [OPERATOR_NAV] }] : []),
   ];
 
   return (

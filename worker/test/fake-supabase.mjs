@@ -29,6 +29,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     tenant_members: [],
     submissions: [],
     listing_channel_posts: [],
+    webhook_activity: [],
     ...structuredClone(seed),
   };
 
@@ -40,7 +41,18 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     // What makes a retried WAHA webhook a no-op instead of a second listing.
     bot_messages: 'external_id',
     signups: 'phone',
+    webhook_activity: 'session',
+    // Composite: one row per store and flag.
+    tenant_features: ['tenant_id', 'flag'],
   };
+
+  // Unique columns an UPDATE can collide on, answered with PostgREST's 409.
+  const uniqueOnUpdate = { tenants: 'whatsapp_number' };
+
+  const keyOf = (row, key) =>
+    Array.isArray(key) ? key.map((k) => String(row[k])).join('|') : row[key];
+  const hasKey = (row, key) =>
+    Array.isArray(key) ? key.every((k) => row[k] != null) : row[key] != null;
 
   let nextId = 1;
   const calls = [];
@@ -114,7 +126,16 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       const body = JSON.parse(init.body);
       const key = unique[table];
 
-      if (key && body[key] != null && tables[table].some((r) => r[key] === body[key])) {
+      // resolution=merge-duplicates: the clashing row takes the new values.
+      if (key && hasKey(body, key) && /merge-duplicates/.test(init.headers?.Prefer ?? '')) {
+        const existing = tables[table].find((r) => keyOf(r, key) === keyOf(body, key));
+        if (existing) {
+          Object.assign(existing, body);
+          return new Response(minimal ? null : JSON.stringify([existing]), { status: 201 });
+        }
+      }
+
+      if (key && hasKey(body, key) && tables[table].some((r) => keyOf(r, key) === keyOf(body, key))) {
         // resolution=ignore-duplicates inserts nothing: [] with
         // return=representation, which worker/lib/supabase.js turns into
         // null — what the payout path treats as "already done".
@@ -132,6 +153,10 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     if (method === 'PATCH') {
       const patch = JSON.parse(init.body);
       const hit = tables[table].filter((r) => matches(r, filters));
+      const col = uniqueOnUpdate[table];
+      if (col && patch[col] != null && tables[table].some((r) => !hit.includes(r) && r[col] === patch[col])) {
+        return new Response(JSON.stringify({ code: '23505' }), { status: 409 });
+      }
       for (const r of hit) Object.assign(r, patch);
       return minimal
         ? new Response(null, { status: 204 })
