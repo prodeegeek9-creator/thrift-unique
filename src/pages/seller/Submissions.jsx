@@ -7,6 +7,7 @@ import EmptyState from '../../components/ui/EmptyState.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
 import {
+  markConsignorPaid,
   decideSubmission,
   fetchSubmissionCounts,
   fetchSubmissions,
@@ -34,9 +35,19 @@ const CONDITION = {
 
 const TABS = [
   { id: 'pending', label: 'To review' },
-  { id: 'approved', label: 'Listed' },
+  { id: 'listed', label: 'Listed' },
+  { id: 'topay', label: 'Sold · to pay' },
+  { id: 'paid', label: 'Paid' },
   { id: 'declined', label: 'Declined' },
 ];
+
+const EMPTY = {
+  pending: ['Nothing to review', 'When somebody sends you an item on WhatsApp, it shows up here for you to approve.'],
+  listed: ['Nothing listed yet', null],
+  topay: ['Nobody to pay', "When a seller's item sells, it shows here with what you owe them."],
+  paid: ['No payments yet', null],
+  declined: ['Nothing declined', null],
+};
 
 export default function Submissions() {
   const { tenant } = useTenant();
@@ -63,6 +74,19 @@ export default function Submissions() {
       />
 
       <InviteCard tenant={tenant} />
+
+      {counts?.topay ? (
+        <button
+          type="button"
+          onClick={() => setTab('topay')}
+          className="mb-4 flex w-full items-center justify-between rounded-card bg-amber-lt px-4 py-3 text-left text-sm text-amber"
+        >
+          <span>
+            You owe <b>{counts.topay}</b> seller{counts.topay === 1 ? '' : 's'} for items that sold
+          </span>
+          <span className="font-display text-base font-semibold">{formatNaira(counts.owed)}</span>
+        </button>
+      ) : null}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {TABS.map((t) => (
@@ -91,12 +115,8 @@ export default function Submissions() {
       ) : !items?.length ? (
         <EmptyState
           icon="inbox"
-          title={tab === 'pending' ? 'Nothing to review' : tab === 'approved' ? 'Nothing listed yet' : 'Nothing declined'}
-          body={
-            tab === 'pending'
-              ? 'When somebody sends you an item on WhatsApp, it shows up here for you to approve.'
-              : null
-          }
+          title={EMPTY[tab][0]}
+          body={EMPTY[tab][1]}
         />
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -235,6 +255,8 @@ function SubmissionCard({ item, tenantId }) {
           <p className="mt-2 text-xs text-muted">Reason: {item.decline_reason}</p>
         ) : null}
 
+        {item.sold_at ? <ConsignorPayment item={item} tenantId={tenantId} /> : null}
+
         {pending && !declining ? (
           <div className="mt-4 border-t border-line pt-4">
             <label className="block">
@@ -309,5 +331,80 @@ function SubmissionCard({ item, tenantId }) {
         ) : null}
       </div>
     </article>
+  );
+}
+
+// Sold: what the store owes this seller, and "Mark paid" once it has paid them
+// (by transfer, cash, however it always has). The seller is told on WhatsApp.
+function ConsignorPayment({ item, tenantId }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { role } = useTenant();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const owed = item.owed_amount ?? item.asking_price;
+
+  const pay = useMutation({
+    mutationFn: () => markConsignorPaid(tenantId, item.id, note),
+    onSuccess: (r) => {
+      qc.invalidateQueries(tenantScope(tenantId));
+      toast(
+        r.notified ? 'Marked paid. They have been told on WhatsApp.' : "Marked paid. Your WhatsApp isn't linked, so they weren't told.",
+        'success'
+      );
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  if (item.consignor_paid_at) {
+    return (
+      <p className="mt-3 rounded-lg bg-green-lt px-3 py-2 text-xs text-green">
+        Paid {formatNaira(owed)} on {new Date(item.consignor_paid_at).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}
+        {item.consignor_paid_note ? ` · ${item.consignor_paid_note}` : ''}
+      </p>
+    );
+  }
+
+  const canPay = role === 'owner' || role === 'manager';
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <p className="text-sm text-ink">
+        Sold {relative(item.sold_at).toLowerCase()} · you owe {item.seller_name ?? 'them'}{' '}
+        <b>{formatNaira(owed)}</b>
+      </p>
+      {!canPay ? null : open ? (
+        <div className="mt-2 space-y-2">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={200}
+            placeholder="Optional note for them, e.g. Sent to your GTBank"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-green/40"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={pay.isPending}
+              onClick={() => pay.mutate()}
+              className="flex-1 rounded-pill bg-green py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {pay.isPending ? 'Saving…' : `I've paid ${formatNaira(owed)}`}
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="rounded-pill border border-line px-4 text-sm text-ink">
+              Back
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-2 w-full rounded-pill border border-green py-2 text-sm font-semibold text-green hover:bg-green-lt"
+        >
+          Mark paid
+        </button>
+      )}
+    </div>
   );
 }

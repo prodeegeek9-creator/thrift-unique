@@ -668,6 +668,10 @@ without a network, WAHA or Paystack):
   through Paystack; only the last four digits are kept), and payouts go out as
   Paystack transfers automatically (at once on Starter, on release for escrow),
   settled by Paystack's transfer webhooks and retried hourly.
+- **What stores owe consignors**: when an item someone brought the store sells
+  (through checkout or "Mark as sold"), a database trigger records the asking
+  price as owed; the consignor is told on WhatsApp, and the store's "Mark paid"
+  tells them again once it has paid them.
 - **The operator console** at `/admin`: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
   disputes, platform WhatsApp health, and an append-only audit log.
@@ -679,26 +683,23 @@ without a network, WAHA or Paystack):
 
 From the spec, this README's earlier notes, and decisions made while building:
 
-1. **What stores owe consignors** (payouts part 3): when a consignor's item
-   sells, the store sees what it owes them; "Mark paid" sends the consignor a
-   WhatsApp confirmation. The store pays them itself.
-2. **Plan fees**: nothing charges the monthly subscription yet. Commission is
+1. **Plan fees**: nothing charges the monthly subscription yet. Commission is
    collected; the plan price is only quoted.
-3. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
+2. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
    OAuth routes answer `501`. Each needs a Meta App Review or TikTok audit,
    with weeks of lead time, before it can be built against anything real.
-4. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
+3. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
    Payment links cover the common case today.
-5. **Refunds**: resolving a dispute for the buyer reverses the hold and records
+4. **Refunds**: resolving a dispute for the buyer reverses the hold and records
    it; returning money to the buyer's card is still a separate manual step.
-6. **Upgrade nudges** based on listing and sales volume ("You've listed 20
+5. **Upgrade nudges** based on listing and sales volume ("You've listed 20
    items this month — Growth adds…").
-7. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+6. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
-8. **Custom domain and subdomains**: point a domain at the Worker, then offer
+7. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-9. **A separate operator login** at its own address, apart from store accounts.
-10. **Live payments**: switch Paystack from test to live once the business
+8. **A separate operator login** at its own address, apart from store accounts.
+9. **Live payments**: switch Paystack from test to live once the business
     account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup

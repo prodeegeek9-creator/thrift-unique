@@ -10,6 +10,7 @@ import { chatId } from '../lib/waha.js';
 import { formatNaira } from '../lib/bot.js';
 import { confirmToken } from './confirm.js';
 import { say } from './waha.js';
+import { soldConsignorMessage } from '../lib/intake.js';
 
 // Buying on the platform.
 //
@@ -301,6 +302,23 @@ async function afterPayment(cfg, order, tenant) {
       lines.push('', '⚠️ This item was already sold to someone else. Contact the buyer to arrange a refund or a swap.');
     }
     await say(cfg, tenant, owner, lines.join('\n'));
+  }
+
+  // The consignor, if a person brought the store this item: it sold, and the
+  // store owes them their asking price. From the store's own number, where
+  // they offered it.
+  const brought = await db(cfg).one(
+    'submissions',
+    `product_id=eq.${order.product_id}&tenant_id=eq.${tenant.id}&select=seller_chat_id,title,asking_price,owed_amount`
+  );
+  if (brought?.seller_chat_id && !doubleSale && tenant.waha_session && tenant.waha_status === 'WORKING') {
+    await say(
+      cfg,
+      tenant,
+      brought.seller_chat_id,
+      soldConsignorMessage({ store: tenant.name, title: brought.title, owed: brought.owed_amount ?? brought.asking_price }),
+      { session: tenant.waha_session }
+    );
   }
 
   // The buyer, from the store's own number when it is linked — that is who
