@@ -16,7 +16,7 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  if (loading) return <LogoLoader fullScreen label="Unique Thrift" />;
+  if (loading) return <LogoLoader fullScreen label="Vendwyze" />;
   if (user) return <Navigate to={location.state?.from ?? '/dashboard'} replace />;
 
   async function submit(e) {

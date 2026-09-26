@@ -203,8 +203,8 @@ function LinkCard({ link, onClose }) {
   const toast = useToast();
   const message =
     link.kind === 'invite'
-      ? `You've been added to the Unique Thrift admin team. Open this link to choose your password: ${link.url}`
-      : `Here's a link to set a new password for the Unique Thrift admin console: ${link.url}`;
+      ? `You've been added to the Vendwyze admin team. Open this link to choose your password: ${link.url}`
+      : `Here's a link to set a new password for the Vendwyze admin console: ${link.url}`;
 
   return (
     <div className="card mb-4 space-y-3 border-gold/40 p-4">

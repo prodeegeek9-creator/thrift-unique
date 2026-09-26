@@ -4,7 +4,7 @@ import Icon from '../../components/ui/Icon.jsx';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { botNumberDisplay, setupDeepLink } from '../../lib/whatsapp.js';
 
-// The front door: uniquethrift's own homepage.
+// The front door: Vendwyze's own homepage.
 //
 // Businesses open a store by messaging the platform's WhatsApp number, so the
 // whole page leads to that one button, with the number printed beside it for
@@ -75,7 +75,7 @@ export default function Home() {
       <main>
         <section className="mx-auto max-w-5xl px-4 pb-14 pt-10 text-center sm:pt-16">
           <h1 className="mx-auto max-w-2xl font-display text-3xl font-semibold leading-tight text-ink sm:text-5xl">
-            Run your thrift business from WhatsApp
+            Run your thrift store or brand from WhatsApp
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
             Keep selling the way you already do. We take item details for you, post them to your Status, give
@@ -197,7 +197,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-line py-6 text-center text-xs text-muted">
-        © {new Date().getFullYear()} Unique Thrift · Payments protected by Unique Thrift
+        © {new Date().getFullYear()} Vendwyze · Payments protected by Vendwyze
       </footer>
     </div>
   );

@@ -195,7 +195,7 @@ export function categoryLabel(value) {
 
 const SIGNUP = {
   welcome:
-    "Hi 👋 This number isn't linked to a store on Unique Thrift yet.\n\n" +
+    "Hi 👋 This number isn't linked to a store on Vendwyze yet.\n\n" +
     'Want to open one? Reply with your *business name*.\n\n' +
     '(Reply *cancel* any time.)',
   badName: `Reply with your business name — 2 to ${MAX_BUSINESS_NAME} characters.`,
@@ -220,7 +220,7 @@ const SIGNUP = {
   askEmail: 'What email should your dashboard login use?',
   badEmail: "That doesn't look like an email address. Try again, e.g. ada@example.com",
   declined:
-    "Understood — the store can't open without agreeing to these terms, because every sale on Unique Thrift is paid through us. " +
+    "Understood — the store can't open without agreeing to these terms, because every sale on Vendwyze is paid through us. " +
     'Reply *YES* if you change your mind, or *CANCEL* to stop.',
   cancelled: 'No problem, nothing was set up. Message us any time to open a store.',
 };
@@ -235,14 +235,14 @@ export function termsMessage(tier) {
       : "The buyer's payment is held until they confirm they've received the item, then released to you.";
   const rate =
     tier === 'business'
-      ? `A ${pct}% commission applies to every sale paid through Unique Thrift until we agree a different rate with you.`
-      : `Every sale paid through Unique Thrift has a ${pct}% commission deducted before you're paid.`;
+      ? `A ${pct}% commission applies to every sale paid through Vendwyze until we agree a different rate with you.`
+      : `Every sale paid through Vendwyze has a ${pct}% commission deducted before you're paid.`;
 
   return (
     '*Before we set you up — our terms*\n\n' +
     `• ${rate}\n` +
     `• ${payout}\n` +
-    '• Buyers always pay through Unique Thrift. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
+    '• Buyers always pay through Vendwyze. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
     `• Your plan is free for ${TRIAL_DAYS} days after your store is approved, then ${formatNaira(PLAN_PRICES[tier] ?? PLAN_PRICES.starter)} a month, paid in advance. If it isn't paid within ${GRACE_DAYS} days of the due date, your store is paused until it is.\n\n` +
     'Reply *YES* to accept, or *CANCEL*.'
   );

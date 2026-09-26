@@ -117,7 +117,7 @@ test('buying from a product page makes the order first, then opens Paystack', as
     assert.equal(order.delivery_address, BUYER.address);
     assert.equal(order.buyer_note, 'Call first');
     assert.equal(order.source_channel, 'direct');
-    assert.match(order.order_code, /^UT-[A-Z2-9]{6}$/);
+    assert.match(order.order_code, /^VW-[A-Z2-9]{6}$/);
 
     const init = initialized[0];
     assert.equal(init.amount, 3_500_000);

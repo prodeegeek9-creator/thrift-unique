@@ -99,7 +99,7 @@ export default function AdminLogin() {
           <form onSubmit={submit} className="card space-y-4 p-6">
             <div>
               <h1 className="font-display text-lg font-semibold">Admin sign in</h1>
-              <p className="mt-1 text-sm text-muted">For the Unique Thrift admin team only.</p>
+              <p className="mt-1 text-sm text-muted">For the Vendwyze admin team only.</p>
             </div>
 
             <Field label="Email" type="email" autoComplete="email" value={email} onChange={setEmail} />

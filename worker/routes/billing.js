@@ -171,7 +171,7 @@ async function startPayment(request, env, ref) {
 
   const body = await request.json().catch(() => ({}));
   const owner = await db(cfg).one('tenant_members', `tenant_id=eq.${invoice.tenant_id}&role=eq.owner&select=email`);
-  const email = owner?.email || `store-${tenant?.slug ?? 'unknown'}@${new URL(cfg.publicOrigin ?? 'https://uniquethrift.ng').hostname}`;
+  const email = owner?.email || `store-${tenant?.slug ?? 'unknown'}@${new URL(cfg.publicOrigin ?? 'https://example.com').hostname}`;
 
   try {
     const checkout = await initializeTransaction(cfg.paystackKey, {

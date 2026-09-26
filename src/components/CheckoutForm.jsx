@@ -75,7 +75,7 @@ export default function CheckoutForm({ code, token, price, onCancel }) {
         </button>
       ) : null}
       <p className="text-center text-[11px] text-muted">
-        Card, bank transfer or USSD through Paystack. Your payment goes through Unique Thrift, not straight to
+        Card, bank transfer or USSD through Paystack. Your payment goes through Vendwyze, not straight to
         the store.
       </p>
     </form>
