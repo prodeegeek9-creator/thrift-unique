@@ -74,3 +74,14 @@ export async function unlinkWhatsapp(tenantId) {
 // than "wait a moment". Five seconds keeps it fresh without turning the screen
 // into a poller.
 export const QR_POLL_MS = 5_000;
+
+// The chats the bot is keeping out of because the owner typed in them.
+export async function fetchBotHolds(tenantId) {
+  if (!tenantId) return { holds: [] };
+  return call(`/holds?tenant=${encodeURIComponent(tenantId)}`);
+}
+
+// Let the bot answer again: one chat, or all of them when chat is left out.
+export async function resumeBot(tenantId, chat = null) {
+  return call('/holds/resume', { method: 'POST', body: { tenant: tenantId, ...(chat ? { chat } : {}) } });
+}

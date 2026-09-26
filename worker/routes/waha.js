@@ -25,6 +25,7 @@ import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
 import {
   parseEvent,
   phoneFor,
+  phoneFromChatId,
   sessionName,
   chatId,
   sendText,
@@ -79,6 +80,9 @@ export async function handleWaha(request, env, path) {
     if (method === 'DELETE') return unlinkSession(request, env);
     return json({ error: 'Method not allowed' }, 405);
   }
+
+  if (rest === '/holds' && method === 'GET') return listHolds(request, env);
+  if (rest === '/holds/resume' && method === 'POST') return resumeHolds(request, env);
 
   return json({ error: 'Not found' }, 404);
 }
@@ -667,19 +671,101 @@ async function ownerTyped(cfg, tenant, event) {
   if (ours) return json({ ok: true, ignored: 'our own message' });
 
   const until = new Date(Date.now() + OWNER_PAUSE_HOURS * 3_600_000).toISOString();
+  // What the owner typed, so the dashboard can say which chat is on hold
+  // (a chat id is WhatsApp's privacy id, which names nobody).
+  const note = String(event.body ?? '').trim().slice(0, 120) || null;
   const hit = await db(cfg).update(
     'bot_conversations',
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.to)}`,
-    { paused_until: until }
+    { paused_until: until, paused_note: note }
   );
   if (!hit.length) {
     await db(cfg).insert(
       'bot_conversations',
-      { tenant_id: tenant.id, chat_id: event.to, state: 'idle', draft: {}, paused_until: until },
+      { tenant_id: tenant.id, chat_id: event.to, state: 'idle', draft: {}, paused_until: until, paused_note: note },
       { onConflict: 'tenant_id,chat_id', returning: false }
     );
   }
   return json({ ok: true, paused: until });
+}
+
+// ── HOLDS, FROM THE DASHBOARD ────────────────────────────────────────────────
+
+// GET /api/waha/holds?tenant=<id>
+//
+// The chats the bot is keeping out of because the owner typed in them, with
+// enough to tell which chat is which: the number where WhatsApp will give it,
+// a name the person gave the bot before, and what the owner last typed.
+// Chats with the store's own number (messaging yourself, a Status post) are
+// left out: nobody there is waiting on the bot.
+async function listHolds(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  let member;
+  try {
+    member = await requireMember(request, cfg, new URL(request.url).searchParams.get('tenant'));
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  const tenant = await db(cfg).one('tenants', `id=eq.${member.tenantId}&select=id,whatsapp_number,waha_session`);
+  if (!tenant) return json({ error: 'No such store' }, 404);
+
+  const rows = await db(cfg).select(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&paused_until=gt.${new Date().toISOString()}` +
+      '&select=chat_id,paused_until,paused_note&order=paused_until.desc&limit=30'
+  );
+
+  const holds = [];
+  for (const row of rows) {
+    const phone = tenant.waha_session && cfg.wahaUrl
+      ? await phoneFor(cfg, tenant.waha_session, row.chat_id).catch(() => null)
+      : phoneFromChatId(row.chat_id);
+    if (phone && phone === tenant.whatsapp_number) continue;
+    holds.push({
+      chat_id: row.chat_id,
+      until: row.paused_until,
+      note: row.paused_note ?? null,
+      phone: phone ?? null,
+      name: await nameFor(cfg, tenant.id, row.chat_id),
+    });
+  }
+  return json({ holds });
+}
+
+async function nameFor(cfg, tenantId, chat) {
+  const q = encodeURIComponent(chat);
+  const cart = await db(cfg)
+    .one('carts', `tenant_id=eq.${tenantId}&chat_id=eq.${q}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`)
+    .catch(() => null);
+  if (cart?.buyer_name) return cart.buyer_name;
+  const sub = await db(cfg)
+    .one('submissions', `tenant_id=eq.${tenantId}&seller_chat_id=eq.${q}&seller_name=not.is.null&select=seller_name&order=created_at.desc`)
+    .catch(() => null);
+  return sub?.seller_name ?? null;
+}
+
+// POST /api/waha/holds/resume { tenant, chat? }
+//
+// The bot answers in that chat again straight away, or in every chat when no
+// chat is named. Any member can: whoever is answering the store's WhatsApp.
+async function resumeHolds(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  const body = await request.json().catch(() => ({}));
+  let member;
+  try {
+    member = await requireMember(request, cfg, body?.tenant);
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  const chat = typeof body?.chat === 'string' && body.chat ? body.chat : null;
+  const cleared = await db(cfg).update(
+    'bot_conversations',
+    `tenant_id=eq.${member.tenantId}&paused_until=not.is.null` + (chat ? `&chat_id=eq.${encodeURIComponent(chat)}` : ''),
+    { paused_until: null, paused_note: null }
+  );
+  return json({ ok: true, resumed: cleared.length });
 }
 
 // ── CHECKOUT INSIDE WHATSAPP ─────────────────────────────────────────────────
