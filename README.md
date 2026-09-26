@@ -525,8 +525,10 @@ should run exactly once.
 2. The Worker creates the store as `onboarding` on Starter, registered to the
    sender's number, so the seller never types their number anywhere
    (`provisionStore()` in `worker/lib/provision.js`). The email waits in
-   `signups`, and no login exists yet. Until approval the bot answers "waiting
-   for approval" instead of listing.
+   `signups`, and no login exists yet. Until approval the seller can list, but
+   nothing is public: each listing is saved, the store and product pages answer
+   "not found", nothing is posted to Status and nothing can be bought. It all
+   goes live on approval.
 3. The operator opens the store in `/admin` and presses **Approve**
    (`approveStore()`). A new email gets an account and a set-password link, sent
    to the seller on WhatsApp. An email that already has an account is linked and
@@ -733,6 +735,55 @@ without a network, WAHA or Paystack):
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
 
+## Before live money
+
+Decided after an outside review of this README, to be done one at a time and
+in this order, before Paystack is switched to live (item 4 below).
+
+1. **One buyer at a time for each item.** When a buyer has entered their
+   details and pressed Pay, the item is held for them for 15 minutes. Everyone
+   else sees "Payment in progress" instead of the Pay button: on the product
+   page, on a payment link, and for WhatsApp BUY and carts (a cart holds all
+   its items or none). If the payment goes through, the item shows "Sold". If
+   not, the button comes back when the 15 minutes are up. The hold is on the
+   product, not the link, so every route checks the same thing. Taking it is a
+   single conditional update, so two buyers pressing Pay at once can't both
+   get it. An expired hold is released only after asking Paystack whether that
+   payment went through. One active hold per phone number per store.
+2. **A late second payment is refunded in full, and nobody is credited.** A
+   Paystack page left open past its hold can still be paid after someone else
+   has bought the item. Today the seller's payout is created before the item is
+   taken off sale (`settle()` in `worker/routes/checkout.js`), so the seller is
+   paid for an item they can't deliver and the refund is then refused. Fix: take
+   the item off sale first; if it has already gone, create no payout, take no
+   commission, and refund the buyer automatically. The buyer gets everything
+   back and Vendwyze absorbs Paystack's fee, because it isn't the buyer's fault.
+   Both sides are told on WhatsApp, and the buyer's message says to allow a few
+   working days. Still to confirm with Paystack: whether a bank-transfer payment
+   can be refunded without the buyer's account details.
+3. **Money problems visible in `/admin`.** Today these only reach the Worker's
+   logs: a Paystack payment with no matching order, a webhook with a bad
+   signature, a failed payout, a failed refund. (WhatsApp webhook health
+   already shows in the console, from `webhook_activity`.)
+4. **Refund policy stated where sellers choose a plan.** Without escrow the
+   payout goes out the same day, and after that a buyer's only route is a
+   dispute with the store. Say so in the bot's plan list and on the pricing
+   page.
+5. **Daily reconciliation.** Orders against Paystack transactions against
+   payouts; any difference shows in `/admin`.
+6. **Payment links for one buyer (to decide).** A link carries a price agreed
+   in chat, often a discount, and today anyone it is forwarded to can pay it.
+   Should it only work for the phone number it was made for?
+
+Considered and not doing:
+
+- **A ledger keyed on Paystack event IDs.** Paystack's webhooks carry no
+  unique event ID. Replays are already handled by the payment reference and by
+  updating only an order still awaiting payment.
+- **A full money ledger.** `payouts`, `payout_items` and `refunds` already
+  trace every movement by reference. Worth doing later, not before launch.
+- **Several people signing off each refund.** Too much process at this size.
+
 ## Planned, not built
 
 From the spec, this README's earlier notes, and decisions made while building:
@@ -745,7 +796,8 @@ From the spec, this README's earlier notes, and decisions made while building:
 3. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
 4. **Live payments**: switch Paystack from test to live once the business
-   account is verified (Transfers enabled, OTP off for API transfers).
+   account is verified (Transfers enabled, OTP off for API transfers), and
+   once the list under "Before live money" is done.
 
 ## Setup
 
