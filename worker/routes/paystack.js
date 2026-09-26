@@ -5,6 +5,7 @@ import { settle } from './checkout.js';
 import { settlePlanPayment } from './billing.js';
 import { settleTransfer, paidOutMessage } from '../lib/transfers.js';
 import { settleRefundEvent } from '../lib/refunds.js';
+import { settleCart, isCartRef } from '../lib/cartCheckout.js';
 import { db } from '../lib/supabase.js';
 import { chatId } from '../lib/waha.js';
 import { say } from './waha.js';
@@ -68,6 +69,14 @@ export async function handlePaystackWebhook(request, env) {
     if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
     cfg.publicOrigin = originOf(request, cfg);
     return json({ ok: true, plan: true, ...(await settlePlanPayment(cfg, verified ?? event.data)) });
+  }
+
+  // A WhatsApp cart: one payment for several orders (lib/cartCheckout.js).
+  if (event.data?.metadata?.kind === 'cart' || isCartRef(reference)) {
+    const verified = await fetchTransaction(cfg.paystackKey, reference);
+    if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
+    cfg.publicOrigin = originOf(request, cfg);
+    return json({ ok: true, cart: true, ...(await settleCart(cfg, reference, { kobo: verified?.amount ?? event.data.amount })) });
   }
 
   const order = await byPaymentRef(cfg, reference);

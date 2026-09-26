@@ -30,6 +30,7 @@ const FEATURE_NAMES = {
   contacts: 'your buyer list',
   disputes: 'dispute handling',
   escrow: 'buyer protection',
+  whatsapp_checkout: 'checkout inside WhatsApp',
   publish_instagram: 'Instagram posting',
   publish_facebook: 'Facebook posting',
   analytics: 'sales analytics',

@@ -83,6 +83,7 @@ const FEATURE_LABELS = {
   contacts: 'Buyer tracking',
   disputes: 'Dispute support',
   escrow: 'Escrow payments',
+  whatsapp_checkout: 'Checkout inside WhatsApp',
   publish_instagram: 'Instagram',
   publish_facebook: 'Facebook',
   analytics: 'Advanced analytics',

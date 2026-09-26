@@ -19,7 +19,9 @@ import { makePaymentLink } from '../lib/paylinks.js';
 import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
-import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
+import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
+import { cartStep, codesIn, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
+import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
 import {
   parseEvent,
   phoneFor,
@@ -36,6 +38,7 @@ import {
   deleteSession,
   getQR,
   WahaError,
+  ensureStoreWebhook,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -113,10 +116,12 @@ async function webhook(request, env) {
   if (event.kind === 'status') return recordStatus(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
-  // top of this file. A store's own session runs the item intake, if asked.
+  // top of this file. A store's own session runs the item intake and the
+  // WhatsApp checkout, when asked.
   if (event.session !== cfg.wahaSession) {
-    return intake(cfg, event);
+    return storeSession(cfg, event);
   }
+  if (event.kind === 'outgoing') return json({ ok: true, ignored: 'our own message' });
 
   return message(cfg, event);
 }
@@ -418,9 +423,13 @@ export async function postToStatus(cfg, tenant, product) {
   }
 
   const link = cfg.publicOrigin ? `${cfg.publicOrigin}/p/${product.public_code}` : null;
+  // With checkout inside WhatsApp, the post says how to buy it: a reply with
+  // this line quoted is how the bot knows which item (lib/cart.js).
+  const buy = product.public_code && (await checkoutOn(cfg, tenant)) ? `Reply BUY ${product.public_code} to order` : null;
   const caption = [
     product.title,
     `${formatNaira(product.price)} · ${conditionLabel(product.condition)}`,
+    buy,
     link,
   ]
     .filter(Boolean)
@@ -510,29 +519,33 @@ export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession
     await new Promise((resolve) => setTimeout(resolve, pause));
   }
 
+  // Logged before it is sent, not after. On a store's own number WhatsApp
+  // echoes every sent message back as the store's, and this log is how the
+  // bot's own are told apart from the owner typing (ownerTyped()); logging
+  // after the send raced that echo.
+  if (tenant) {
+    try {
+      await db(cfg).insert(
+        'bot_messages',
+        {
+          tenant_id: tenant.id,
+          chat_id: chatId,
+          external_id: `out:${crypto.randomUUID()}`,
+          direction: 'out',
+          body: text,
+        },
+        { returning: false }
+      );
+    } catch (err) {
+      console.warn('outbound log failed:', err?.message ?? err);
+    }
+  }
+
   try {
     await sendText(cfg, session, chatId, text);
   } catch (err) {
     console.error('send failed:', err?.message ?? err);
     return false;
-  }
-
-  if (!tenant) return true;
-
-  try {
-    await db(cfg).insert(
-      'bot_messages',
-      {
-        tenant_id: tenant.id,
-        chat_id: chatId,
-        external_id: `out:${crypto.randomUUID()}`,
-        direction: 'out',
-        body: text,
-      },
-      { returning: false }
-    );
-  } catch (err) {
-    console.warn('outbound log failed:', err?.message ?? err);
   }
   return true;
 }
@@ -553,21 +566,164 @@ function inboundId(event) {
 //
 // Nothing is written for a message the intake does not claim: that is a
 // customer talking to the store, and not ours to log.
-async function intake(cfg, event) {
+// A message on a store's own number: the owner stepping into a chat, the
+// item intake (thrift stores, SELL), or the WhatsApp checkout (Growth and
+// Business, BUY). Everything else is a customer talking to the store and is
+// left alone, unlogged.
+async function storeSession(cfg, event) {
   const tenant = await db(cfg).one(
     'tenants',
     `waha_session=eq.${encodeURIComponent(event.session)}` +
-      '&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status,billing_status'
+      '&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status'
   );
-  if (!tenant || tenant.status === 'suspended' || tenant.store_type === 'brand' || tenant.billing_status === 'paused') {
+  if (!tenant || tenant.status === 'suspended' || tenant.billing_status === 'paused') {
     return json({ ok: true, ignored: 'tenant session' });
   }
+
+  if (event.kind === 'outgoing') return ownerTyped(cfg, tenant, event);
 
   const conversation = await db(cfg).one(
     'bot_conversations',
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}` +
-      '&select=state,draft,updated_at'
+      '&select=state,draft,updated_at,paused_until'
   );
+
+  // The owner is answering this chat themselves: the bot keeps out of it.
+  if (conversation?.paused_until && new Date(conversation.paused_until) > new Date()) {
+    return json({ ok: true, ignored: 'owner is handling this chat' });
+  }
+
+  const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(String(event.body ?? ''));
+  if (tenant.store_type !== 'brand' && selling) return intake(cfg, event, tenant, conversation);
+
+  if (await checkoutOn(cfg, tenant)) {
+    const handled = await checkout(cfg, event, tenant, conversation);
+    if (handled) return handled;
+  }
+
+  return json({ ok: true, ignored: 'not for the bot' });
+}
+
+async function checkoutOn(cfg, tenant) {
+  if (!cfg.paystackKey) return false;
+  const row = await db(cfg).one(
+    'tenant_features',
+    `tenant_id=eq.${tenant.id}&flag=eq.whatsapp_checkout&select=enabled`
+  );
+  return Boolean(row?.enabled);
+}
+
+// The store sent a message. If it isn't one the bot just sent (logged before
+// sending, see say()), the owner has stepped into this chat, and the bot stays
+// out of it for OWNER_PAUSE_HOURS.
+const OWNER_PAUSE_HOURS = 12;
+
+async function ownerTyped(cfg, tenant, event) {
+  if (event.source === 'api') return json({ ok: true, ignored: 'our own message' });
+  const since = new Date(Date.now() - 10 * 60_000).toISOString();
+  const ours = await db(cfg).one(
+    'bot_messages',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.to)}&direction=eq.out` +
+      `&body=eq.${encodeURIComponent(event.body ?? '')}&created_at=gte.${since}&select=id`
+  );
+  if (ours) return json({ ok: true, ignored: 'our own message' });
+
+  const until = new Date(Date.now() + OWNER_PAUSE_HOURS * 3_600_000).toISOString();
+  const hit = await db(cfg).update(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.to)}`,
+    { paused_until: until }
+  );
+  if (!hit.length) {
+    await db(cfg).insert(
+      'bot_conversations',
+      { tenant_id: tenant.id, chat_id: event.to, state: 'idle', draft: {}, paused_until: until },
+      { onConflict: 'tenant_id,chat_id', returning: false }
+    );
+  }
+  return json({ ok: true, paused: until });
+}
+
+// ── CHECKOUT INSIDE WHATSAPP ─────────────────────────────────────────────────
+
+// See lib/cart.js for the conversation and lib/cartCheckout.js for the money.
+async function checkout(cfg, event, tenant, conversation) {
+  const { own: typed, quoted } = codesIn(event);
+  const products = {};
+  for (const code of new Set([typed, quoted].filter(Boolean))) {
+    products[code] = await db(cfg).one(
+      'products',
+      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status`
+    );
+  }
+  const known = await db(cfg).one(
+    'carts',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`
+  );
+
+  const result = cartStep(conversation, event, { store: tenant.name, products, knownName: known?.buyer_name ?? null });
+  if (!result) return null;
+
+  // The same replay guard as everywhere else, now that this is ours.
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  const own = { session: tenant.waha_session };
+  let next = result;
+
+  if (result.action?.type === 'abandon') {
+    await abandonCart(cfg, tenant.id, conversation?.draft?.cart_ref).catch(() => {});
+  }
+
+  if (result.action?.type === 'resend') {
+    const url = conversation?.draft?.pay_url;
+    next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+  }
+
+  if (result.action?.type === 'checkout') {
+    const phone = result.action.phone ?? (await phoneFor(cfg, event.session, event.from).catch(() => null));
+    let made;
+    try {
+      made = await createCartCheckout(cfg, tenant, {
+        chat: event.from,
+        phone,
+        items: result.action.items,
+        name: result.action.name,
+        address: result.action.address,
+      });
+    } catch (err) {
+      console.error('cart checkout failed:', err?.message ?? err);
+      made = { error: "I couldn't make the payment link just now. Reply *PAY* to try again in a minute." };
+    }
+    if (made.needPhone) {
+      next = { state: 'cart_phone', draft: result.draft, replies: [ASK_PHONE], action: null };
+    } else if (made.error) {
+      next = { state: 'cart_confirm', draft: result.draft, replies: [made.error], action: null };
+    } else {
+      const replies = [];
+      if (made.dropped?.length) replies.push(`Sorry, ${made.dropped.join(', ')} sold in the meantime, so I've left ${made.dropped.length === 1 ? 'it' : 'them'} out.`);
+      replies.push(cartPayMessage({ url: made.url, total: made.total, count: made.count, escrow: made.escrow }));
+      next = { state: 'cart_pay', draft: { ...result.draft, phone, cart_ref: made.ref, pay_url: made.url }, replies, action: null };
+    }
+  }
+
+  await persist(cfg, tenant, event.from, conversation, next);
+  for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
+  return json({ ok: true, checkout: next.state });
+}
+
+async function intake(cfg, event, tenant, conversation) {
 
   const previous = await db(cfg).one(
     'submissions',
@@ -777,6 +933,15 @@ async function sessionStatus(request, env) {
 
   const qr =
     status === 'SCAN_QR_CODE' ? await getQR(cfg, tenant.waha_session).catch(() => null) : null;
+
+  // A store linked before checkout-in-WhatsApp: bring its webhook up to date.
+  if (status === 'WORKING' && cfg.publicOrigin) {
+    const held = await db(cfg).one('whatsapp_secrets', `tenant_id=eq.${tenant.id}&select=webhook_secret`).catch(() => null);
+    if (held?.webhook_secret) {
+      await ensureStoreWebhook(cfg, tenant, { webhookUrl: `${cfg.publicOrigin}/api/waha/webhook`, secret: held.webhook_secret })
+        .catch((err) => console.warn('store webhook update failed:', err?.message ?? err));
+    }
+  }
 
   return json({
     linked: Boolean(live),

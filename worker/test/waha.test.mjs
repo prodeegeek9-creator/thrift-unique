@@ -823,7 +823,7 @@ test('an owner links a session, and the webhook it registers carries a secret', 
     assert.equal(res.status, 200);
     assert.equal(waha.created.length, 1);
     assert.equal(waha.created[0].name, 'ut-store');
-    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message', 'session.status']);
+    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status']);
     assert.equal(
       waha.created[0].config.webhooks[0].url,
       'https://uniquethrift.ng/api/waha/webhook'

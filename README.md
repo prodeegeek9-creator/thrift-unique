@@ -704,6 +704,15 @@ without a network, WAHA or Paystack):
   "Renew automatically" is on (migration 0024; the card's authorization stays
   in a table only the Worker can read). The operator can set a store's price
   (0 for free) and record a payment made outside Paystack.
+- **Checkout inside WhatsApp** (Growth and Business): on the store's own
+  number, a buyer sends *BUY <code>* (pre-typed by the product page's "Buy on
+  WhatsApp" button and printed on every Status post), or replies to a Status
+  post, and builds a cart; then a name, a delivery address, and one Paystack
+  link for everything (`worker/lib/cart.js`, `worker/lib/cartCheckout.js`,
+  migration 0028). Each item becomes its own order, with its own escrow,
+  dispute and refund; one that sold in the meantime is refunded at once. The
+  bot answers only its own words (BUY, CHECKOUT, CART, REMOVE, CANCEL, PAY),
+  and when the owner types in a chat it steps back from it for 12 hours.
 - **Changing plan and upgrade nudges**: the store owner picks a plan on the
   Billing page. Up is immediate once they pay the difference for the rest of
   the paid month (free on the trial); down waits for the end of the paid
@@ -731,13 +740,11 @@ From the spec, this README's earlier notes, and decisions made while building:
 1. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
    OAuth routes answer `501`. Each needs a Meta App Review or TikTok audit,
    with weeks of lead time, before it can be built against anything real.
-2. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
-   Payment links cover the common case today.
-3. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+2. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
-4. **Custom domain and subdomains**: point a domain at the Worker, then offer
+3. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-5. **Live payments**: switch Paystack from test to live once the business
+4. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup
@@ -769,6 +776,12 @@ whose link was already used replies *PASSWORD* to the platform number for a new
 one; the console can also make one from a store's Team card or the Admin team
 page. In Supabase, under Authentication → URL Configuration, set the Site URL to
 the site's address, since a link Supabase itself sends falls back to it.
+
+A store's own WhatsApp session is subscribed to `message.any` (not just
+`message`), which also carries what the store sends: that is how the bot
+notices the owner answering a chat. Stores linked before this was added are
+updated the next time the Channels page checks their WhatsApp (WAHA restarts
+the session once to apply it).
 
 `PUBLIC_ORIGIN` is not a secret. It is the origin in every link the product
 sends, and it is set in `wrangler.jsonc` under `vars` (the workers.dev address

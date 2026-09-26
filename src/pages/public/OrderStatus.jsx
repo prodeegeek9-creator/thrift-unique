@@ -82,14 +82,32 @@ export default function OrderStatus() {
                 <Icon name="check" className="h-6 w-6" />
               </span>
               <h1 className="mt-3 font-display text-lg font-semibold text-ink">Payment received</h1>
-              <p className="mt-1 text-sm text-muted">
-                {order.product?.title} · {formatNaira(order.amount)}
-              </p>
-              <p className="mt-1 text-xs text-muted">Order {order.order_code}</p>
+              {order.cart ? (
+                // A WhatsApp cart: one payment, an order per item.
+                <ul className="mt-3 space-y-1 text-left text-sm">
+                  {order.items.map((i) => (
+                    <li key={i.order_code} className="flex justify-between gap-3">
+                      <span className="min-w-0 truncate text-ink">{i.title}</span>
+                      <span className="shrink-0 text-muted">{formatNaira(i.amount)}</span>
+                    </li>
+                  ))}
+                  <li className="flex justify-between gap-3 border-t border-line pt-1 font-semibold text-ink">
+                    <span>Total</span>
+                    <span>{formatNaira(order.amount)}</span>
+                  </li>
+                </ul>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-muted">
+                    {order.product?.title} · {formatNaira(order.amount)}
+                  </p>
+                  <p className="mt-1 text-xs text-muted">Order {order.order_code}</p>
+                </>
+              )}
               <p className="mt-4 text-sm leading-relaxed text-text">
                 {order.store?.name} will contact you on WhatsApp about delivery.
                 {order.escrow
-                  ? " Your payment is held safely until you confirm the item arrived; we've sent you the link to do that."
+                  ? ` Your payment is held safely until you confirm ${order.cart ? 'each item' : 'the item'} arrived; we've sent you the link to do that.`
                   : ''}
               </p>
             </>

@@ -11,6 +11,7 @@ import { formatNaira } from '../lib/bot.js';
 import { confirmToken } from './confirm.js';
 import { say } from './waha.js';
 import { soldConsignorMessage } from '../lib/intake.js';
+import { settleCart, cartView, isCartRef } from '../lib/cartCheckout.js';
 
 // Buying on the platform.
 //
@@ -44,6 +45,9 @@ export async function handleCheckout(request, env, path) {
 
   const ref = rest.match(/^\/(utp_[A-Za-z0-9]{8,40})$/);
   if (ref && method === 'GET') return orderStatus(request, env, ref[1]);
+
+  const cartRef = rest.match(/^\/(utc_[a-z0-9]{12,40})$/);
+  if (cartRef && method === 'GET') return cartStatus(request, env, cartRef[1]);
 
   return json({ error: 'Not found' }, 404);
 }
@@ -228,11 +232,30 @@ async function orderStatus(request, env, reference) {
   });
 }
 
+// The same page for a WhatsApp cart: /order/<cart ref>.
+async function cartStatus(request, env, ref) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  cfg.publicOrigin = originOf(request, cfg);
+  let view = await cartView(cfg, ref);
+  if (!view) return json({ error: 'No such order.' }, 404);
+  if (view.status !== 'paid' && cfg.paystackKey && isCartRef(ref)) {
+    const verified = await fetchTransaction(cfg.paystackKey, ref).catch(() => null);
+    if (verified?.status === 'success') {
+      await settleCart(cfg, ref, { kobo: verified.amount });
+      view = await cartView(cfg, ref);
+    }
+  }
+  return json(view);
+}
+
 // A payment Paystack says succeeded, applied to its order: mark it paid (and
 // owe the seller, via markPaid), take the item off sale, and tell both sides.
 // Shared by the webhook and the return page; markPaid only matches an order
 // still awaiting payment, so whichever arrives second does nothing.
-export async function settle(cfg, order, { kobo, channel }) {
+// notify: false leaves the WhatsApp messages to the caller (a cart sends one
+// for all its items, see lib/cartCheckout.js); the item still comes off sale
+// and a consignor is still told.
+export async function settle(cfg, order, { kobo, channel, notify = true }) {
   let amountNaira;
   try {
     amountNaira = koboToNaira(kobo);
@@ -255,14 +278,18 @@ export async function settle(cfg, order, { kobo, channel }) {
     reference: order.payment_ref,
     channel: channel ?? order.source_channel,
   });
-  if (!result.replayed) await afterPayment(cfg, result.order, tenant).catch((err) => {
-    // The money is recorded; a failed notice is not worth failing the webhook.
-    console.error('after-payment notices failed:', err?.message ?? err);
-  });
+  if (!result.replayed) {
+    const after = await afterPayment(cfg, result.order, tenant, { notify }).catch((err) => {
+      // The money is recorded; a failed notice is not worth failing the webhook.
+      console.error('after-payment notices failed:', err?.message ?? err);
+      return null;
+    });
+    return { ...result, doubleSale: Boolean(after?.doubleSale), title: after?.title ?? null };
+  }
   return result;
 }
 
-async function afterPayment(cfg, order, tenant) {
+async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
   // Off sale. Only an item still listed matches: a second buyer who paid for
   // something already sold is the store's to refund, and it is told so below.
   const sold = await db(cfg).update(
@@ -282,7 +309,7 @@ async function afterPayment(cfg, order, tenant) {
   const escrow = order.escrow_status === 'held';
 
   // The store, on the platform number, where the owner already talks to us.
-  const owner = chatId(tenant.whatsapp_number);
+  const owner = notify ? chatId(tenant.whatsapp_number) : null;
   if (owner) {
     const lines = [
       `💰 *New order ${order.order_code}* — paid`,
@@ -325,7 +352,7 @@ async function afterPayment(cfg, order, tenant) {
 
   // The buyer, from the store's own number when it is linked — that is who
   // they bought from — or the platform's.
-  const to = chatId(buyer?.phone);
+  const to = notify ? chatId(buyer?.phone) : null;
   if (to) {
     const lines = [
       `✅ Payment received — thank you${buyer?.name ? `, ${buyer.name.split(' ')[0]}` : ''}!`,
@@ -346,6 +373,8 @@ async function afterPayment(cfg, order, tenant) {
     const own = tenant.waha_session && tenant.waha_status === 'WORKING' ? { session: tenant.waha_session } : {};
     await say(cfg, tenant, to, lines.join('\n'), own);
   }
+
+  return { doubleSale, title };
 }
 
 function random(length, alphabet = CODE_ALPHABET) {

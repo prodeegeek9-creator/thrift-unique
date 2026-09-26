@@ -36,7 +36,8 @@ export const SELL = /^\s*sell\b/i;
 // States this flow owns in bot_conversations. The table is shared with the
 // listing flow, keyed by store and chat; the chats never overlap, because the
 // listing flow runs on the platform number and this one on the store's own.
-const STATES = ['photo', 'title', 'price', 'condition', 'name', 'review'];
+export const INTAKE_STATES = ['photo', 'title', 'price', 'condition', 'name', 'review'];
+const STATES = INTAKE_STATES;
 
 const SAY = {
   start: (store) =>
