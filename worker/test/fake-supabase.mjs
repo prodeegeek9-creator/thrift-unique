@@ -34,6 +34,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     plan_invoices: [],
     billing_cards: [],
     refunds: [],
+    nudge_events: [],
     disputes: [],
     operator_audit: [],
     ...structuredClone(seed),
@@ -79,7 +80,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       else if (k === 'limit') limit = Number(v);
       else if (k === 'order' || k === 'on_conflict') continue;
       else {
-        const m = /^(eq|neq|lt|gt|in|not\.is|is)\.(.*)$/s.exec(v);
+        const m = /^(eq|neq|lt|gt|lte|gte|in|not\.is|is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
@@ -93,6 +94,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (f.op === 'neq') return String(cell) !== f.val;
       if (f.op === 'lt') return new Date(cell) < new Date(f.val);
       if (f.op === 'gt') return new Date(cell) > new Date(f.val);
+      if (f.op === 'lte') return new Date(cell) <= new Date(f.val);
+      if (f.op === 'gte') return new Date(cell) >= new Date(f.val);
       if (f.op === 'is') return f.val === 'null' ? cell == null : String(cell) === f.val;
       if (f.op === 'not.is') return f.val === 'null' ? cell != null : String(cell) !== f.val;
       if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));

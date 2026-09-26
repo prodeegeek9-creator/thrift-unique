@@ -215,8 +215,8 @@ const SIGNUP = {
   askPlan:
     'Pick a plan:\n\n' +
     `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
-    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds Instagram & Facebook, buyer protection and checkout in WhatsApp. ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
-    `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds TikTok, staff logins, analytics and dedicated support. Commission agreed with you.\n\n` +
+    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
+    `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds sales analytics, staff logins and priority support (TikTok posting coming soon). Commission agreed with you.\n\n` +
     `Your first ${TRIAL_DAYS} days are free, and you can change plan later. Reply 1, 2 or 3.`,
   badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
   askEmail: 'What email should your dashboard login use?',

@@ -3,6 +3,7 @@ import { db } from '../lib/supabase.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { sendAllPending } from '../lib/transfers.js';
 import { billingSweep } from '../lib/billing.js';
+import { nudgeSweep } from '../lib/nudges.js';
 import { ownerSay } from './billing.js';
 
 // The sweep that makes escrow safe to sell.
@@ -54,9 +55,15 @@ export async function sendOwedPayouts(env) {
   return sendAllPending(cfg);
 }
 
-// Plan fees. See lib/billing.js.
+// Plan fees (lib/billing.js), and once a day, at 9am Lagos time, the upgrade
+// nudges on WhatsApp (lib/nudges.js).
+export const NUDGE_HOUR_UTC = 8;
+
 export async function runBilling(env, { now } = {}) {
   const cfg = config(env);
   if (!cfg.supabaseUrl || !cfg.serviceKey) return null;
-  return billingSweep(cfg, { now: now ?? new Date(), say: ownerSay(cfg) });
+  const at = now ?? new Date();
+  const billing = await billingSweep(cfg, { now: at, say: ownerSay(cfg) });
+  const nudges = at.getUTCHours() === NUDGE_HOUR_UTC ? await nudgeSweep(cfg, { now: at, say: ownerSay(cfg) }) : null;
+  return { ...billing, nudges };
 }

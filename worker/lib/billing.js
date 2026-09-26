@@ -1,4 +1,5 @@
-import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS } from './plans.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, TIERS } from './plans.js';
+import { applyTier } from './planChange.js';
 import { db } from './supabase.js';
 import { nairaToKobo } from './money.js';
 import { formatNaira } from './bot.js';
@@ -49,7 +50,7 @@ export function payPageUrl(cfg, invoice) {
 }
 
 const TENANT_FIELDS =
-  'id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew';
+  'id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew,next_tier,next_tier_at';
 
 // On approval: the free period starts. Only once, so re-approving a store
 // that was suspended does not hand it another trial.
@@ -72,7 +73,7 @@ export async function ensureInvoice(cfg, tenant, { now = new Date(), force = fal
   const price = priceFor(tenant);
   if (!price || !tenant.paid_until) return null;
 
-  const open = await db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&status=eq.open&select=*`);
+  const open = await db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=*`);
   if (open) return open;
 
   const due = new Date(tenant.paid_until);
@@ -82,28 +83,53 @@ export async function ensureInvoice(cfg, tenant, { now = new Date(), force = fal
   // was paused starts its new month from today rather than paying for the
   // weeks it was off.
   const start = tenant.billing_status === 'paused' && due < now ? now : due;
+  // A downgrade the store asked for starts with this month: raise it at the
+  // lower plan's price (lib/planChange.js).
+  const lower = tenant.next_tier && tenant.next_tier_at && start >= new Date(tenant.next_tier_at);
+  const tier = lower ? tenant.next_tier : tenant.tier;
   const row = {
     tenant_id: tenant.id,
-    tier: tenant.tier,
-    amount: price,
+    kind: 'period',
+    tier,
+    amount: lower && tenant.plan_price == null ? PLAN_PRICES[tier] : price,
     period_start: start.toISOString(),
     period_end: addMonth(start).toISOString(),
     status: 'open',
     payment_ref: `utb_${random(20)}`,
   };
   const created = await db(cfg).insert('plan_invoices', row, { onConflict: 'tenant_id,period_start' });
-  return created ?? db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&status=eq.open&select=*`);
+  return created ?? db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=*`);
 }
 
 // An invoice paid, however it was paid. Only an open invoice matches, so a
 // webhook and a return page arriving together settle it once.
 export async function settleInvoice(cfg, invoice, { via, authorization = null, email = null, autoRenew = false, say = null } = {}) {
+  // An upgrade paid on a link that was since replaced still counts: the money
+  // arrived, so the plan it paid for applies.
+  const payable = invoice.kind === 'upgrade' ? 'in.(open,void)' : 'eq.open';
   const rows = await db(cfg).update(
     'plan_invoices',
-    `id=eq.${invoice.id}&status=eq.open`,
+    `id=eq.${invoice.id}&status=${payable}`,
     { status: 'paid', paid_at: new Date().toISOString(), paid_via: via }
   );
   if (!rows.length) return { settled: false };
+
+  // The difference for moving up a plan: the plan changes now, and what is
+  // paid for runs to the same date as before.
+  if (invoice.kind === 'upgrade') {
+    const tenant = await db(cfg).one('tenants', `id=eq.${invoice.tenant_id}&select=${TENANT_FIELDS}`);
+    // Never a step down: a store that has since reached a higher plan keeps it.
+    if (tenant && TIERS.indexOf(invoice.tier) <= TIERS.indexOf(tenant.tier)) return { settled: true, upgraded: null };
+    await applyTier(cfg, invoice.tenant_id, invoice.tier);
+    if (say && tenant) {
+      await say(
+        tenant,
+        `🚀 You're on *${cap(invoice.tier)}* now. Thanks for your payment of ${formatNaira(invoice.amount)}.\n\n` +
+          `From your next renewal the plan is ${formatNaira(PLAN_PRICES[invoice.tier])} a month.`
+      ).catch(() => {});
+    }
+    return { settled: true, upgraded: invoice.tier };
+  }
 
   const tenant = await db(cfg).one('tenants', `id=eq.${invoice.tenant_id}&select=${TENANT_FIELDS}`);
   const wasPaused = tenant?.billing_status === 'paused';
@@ -189,9 +215,30 @@ export async function billingSweep(cfg, { now = new Date(), say = null } = {}) {
     'tenants',
     `status=eq.active&paid_until=not.is.null&select=${TENANT_FIELDS}&limit=1000`
   );
-  const out = { checked: 0, reminded: 0, charged: 0, paused: 0 };
+  const out = { checked: 0, reminded: 0, charged: 0, paused: 0, downgraded: 0 };
 
-  for (const tenant of tenants ?? []) {
+  // An upgrade nobody paid for within a few days is dropped; the store can ask
+  // again and gets a fresh amount for the days then left.
+  await db(cfg)
+    .update(
+      'plan_invoices',
+      `kind=eq.upgrade&status=eq.open&created_at=lt.${new Date(now.getTime() - 3 * DAY).toISOString()}`,
+      { status: 'void' },
+      { returning: false }
+    )
+    .catch((err) => console.error('billing sweep: voiding stale upgrades failed', err?.message ?? err));
+
+  for (let tenant of tenants ?? []) {
+    // A downgrade the store asked for, now that the time it paid for is over.
+    if (tenant.next_tier && tenant.next_tier_at && now >= new Date(tenant.next_tier_at)) {
+      try {
+        await applyTier(cfg, tenant.id, tenant.next_tier);
+        tenant = { ...tenant, tier: tenant.next_tier, next_tier: null, next_tier_at: null };
+        out.downgraded += 1;
+      } catch (err) {
+        console.error('billing sweep: downgrade failed on', tenant.slug, err?.message ?? err);
+      }
+    }
     if (!priceFor(tenant)) continue;
     out.checked += 1;
     try {

@@ -1,10 +1,9 @@
 import { supabase } from './supabase.js';
 import { fetchBalance } from './payouts.js';
 import { fetchRecentOrders } from './orders.js';
-import { nextTier } from './billing.js';
 
 // The Overview screen: four stat tiles, the recent orders table, and the
-// upgrade nudge.
+// upgrade nudge's snooze.
 
 const COUNTED = ['paid', 'completed'];
 
@@ -56,38 +55,12 @@ export async function fetchOverview(tenantId) {
   };
 }
 
-// The green card: "You've listed 18 items this month. Growth gives you
-// Instagram + Facebook, buyer protection and buyer tracking."
-//
-// Volume-triggered rather than shown always, because a nudge that is always
-// there is furniture. A seller who has listed twenty items in a month is
-// working hard enough on distribution that more of it is worth money to them;
-// one who has listed two is not, and telling them to upgrade is noise.
-//
-// "Remind me later" is a per-viewer convenience and lives in localStorage —
-// losing it in a private window just means seeing the card again, which is the
-// right failure.
-const NUDGE_THRESHOLD = 15;
+// The green card on the Overview: which one, if any, is the Worker's call
+// (worker/lib/nudges.js: a locked screen opened, a big sale, this month's
+// sales or listings). "Remind me later" is a per-viewer convenience and lives
+// in localStorage; losing it in a private window just means seeing the card
+// again, which is the right failure.
 const SNOOZE_DAYS = 14;
-
-export function upgradeNudge(tenant, usage) {
-  if (!tenant) return null;
-
-  const next = nextTier(tenant);
-  if (!next) return null;
-  if ((usage?.listings ?? 0) < NUDGE_THRESHOLD) return null;
-  if (isSnoozed(tenant.id)) return null;
-
-  return {
-    tier: next,
-    listings: usage.listings,
-    headline: `You've listed ${usage.listings} items this month.`,
-    body:
-      next === 'growth'
-        ? 'Growth adds Instagram and Facebook, buyer protection and buyer tracking.'
-        : 'Business adds TikTok, staff accounts and full analytics.',
-  };
-}
 
 export function snoozeNudge(tenantId) {
   try {
@@ -98,7 +71,7 @@ export function snoozeNudge(tenantId) {
   }
 }
 
-function isSnoozed(tenantId) {
+export function nudgeSnoozed(tenantId) {
   try {
     const at = Number(localStorage.getItem(`ut-nudge-${tenantId}`));
     return Boolean(at) && Date.now() - at < SNOOZE_DAYS * 86_400_000;

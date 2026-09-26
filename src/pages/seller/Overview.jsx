@@ -7,8 +7,8 @@ import StatusPill from '../../components/ui/StatusPill.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { fetchOverview, upgradeNudge, snoozeNudge } from '../../lib/dashboard.js';
-import { fetchUsage } from '../../lib/billing.js';
+import { fetchOverview, snoozeNudge, nudgeSnoozed } from '../../lib/dashboard.js';
+import { fetchNudge } from '../../lib/billing.js';
 import { listingDeepLink, botConfigured } from '../../lib/whatsapp.js';
 import { formatNaira, formatDelta } from '../../lib/money.js';
 import { maskPhone, shortName } from '../../lib/privacy.js';
@@ -29,13 +29,14 @@ export default function Overview() {
     enabled: Boolean(tenantId),
   });
 
-  const { data: usage } = useQuery({
-    queryKey: keys.usage(tenantId),
-    queryFn: () => fetchUsage(tenantId),
-    enabled: Boolean(tenantId),
+  const { data: nudgeData } = useQuery({
+    queryKey: [...keys.usage(tenantId), 'nudge'],
+    queryFn: () => fetchNudge(tenantId),
+    enabled: Boolean(tenantId) && !nudgeSnoozed(tenantId),
+    staleTime: 10 * 60 * 1000,
   });
 
-  const nudge = nudgeDismissed ? null : upgradeNudge(tenant, usage);
+  const nudge = nudgeDismissed ? null : nudgeData?.nudge ?? null;
   const name = user?.user_metadata?.name || user?.email?.split('@')[0] || 'there';
 
   return (
@@ -206,11 +207,14 @@ function UpgradeNudge({ nudge, onSnooze }) {
       <p className="mt-3 text-sm font-semibold text-ink">{nudge.headline}</p>
       <p className="mt-1 text-xs leading-relaxed text-text">{nudge.body}</p>
       <Link
-        to="/dashboard/billing"
+        to={`/dashboard/billing?plan=${nudge.tier}`}
         className="mt-3 block rounded-pill bg-green py-2 text-center text-xs font-semibold text-white"
       >
-        See {nudge.tier === 'growth' ? 'Growth' : 'Business'} Plan
+        See {nudge.tier === 'growth' ? 'Growth' : 'Business'} plan
       </Link>
+      <p className="mt-2 text-center text-[11px] text-muted">
+        You only pay the difference for the rest of this month.
+      </p>
       <button
         type="button"
         onClick={onSnooze}

@@ -1,4 +1,7 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useTenant } from '../lib/TenantContext.jsx';
+import { recordLocked } from '../lib/billing.js';
 import Icon from '../components/ui/Icon.jsx';
 import TierBadge from '../components/ui/TierBadge.jsx';
 import { minTierFor } from '../lib/features.js';
@@ -24,10 +27,12 @@ const COPY = {
     body: 'Buyers pay upfront into escrow. You ship, they confirm, the money lands in your account minus commission. Neither side has to trust the other first.',
   },
   publish_instagram: {
+    soon: true,
     title: 'Post to your own Instagram automatically',
     body: 'List an item on WhatsApp and it goes to your Instagram Business account the same minute — your account, your followers, your captions. Not a platform page nobody follows.',
   },
   publish_facebook: {
+    soon: true,
     title: 'Post to your own Facebook Page automatically',
     body: 'Same listing, posted to your Page as you, the moment you send it to the bot. Nothing to copy, paste or re-upload.',
   },
@@ -40,14 +45,17 @@ const COPY = {
     body: 'Add managers and staff with their own logins. A manager handles listings, orders and customers; staff can list items and nothing else. Your payouts and bank details stay yours.',
   },
   publish_tiktok: {
+    soon: true,
     title: 'Reach TikTok too',
     body: 'Listings posted straight to your TikTok business account alongside everything else. Available on Business.',
   },
   catalog_sync: {
+    soon: true,
     title: 'Sync an existing catalogue',
     body: 'Already running a WooCommerce store? Keep both in step instead of listing everything twice.',
   },
   ai_match: {
+    soon: true,
     title: 'Answer "is this still in stock?" instantly',
     body: 'A buyer sends a photo, and we match it against your listings automatically — no scrolling back through your own catalogue to find it.',
   },
@@ -68,6 +76,13 @@ export default function FeatureUpsell({ flag, title, body }) {
     'This feature is part of a higher plan. Take a look at what else comes with it.';
 
   const min = flag ? minTierFor(flag) : null;
+  const { tenant } = useTenant();
+
+  // Remembered for the upgrade nudges (worker/lib/nudges.js): somebody who
+  // came looking for this is the best person to tell about it.
+  useEffect(() => {
+    if (tenant?.id && flag && min) recordLocked(tenant.id, flag);
+  }, [tenant?.id, flag, min]);
 
   return (
     <div className="mx-auto max-w-xl py-8">
@@ -88,6 +103,11 @@ export default function FeatureUpsell({ flag, title, body }) {
 
         <div className="px-6 py-6 text-center">
           <p className="text-sm leading-relaxed text-text">{text}</p>
+          {copy.soon ? (
+            <p className="mt-3 rounded-lg bg-amber-lt px-3 py-2 text-xs text-amber">
+              Coming soon. It switches on for {TIER_NAME[min] ?? 'this plan'} stores as soon as it's ready.
+            </p>
+          ) : null}
 
           {min ? (
             <>
@@ -96,7 +116,7 @@ export default function FeatureUpsell({ flag, title, body }) {
                 <TierBadge flag={flag} />
               </div>
               <Link
-                to="/dashboard/billing"
+                to={`/dashboard/billing?plan=${min}`}
                 className="mt-5 inline-block rounded-pill bg-green px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90"
               >
                 See {TIER_NAME[min] ?? min} plan
