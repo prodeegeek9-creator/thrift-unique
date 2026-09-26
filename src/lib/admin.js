@@ -104,6 +104,11 @@ export const forceRelease = (orderId, reason) =>
 
 // Refunds: the list, retrying one Paystack refused, and refunding a held
 // payment from the release queue.
+// Money that needs a person: payments nobody can match, payouts and refunds
+// that aren't getting through, webhooks Paystack did not sign.
+export const fetchMoney = () => call('/money');
+export const resolveProblem = (id, note) => call(`/problems/${id}/resolve`, { method: 'POST', body: { note } });
+
 export const fetchRefunds = () => call('/refunds');
 export const retryRefund = (id) => call(`/refunds/${id}/retry`, { method: 'POST', body: {} });
 export const refundFromConsole = (orderId, reason) =>
@@ -134,4 +139,5 @@ export const AUDIT_LABELS = {
   'member.link': 'Made a new sign-in link for a store member',
   'refund.create': 'Refunded a buyer',
   'refund.retry': 'Retried a refund',
+  'problem.resolve': 'Marked a money problem sorted',
 };

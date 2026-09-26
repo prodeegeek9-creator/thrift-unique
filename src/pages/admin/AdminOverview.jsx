@@ -98,12 +98,34 @@ export default function AdminOverview() {
               value={(data?.tenants?.pastDue ?? 0) + (data?.tenants?.paused ?? 0)}
               tone={data?.tenants?.paused ? 'red' : data?.tenants?.pastDue ? 'amber' : 'ok'}
             />
+            {/* Money that arrived or was owed and didn't get where it should.
+                All of it is listed, with what to do, on the Money page. */}
             <Attention
-              to="/admin/tenants"
+              to="/admin/money"
+              label="Payments nobody can match"
+              value={data?.money?.unmatched ?? 0}
+              tone={data?.money?.unmatched ? 'red' : 'ok'}
+            />
+            <Attention
+              to="/admin/money"
               label="Payouts not getting through"
               value={data?.payouts?.stuck ?? 0}
               tone={data?.payouts?.stuck ? 'red' : 'ok'}
             />
+            <Attention
+              to="/admin/money"
+              label="Refunds that failed"
+              value={data?.money?.refundsFailed ?? 0}
+              tone={data?.money?.refundsFailed ? 'red' : 'ok'}
+            />
+            {data?.money?.badSignatureDays ? (
+              <Attention
+                to="/admin/money"
+                label="Unsigned calls to the Paystack webhook"
+                value={data.money.badSignatureDays}
+                tone="amber"
+              />
+            ) : null}
             <Attention
               to="/admin/disputes"
               label="Open disputes"

@@ -488,9 +488,10 @@ otherwise, and adding a column to a granted table publishes that column.**
 current findings are the intended design and should not be "fixed":
 
 - **`rls_enabled_no_policy`** on `bot_conversations`, `bot_messages`,
-  `whatsapp_secrets`, `channel_connections`, `platform_admins` and
-  `operator_audit`. That is the pattern, not an oversight — RLS on, no policy,
-  no grant, reachable only under the service key.
+  `whatsapp_secrets`, `channel_connections`, `platform_admins`,
+  `operator_audit` and `payment_problems`, among others the Worker alone
+  uses. That is the pattern, not an oversight — RLS on, no policy, no grant,
+  reachable only under the service key.
 - **`public_product()` executable by `anon`.** It is the storefront's one
   public read and returns a fixed, safe column list by design.
 - **`current_tenant_ids()` / `has_tenant_role()` / `channel_status()`
@@ -745,7 +746,9 @@ without a network, WAHA or Paystack):
 - **The operator console** at `/admin`, with its own login at `/admin/login`
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
-  disputes, platform WhatsApp health, and an append-only audit log.
+  disputes, platform WhatsApp health, a Money page for payments nobody can
+  match and payouts or refunds that aren't getting through, and an
+  append-only audit log.
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
@@ -813,10 +816,25 @@ in this order, before Paystack is switched to live (item 4 below).
    refuses is left failed for the operator to retry, and the buyer is told
    Vendwyze will refund them. Still to confirm with Paystack: whether a
    bank-transfer payment can be refunded without the buyer's account details.
-3. **Money problems visible in `/admin`.** Today these only reach the Worker's
-   logs: a Paystack payment with no matching order, a webhook with a bad
-   signature, a failed payout, a failed refund. (WhatsApp webhook health
-   already shows in the console, from `webhook_activity`.)
+3. **Money problems visible in `/admin`.** *Done* (the Money page,
+   `worker/lib/problems.js`, migration 0034). One page lists everything about
+   money that needs a person, and the overview's "Needs attention" counts link
+   to it:
+   - payments nobody can match: Paystack took money against a reference no
+     order, cart or plan fee has, or one that couldn't be applied (short, or
+     unreadable). These used to reach only the Worker's logs; they are now
+     kept in `payment_problems`, once per reference however often Paystack
+     sends them;
+   - payouts not getting through: refused by Paystack, out of attempts, or
+     sent over a day ago with no word back, with Retry;
+   - refunds that failed, with Retry, automatic ones marked as in full;
+   - calls to the Paystack webhook it did not sign, one row a day. A run of
+     these usually means `PAYSTACK_SECRET_KEY` is not the key of the account
+     sending webhooks, which turns every real payment away.
+   Anyone on the admin team can look; owners act, and "Mark sorted" needs a
+   line on what was done, which goes in the audit log. A problem Paystack
+   sends again after that opens again. WhatsApp webhook health was already on
+   the overview, from `webhook_activity`.
 4. **Refund policy stated where sellers choose a plan.** Without escrow the
    payout goes out the same day, and after that a buyer's only route is a
    dispute with the store. Say so in the bot's plan list and on the pricing

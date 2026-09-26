@@ -10,6 +10,7 @@ import { db } from '../lib/supabase.js';
 import { chatId } from '../lib/waha.js';
 import { say } from './waha.js';
 import { json } from '../lib/http.js';
+import { noteProblem, lagosDay } from '../lib/problems.js';
 
 // POST /api/paystack/webhook
 //
@@ -32,6 +33,14 @@ export async function handlePaystackWebhook(request, env) {
   const signature = request.headers.get('x-paystack-signature');
 
   if (!(await verifyWebhook(cfg.paystackKey, raw, signature))) {
+    // Kept for the console, one row a day: a stream of these usually means
+    // PAYSTACK_SECRET_KEY is not the key of the account sending webhooks, and
+    // every real payment is being turned away here.
+    await noteProblem(cfg, {
+      kind: 'bad_signature',
+      key: lagosDay(),
+      detail: `Last from ${request.headers.get('cf-connecting-ip') ?? 'an unknown address'}${signature ? '' : ', with no signature at all'}.`,
+    });
     // 401, not 200: an unsigned caller is not Paystack, and there is nothing
     // for it to retry.
     return json({ error: 'Bad signature' }, 401);
@@ -68,7 +77,9 @@ export async function handlePaystackWebhook(request, env) {
     const verified = await fetchTransaction(cfg.paystackKey, reference);
     if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
     cfg.publicOrigin = originOf(request, cfg);
-    return json({ ok: true, plan: true, ...(await settlePlanPayment(cfg, verified ?? event.data)) });
+    const result = await settlePlanPayment(cfg, verified ?? event.data);
+    await noteIgnored(cfg, reference, verified?.amount ?? event.data.amount, result.ignored, 'plan fee');
+    return json({ ok: true, plan: true, ...result });
   }
 
   // A WhatsApp cart: one payment for several orders (lib/cartCheckout.js).
@@ -76,7 +87,10 @@ export async function handlePaystackWebhook(request, env) {
     const verified = await fetchTransaction(cfg.paystackKey, reference);
     if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
     cfg.publicOrigin = originOf(request, cfg);
-    return json({ ok: true, cart: true, ...(await settleCart(cfg, reference, { kobo: verified?.amount ?? event.data.amount })) });
+    const kobo = verified?.amount ?? event.data.amount;
+    const result = await settleCart(cfg, reference, { kobo });
+    await noteIgnored(cfg, reference, kobo, result.ignored, 'WhatsApp cart');
+    return json({ ok: true, cart: true, ...result });
   }
 
   const order = await byPaymentRef(cfg, reference);
@@ -90,6 +104,13 @@ export async function handlePaystackWebhook(request, env) {
   // human sees it.
   if (!order) {
     console.warn('paystack: no order for reference', reference);
+    await noteProblem(cfg, {
+      kind: 'unmatched_payment',
+      key: reference,
+      reference,
+      amount: nairaOf(event.data.amount),
+      detail: `Paystack says this was paid${event.data.channel ? ` by ${event.data.channel}` : ''}, and no order has this reference.`,
+    });
     return json({ ok: true, unmatched: true });
   }
 
@@ -115,7 +136,16 @@ export async function handlePaystackWebhook(request, env) {
     // the item — that comes from the metadata set when checkout started.
     channel: event.data?.metadata?.source_channel ?? null,
   });
-  if (ignored) return json({ ok: true, ignored });
+  if (ignored) {
+    await noteProblem(cfg, {
+      kind: 'unsettled_payment',
+      key: reference,
+      reference,
+      amount: nairaOf(kobo),
+      detail: `Paid for order ${order.order_code}, but it could not be applied: ${ignored}.`,
+    });
+    return json({ ok: true, ignored });
+  }
 
   return json({
     ok: true,
@@ -124,6 +154,24 @@ export async function handlePaystackWebhook(request, env) {
     status: updated?.status ?? order.status,
   });
 }
+
+// A plan fee or cart payment its settle step turned away. Anything else it
+// ignores (already paid, a replay) is not a problem.
+async function noteIgnored(cfg, reference, kobo, ignored, what) {
+  if (!ignored) return;
+  const unmatched = /^no such/.test(ignored);
+  await noteProblem(cfg, {
+    kind: unmatched ? 'unmatched_payment' : 'unsettled_payment',
+    key: reference,
+    reference,
+    amount: nairaOf(kobo),
+    detail: unmatched
+      ? `Paid as a ${what}, and there is no ${what} with this reference.`
+      : `Paid as a ${what}, but it could not be applied: ${ignored}.`,
+  });
+}
+
+const nairaOf = (kobo) => (Number.isFinite(Number(kobo)) ? Number(kobo) / 100 : null);
 
 // "💸 ₦32,200 has been paid to your GTBank account ending 1234", to the owner
 // on the platform number.
