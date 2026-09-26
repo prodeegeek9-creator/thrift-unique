@@ -712,7 +712,15 @@ without a network, WAHA or Paystack):
   migration 0028). Each item becomes its own order, with its own escrow,
   dispute and refund; one that sold in the meantime is refunded at once. The
   bot answers only its own words (BUY, CHECKOUT, CART, REMOVE, CANCEL, PAY),
-  and when the owner types in a chat it steps back from it for 12 hours.
+  and when the owner types in a chat it steps back from it for 12 hours —
+  unless the next message is BUY or SELL, which is somebody asking for the
+  bot by name and always gets through. A reply to a Status post is matched by
+  the post's own WhatsApp ID first (`status_posts`), falling back to the BUY
+  code in its caption; a plain "how much?" or "is it still available?" is
+  answered directly, anything else about it is left for the owner. The
+  Channels page has a "Resume bot" card: which chats are on hold, who each is
+  with and what the owner typed, and a button to hand a chat (or all of them)
+  back to the bot early (`GET/POST /api/waha/holds*`).
 - **Changing plan and upgrade nudges**: the store owner picks a plan on the
   Billing page. Up is immediate once they pay the difference for the rest of
   the paid month (free on the trial); down waits for the end of the paid
@@ -732,6 +740,13 @@ without a network, WAHA or Paystack):
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
+- **Share kit** for Instagram, TikTok and Facebook: since none of the three
+  can be posted to automatically yet (below), the dashboard's Share button and
+  the bot's *SHARE* command hand the seller an item's photos and a caption
+  with the price and its link, ready to post by hand
+  (`src/lib/shareKit.js`, `src/components/ShareSheet.jsx`). "Post to
+  Facebook" needs no approval, since it only opens Facebook's own link
+  sharer; the item page's link preview supplies the photo and price.
 
 ## Planned, not built
 
@@ -739,7 +754,8 @@ From the spec, this README's earlier notes, and decisions made while building:
 
 1. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
    OAuth routes answer `501`. Each needs a Meta App Review or TikTok audit,
-   with weeks of lead time, before it can be built against anything real.
+   with weeks of lead time, before it can be built against anything real. Until
+   then, sellers post by hand using the share kit above.
 2. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
 3. **Custom domain and subdomains**: point a domain at the Worker, then offer
