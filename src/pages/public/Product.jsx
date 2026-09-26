@@ -168,7 +168,7 @@ export default function Product() {
           ) : (
             product.tenant_name
           )}{' '}
-          · Payment protected by Unique Thrift
+          · Payment protected by Vendwyze
         </p>
       </div>
 

@@ -115,7 +115,7 @@ async function start(request, env) {
       'orders',
       {
         tenant_id: tenant.id,
-        order_code: `UT-${random(6)}`,
+        order_code: `VW-${random(6)}`,
         product_id: product.id,
         buyer_id: buyer.id,
         quantity: 1,
@@ -140,7 +140,7 @@ async function start(request, env) {
       // Paystack insists on an email. Most buyers here have only a phone, so
       // one is made up from it when none is given: Paystack's receipt simply
       // goes nowhere, and ours goes to WhatsApp.
-      email: email || `buyer-${phone}@${new URL(cfg.publicOrigin ?? 'https://uniquethrift.ng').hostname}`,
+      email: email || `buyer-${phone}@${new URL(cfg.publicOrigin ?? 'https://example.com').hostname}`,
       amountKobo: nairaToKobo(price),
       reference,
       callbackUrl: `${cfg.publicOrigin ?? ''}/order/${reference}`,

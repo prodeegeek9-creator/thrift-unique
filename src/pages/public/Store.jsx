@@ -160,7 +160,7 @@ export default function Store() {
           </section>
         ) : null}
 
-        <p className="mt-8 text-center text-xs text-muted">Payment protected by Unique Thrift</p>
+        <p className="mt-8 text-center text-xs text-muted">Payment protected by Vendwyze</p>
       </main>
     </div>
   );

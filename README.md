@@ -1,4 +1,4 @@
-# Unique Thrift — Multi-Tenant WhatsApp Commerce Platform
+# Vendwyze — Multi-Tenant WhatsApp Commerce Platform
 
 Many independent seller businesses, one backend, one feature-flagged codebase.
 A seller runs their whole store through WhatsApp — listing conversationally to

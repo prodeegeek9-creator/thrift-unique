@@ -6,7 +6,7 @@
 // changes underneath them.
 //
 // Tenant branding replaces this component wherever a seller has uploaded a
-// logo — see TenantBrandMark. This is Unique Thrift's own mark, for the
+// logo — see TenantBrandMark. This is Vendwyze's own mark, for the
 // platform chrome and the login screen.
 export default function BrandMark({ className = 'h-8 w-8' }) {
   return (
@@ -24,7 +24,7 @@ export default function BrandMark({ className = 'h-8 w-8' }) {
   );
 }
 
-// The wordmark beside the mark: "UNIQUE THRIFT" over "Sell. Grow. Together."
+// The wordmark beside the mark: "VENDWYZE" over "Sell. Grow. Together."
 export function BrandLockup({ className = '', tone = 'light' }) {
   const primary = tone === 'light' ? 'text-white' : 'text-ink';
   const secondary = tone === 'light' ? 'text-white/55' : 'text-muted';
@@ -34,7 +34,7 @@ export function BrandLockup({ className = '', tone = 'light' }) {
       <BrandMark className="h-8 w-8 shrink-0" />
       <div className="leading-tight">
         <div className={`font-display text-sm font-bold tracking-wide ${primary}`}>
-          UNIQUE THRIFT
+          VENDWYZE
         </div>
         <div className={`text-[10px] italic ${secondary}`}>Sell. Grow. Together.</div>
       </div>

@@ -91,7 +91,7 @@ export default function PlanPay() {
             </div>
           ) : (
             <>
-              <p className="text-xs text-muted">Unique Thrift plan fee</p>
+              <p className="text-xs text-muted">Vendwyze plan fee</p>
               <h1 className="mt-1 font-display text-lg font-semibold text-ink">{invoice.store}</h1>
               {invoice.paused ? (
                 <p className="mt-2 rounded-lg bg-red-lt px-3 py-2 text-xs text-red">

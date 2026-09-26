@@ -366,7 +366,7 @@ test('the homepage is indexable and previews as the platform', async () => {
     const html = await res.text();
     assert.match(html, /content="index, follow"/);
     assert.doesNotMatch(html, /noindex/);
-    assert.match(html, /<title>Unique Thrift: run your thrift business from WhatsApp<\/title>/);
+    assert.match(html, /<title>Vendwyze: run your thrift store or brand from WhatsApp<\/title>/);
     assert.match(html, /og:url" content="https:\/\/example\.com\/"/);
     assert.match(html, /<div id="root">/);
   } finally { restore(); }

@@ -84,7 +84,7 @@ export async function renderHomePage(request, env) {
   const html = await asset.text();
   const origin = new URL(request.url).origin;
 
-  const title = 'Unique Thrift: run your thrift business from WhatsApp';
+  const title = 'Vendwyze: run your thrift store or brand from WhatsApp';
   const description =
     'List items from WhatsApp, auto-post to your Status, get your own store page and protected payments. For thrift stores and brands.';
 
@@ -95,7 +95,7 @@ export async function renderHomePage(request, env) {
     `<meta property="og:title" content="${escapeHtml(title)}">`,
     `<meta property="og:description" content="${escapeHtml(description)}">`,
     `<meta property="og:url" content="${escapeHtml(`${origin}/`)}">`,
-    `<meta property="og:site_name" content="Unique Thrift">`,
+    `<meta property="og:site_name" content="Vendwyze">`,
     `<meta name="twitter:card" content="summary">`,
   ];
 
@@ -125,8 +125,8 @@ export async function renderStorePage(request, env, slug) {
 
   const count = store.products?.length ?? 0;
   const description = count
-    ? `${count} item${count === 1 ? '' : 's'} for sale. Order on WhatsApp, payment protected by Unique Thrift.`
-    : 'Order on WhatsApp, payment protected by Unique Thrift.';
+    ? `${count} item${count === 1 ? '' : 's'} for sale. Order on WhatsApp, payment protected by Vendwyze.`
+    : 'Order on WhatsApp, payment protected by Vendwyze.';
   const image = publicUrl(cfg, store.logo_url) ?? publicUrl(cfg, store.products?.[0]?.image);
 
   const tags = [
