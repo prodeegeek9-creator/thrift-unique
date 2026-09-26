@@ -31,6 +31,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     listing_channel_posts: [],
     webhook_activity: [],
     payout_accounts: [],
+    plan_invoices: [],
+    billing_cards: [],
     ...structuredClone(seed),
   };
 
@@ -47,6 +49,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     tenant_features: ['tenant_id', 'flag'],
     buyers: ['tenant_id', 'phone'],
     payout_accounts: 'tenant_id',
+    billing_cards: 'tenant_id',
+    plan_invoices: ['tenant_id', 'period_start'],
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.

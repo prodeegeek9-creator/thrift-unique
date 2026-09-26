@@ -65,6 +65,18 @@ export default function Store() {
     );
   }
 
+  if (store.paused) {
+    return (
+      <div className="min-h-dvh bg-bg px-4 py-10">
+        <div className="card mx-auto max-w-sm p-5 text-center">
+          <BrandMark className="mx-auto h-8 w-8" />
+          <h1 className="mt-3 font-display text-lg font-semibold">{store.name}</h1>
+          <p className="mt-2 text-sm text-muted">This store is temporarily unavailable. Please check back soon.</p>
+        </div>
+      </div>
+    );
+  }
+
   const logo = imageUrl(store.logo_url);
   const sell =
     store.takes_items && store.whatsapp_number

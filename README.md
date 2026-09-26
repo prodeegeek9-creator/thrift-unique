@@ -672,6 +672,15 @@ without a network, WAHA or Paystack):
   (through checkout or "Mark as sold"), a database trigger records the asking
   price as owed; the consignor is told on WhatsApp, and the store's "Mark paid"
   tells them again once it has paid them.
+- **Plan fees**: ₦10,000 / ₦25,000 / ₦75,000 a month for Starter / Growth /
+  Business, free for the first 14 days from approval. An invoice is raised 3
+  days before each period; the owner is reminded on WhatsApp before the due
+  day, on it, and 3 days after; unpaid 7 days after, the store is paused
+  (public pages answer "paused", checkout and SELL intake stop) until paid.
+  Paying is a link each month, or a saved card charged automatically when
+  "Renew automatically" is on (migration 0024; the card's authorization stays
+  in a table only the Worker can read). The operator can set a store's price
+  (0 for free) and record a payment made outside Paystack.
 - **The operator console** at `/admin`: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
   disputes, platform WhatsApp health, and an append-only audit log.
@@ -683,24 +692,22 @@ without a network, WAHA or Paystack):
 
 From the spec, this README's earlier notes, and decisions made while building:
 
-1. **Plan fees**: nothing charges the monthly subscription yet. Commission is
-   collected; the plan price is only quoted.
-2. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
+1. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
    OAuth routes answer `501`. Each needs a Meta App Review or TikTok audit,
    with weeks of lead time, before it can be built against anything real.
-3. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
+2. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
    Payment links cover the common case today.
-4. **Refunds**: resolving a dispute for the buyer reverses the hold and records
+3. **Refunds**: resolving a dispute for the buyer reverses the hold and records
    it; returning money to the buyer's card is still a separate manual step.
-5. **Upgrade nudges** based on listing and sales volume ("You've listed 20
+4. **Upgrade nudges** based on listing and sales volume ("You've listed 20
    items this month — Growth adds…").
-6. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+5. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
-7. **Custom domain and subdomains**: point a domain at the Worker, then offer
+6. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-8. **A separate operator login** at its own address, apart from store accounts.
-9. **Live payments**: switch Paystack from test to live once the business
-    account is verified (Transfers enabled, OTP off for API transfers).
+7. **A separate operator login** at its own address, apart from store accounts.
+8. **Live payments**: switch Paystack from test to live once the business
+   account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup
 
@@ -715,7 +722,9 @@ Worker secrets (`npx wrangler versions secret put NAME`, then
 | `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`, `WAHA_WEBHOOK_SECRET` | WhatsApp (see `deploy/waha/`) |
 
 In Paystack, point the webhook at `/api/paystack/webhook`: it carries both
-`charge.success` and the `transfer.*` events. For live transfers, enable
+`charge.success` (orders and plan fees alike) and the `transfer.*` events. The
+hourly cron raises plan invoices, sends reminders, charges saved cards and
+pauses stores that stay unpaid; it needs nothing beyond the secrets above. For live transfers, enable
 Transfers, turn off OTP for API transfers, and keep enough balance to pay out,
 because transfers are drawn from the Paystack balance.
 

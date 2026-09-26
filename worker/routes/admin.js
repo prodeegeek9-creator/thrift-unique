@@ -5,6 +5,8 @@ import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
 import { TIERS, FLAG_MIN_TIER, planIncludes } from '../lib/plans.js';
 import { normalizeNumber } from '../lib/phone.js';
 import { sendPayout, MAX_ATTEMPTS } from '../lib/transfers.js';
+import { startTrial, ensureInvoice, settleInvoice, priceFor } from '../lib/billing.js';
+import { ownerSay } from './billing.js';
 import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
@@ -60,6 +62,9 @@ export async function handleAdmin(request, env, path) {
   const details = rest.match(/^\/tenants\/([0-9a-f-]{36})\/details$/i);
   if (details && method === 'POST') return setDetails(request, cfg, op, details[1]);
 
+  const recorded = rest.match(/^\/tenants\/([0-9a-f-]{36})\/billing\/record$/i);
+  if (recorded && method === 'POST') return recordPlanPayment(request, cfg, op, recorded[1]);
+
   const paused = rest.match(/^\/tenants\/([0-9a-f-]{36})\/payouts-paused$/i);
   if (paused && method === 'POST') return setPayoutsPaused(request, cfg, op, paused[1]);
 
@@ -79,7 +84,7 @@ export async function handleAdmin(request, env, path) {
 
 async function overview(cfg, request) {
   const [tenants, orders, held, disputes, platform, owed] = await Promise.all([
-    db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status'),
+    db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status,billing_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
@@ -95,6 +100,8 @@ async function overview(cfg, request) {
       total: tenants.length,
       active: tenants.filter((t) => t.status === 'active').length,
       awaiting: tenants.filter((t) => t.status === 'onboarding').length,
+      pastDue: tenants.filter((t) => t.status === 'active' && t.billing_status === 'past_due').length,
+      paused: tenants.filter((t) => t.status === 'active' && t.billing_status === 'paused').length,
       byTier: countBy(tenants, (t) => t.tier),
     },
     gmv: gross,
@@ -209,7 +216,7 @@ async function listTenants(cfg) {
   const tenants = await db(cfg).select(
     'tenants',
     'select=id,slug,name,tier,status,commission_pct,whatsapp_number,waha_session,' +
-      'waha_status,store_type,category,created_at' +
+      'waha_status,store_type,category,billing_status,paid_until,plan_price,created_at' +
       '&order=created_at.desc&limit=200'
   );
 
@@ -228,7 +235,7 @@ async function listTenants(cfg) {
 }
 
 async function tenantView(cfg, tenantId) {
-  const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts] = await Promise.all([
+  const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts, planInvoices] = await Promise.all([
     db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
     db(cfg).select(
@@ -257,6 +264,11 @@ async function tenantView(cfg, tenantId) {
       'payouts',
       `tenant_id=eq.${tenantId}&select=id,amount,commission,status,reference,failure_reason,attempts,sent_at,paid_at,created_at` +
         '&order=created_at.desc&limit=20'
+    ),
+    db(cfg).select(
+      'plan_invoices',
+      `tenant_id=eq.${tenantId}&select=id,tier,amount,period_start,period_end,status,paid_at,paid_via` +
+        '&order=period_start.desc&limit=12'
     ),
   ]);
 
@@ -289,6 +301,7 @@ async function tenantView(cfg, tenantId) {
     },
     payoutAccount,
     payouts,
+    billing: { price: priceFor(tenant), invoices: planInvoices },
     submissions: {
       counts: countStatus(submissions),
       pending: submissions.filter((x) => x.status === 'pending').slice(0, 20),
@@ -381,6 +394,16 @@ async function setPlan(request, cfg, op, tenantId) {
   const body = await request.json().catch(() => ({}));
   const tier = body?.tier;
   const commission = Number(body?.commission_pct);
+  // The monthly fee: undefined leaves it, null goes back to the plan's price,
+  // a number (0 for free) is a price agreed with this store.
+  let planPrice;
+  if (body?.plan_price === null || body?.plan_price === '') planPrice = null;
+  else if (body?.plan_price !== undefined) {
+    planPrice = Number(body.plan_price);
+    if (!Number.isFinite(planPrice) || planPrice < 0 || planPrice > 10_000_000) {
+      return json({ error: 'The plan fee is an amount in naira, 0 for free.' }, 400);
+    }
+  }
 
   if (!TIERS.includes(tier)) return json({ error: 'Pick a plan.' }, 400);
   if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
@@ -388,13 +411,13 @@ async function setPlan(request, cfg, op, tenantId) {
   }
   const pct = Math.round(commission * 100) / 100;
 
-  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,tier,commission_pct`);
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,tier,commission_pct,plan_price`);
   if (!tenant) return json({ error: 'No such tenant' }, 404);
 
   await db(cfg).update(
     'tenants',
     `id=eq.${tenantId}`,
-    { tier, commission_pct: pct },
+    { tier, commission_pct: pct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
     { returning: false }
   );
 
@@ -409,12 +432,35 @@ async function setPlan(request, cfg, op, tenantId) {
   await audit(cfg, op.userId, 'tenant.plan', {
     tenantId,
     detail: {
-      from: { tier: tenant.tier, commission_pct: Number(tenant.commission_pct) },
-      to: { tier, commission_pct: pct },
+      from: { tier: tenant.tier, commission_pct: Number(tenant.commission_pct), plan_price: tenant.plan_price ?? null },
+      to: { tier, commission_pct: pct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
     },
   });
 
   return json({ ok: true, tier, commission_pct: pct });
+}
+
+// A plan fee paid some other way (a transfer to the platform's account, cash):
+// the operator records it, which settles the month and restores a paused
+// store, exactly as a Paystack payment would.
+async function recordPlanPayment(request, cfg, op, tenantId) {
+  const { note } = await request.json().catch(() => ({}));
+  const tenant = await db(cfg).one(
+    'tenants',
+    `id=eq.${tenantId}&select=id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew`
+  );
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+  if (!priceFor(tenant)) return json({ error: 'This store pays no plan fee.' }, 409);
+  if (!tenant.paid_until) return json({ error: 'This store has not been approved yet.' }, 409);
+
+  const invoice = await ensureInvoice(cfg, tenant, { force: true });
+  const result = await settleInvoice(cfg, invoice, { via: 'manual', say: ownerSay(cfg) });
+  await audit(cfg, op.userId, 'billing.record', {
+    tenantId,
+    subject: invoice.payment_ref,
+    detail: { amount: Number(invoice.amount), period_end: invoice.period_end, note: note ?? null },
+  });
+  return json({ ok: result.settled, paid_until: result.paidUntil ?? null });
 }
 
 // Holding a store's payouts: they keep accruing, and wait. Released by
@@ -554,6 +600,9 @@ async function setStatus(request, cfg, op, tenantId) {
   }
 
   await db(cfg).update('tenants', `id=eq.${tenantId}`, { status }, { returning: false });
+
+  // Approval starts the free period (once; see startTrial).
+  if (approval) await startTrial(cfg, tenantId).catch((err) => console.error('trial not started:', err?.message ?? err));
 
   let notified = null;
   if (approval) {

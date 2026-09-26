@@ -2,6 +2,8 @@ import { config } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { sendAllPending } from '../lib/transfers.js';
+import { billingSweep } from '../lib/billing.js';
+import { ownerSay } from './billing.js';
 
 // The sweep that makes escrow safe to sell.
 //
@@ -50,4 +52,11 @@ export async function sendOwedPayouts(env) {
   const cfg = config(env);
   if (!cfg.supabaseUrl || !cfg.serviceKey || !cfg.paystackKey) return null;
   return sendAllPending(cfg);
+}
+
+// Plan fees. See lib/billing.js.
+export async function runBilling(env, { now } = {}) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey) return null;
+  return billingSweep(cfg, { now: now ?? new Date(), say: ownerSay(cfg) });
 }

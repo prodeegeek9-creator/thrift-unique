@@ -62,8 +62,16 @@ export const setFlag = (tenantId, flag, enabled) =>
 export const setTenantStatus = (tenantId, status) =>
   call(`/tenants/${tenantId}/status`, { method: 'POST', body: { status } });
 
-export const setPlan = (tenantId, tier, commissionPct) =>
-  call(`/tenants/${tenantId}/plan`, { method: 'POST', body: { tier, commission_pct: commissionPct } });
+// planPrice: undefined leaves the monthly fee alone, null returns it to the
+// plan's price, a number (0 for free) sets this store's own.
+export const setPlan = (tenantId, tier, commissionPct, planPrice) =>
+  call(`/tenants/${tenantId}/plan`, {
+    method: 'POST',
+    body: { tier, commission_pct: commissionPct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
+  });
+
+export const recordPlanPayment = (tenantId, note) =>
+  call(`/tenants/${tenantId}/billing/record`, { method: 'POST', body: { note } });
 
 export const setDetails = (tenantId, details) =>
   call(`/tenants/${tenantId}/details`, { method: 'POST', body: details });
@@ -95,6 +103,7 @@ export const AUDIT_LABELS = {
   'payouts.pause': 'Paused a store’s payouts',
   'payouts.resume': 'Resumed a store’s payouts',
   'payouts.retry': 'Retried a payout',
+  'billing.record': 'Recorded a plan fee paid another way',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
 };

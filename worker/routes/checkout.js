@@ -174,9 +174,11 @@ async function buyable(cfg, { id, code }) {
 
   const tenant = await db(cfg).one(
     'tenants',
-    `id=eq.${product.tenant_id}&select=id,slug,name,status,whatsapp_number,waha_session,waha_status`
+    `id=eq.${product.tenant_id}&select=id,slug,name,status,whatsapp_number,waha_session,waha_status,billing_status`
   );
-  if (!tenant || tenant.status !== 'active') return { error: "This store isn't taking orders right now.", status: 409 };
+  if (!tenant || tenant.status !== 'active' || tenant.billing_status === 'paused') {
+    return { error: "This store isn't taking orders right now.", status: 409 };
+  }
   return { product, tenant };
 }
 

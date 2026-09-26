@@ -17,20 +17,20 @@ import { botNumberDisplay, setupDeepLink } from '../../lib/whatsapp.js';
 const PLANS = [
   {
     name: 'Starter',
-    price: '₦10,000–15,000',
+    price: '₦10,000',
     commission: '8% per sale',
     points: ['List items on WhatsApp or the dashboard', 'Auto-posts to your WhatsApp Status', 'Your own store page', 'Paid out the same day'],
   },
   {
     name: 'Growth',
-    price: '₦25,000–35,000',
+    price: '₦25,000',
     commission: '7% per sale',
     featured: true,
     points: ['Everything in Starter', 'Instagram & Facebook posting', 'Buyer protection (escrow)', 'Checkout inside WhatsApp', 'Customer list & disputes'],
   },
   {
     name: 'Business',
-    price: 'From ₦75,000',
+    price: '₦75,000',
     commission: 'Commission agreed with you',
     points: ['Everything in Growth', 'TikTok posting', 'Staff logins', 'Analytics', 'Dedicated support'],
   },
@@ -146,8 +146,7 @@ export default function Home() {
           <div className="mx-auto max-w-5xl px-4">
             <h2 className="text-center font-display text-2xl font-semibold text-ink">Plans</h2>
             <p className="mt-2 text-center text-sm text-muted">
-              Monthly, plus a commission on each sale paid through us. We confirm pricing with you before
-              anything is charged.
+              Free for your first 14 days. Then monthly, plus a commission on each sale paid through us.
             </p>
             <div className="mt-8 grid gap-4 md:grid-cols-3">
               {PLANS.map((plan) => (

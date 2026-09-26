@@ -14,6 +14,7 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS } from './plans.js';
 
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
@@ -130,7 +131,7 @@ export const MAX_BUSINESS_NAME = 60;
 
 // Bumped whenever the wording of TERMS changes, so the version stored against
 // a store always names the text its owner actually said YES to.
-export const DISCLAIMER_VERSION = 'commission-v1';
+export const DISCLAIMER_VERSION = 'terms-v2';
 
 // Commission per plan, from the pricing table: the top of each range, since
 // the operator can lower a rate but raising one after acceptance would be
@@ -211,10 +212,10 @@ const SIGNUP = {
   badCategory: `Reply with a number from 1 to ${CATEGORIES.length}.`,
   askPlan:
     'Pick a plan:\n\n' +
-    `1 *Starter* — ₦10,000–15,000/mo. Listings shared to your WhatsApp Status. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
-    `2 *Growth* — ₦25,000–35,000/mo. Adds Instagram & Facebook, buyer protection and checkout in WhatsApp. ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
-    '3 *Business* — from ₦75,000/mo. Adds TikTok, staff logins, analytics and dedicated support. Commission agreed with you.\n\n' +
-    "Reply 1, 2 or 3. We'll confirm pricing with you before anything is charged, and you can change plan later.",
+    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
+    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds Instagram & Facebook, buyer protection and checkout in WhatsApp. ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
+    `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds TikTok, staff logins, analytics and dedicated support. Commission agreed with you.\n\n` +
+    `Your first ${TRIAL_DAYS} days are free, and you can change plan later. Reply 1, 2 or 3.`,
   badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
   askEmail: 'What email should your dashboard login use?',
   badEmail: "That doesn't look like an email address. Try again, e.g. ada@example.com",
@@ -238,11 +239,11 @@ export function termsMessage(tier) {
       : `Every sale paid through Unique Thrift has a ${pct}% commission deducted before you're paid.`;
 
   return (
-    '*Before we set you up — our commission terms*\n\n' +
+    '*Before we set you up — our terms*\n\n' +
     `• ${rate}\n` +
     `• ${payout}\n` +
     '• Buyers always pay through Unique Thrift. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
-    '• Your monthly plan fee is separate from commission, and is confirmed with you before anything is charged.\n\n' +
+    `• Your plan is free for ${TRIAL_DAYS} days after your store is approved, then ${formatNaira(PLAN_PRICES[tier] ?? PLAN_PRICES.starter)} a month, paid in advance. If it isn't paid within ${GRACE_DAYS} days of the due date, your store is paused until it is.\n\n` +
     'Reply *YES* to accept, or *CANCEL*.'
   );
 }

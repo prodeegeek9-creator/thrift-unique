@@ -22,6 +22,7 @@ const FILTERS = [
   { id: 'active', label: 'Active', test: (t) => t.status === 'active' },
   { id: 'suspended', label: 'Suspended', test: (t) => t.status === 'suspended' },
   { id: 'whatsapp', label: 'WhatsApp down', test: (t) => whatsappBroken(t) },
+  { id: 'unpaid', label: 'Plan fee unpaid', test: (t) => ['past_due', 'paused'].includes(t.billing_status) && t.status === 'active' },
 ];
 
 export function whatsappBroken(t) {
@@ -152,6 +153,11 @@ export default function AdminTenants() {
                         status={t.status === 'active' ? 'active' : t.status === 'suspended' ? 'open' : 'pending'}
                         label={t.status === 'onboarding' ? 'Awaiting approval' : t.status}
                       />
+                      {t.status === 'active' && ['past_due', 'paused'].includes(t.billing_status) ? (
+                        <span className={`mt-1 block text-[11px] ${t.billing_status === 'paused' ? 'text-red' : 'text-amber'}`}>
+                          {t.billing_status === 'paused' ? 'Paused: unpaid' : 'Plan fee due'}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums">
                       {Number(t.commission_pct) > 0 ? `${t.commission_pct}%` : '—'}

@@ -13,7 +13,9 @@ import {
   setTenantStatus,
   setPayoutsPaused,
   retryPayout,
+  recordPlanPayment,
 } from '../../lib/admin.js';
+import { PLAN_PRICES } from '../../lib/billing.js';
 import { payoutStatusLabel } from '../../lib/payouts.js';
 import { FLAG_MIN_TIER } from '../../lib/features.js';
 import { formatNaira } from '../../lib/money.js';
@@ -73,7 +75,7 @@ export default function AdminTenantDetail({ operator }) {
     return <p className="card p-8 text-center text-sm text-muted">No such store.</p>;
   }
 
-  const { tenant, signup, flags, members, stats, listings, submissions, payoutAccount, payouts } = data;
+  const { tenant, signup, flags, members, stats, listings, submissions, payoutAccount, payouts, billing } = data;
   const pending = tenant.status === 'onboarding';
 
   return (
@@ -216,6 +218,7 @@ export default function AdminTenantDetail({ operator }) {
 
         <div className="space-y-4">
           <PlanCard tenant={tenant} isOwner={isOwner} onSaved={invalidate} />
+          <BillingCard tenant={tenant} billing={billing} isOwner={isOwner} onSaved={invalidate} />
           <DetailsCard tenant={tenant} isOwner={isOwner} onSaved={invalidate} />
           <TeamCard members={members} />
         </div>
@@ -238,18 +241,82 @@ const TIERS = ['starter', 'growth', 'business'];
 
 // What the store is on and what it pays. Owner-level, like everything that
 // changes what a tenant is charged.
+const BILLING_LABEL = {
+  trial: ['Free trial', 'text-green'],
+  active: ['Paid', 'text-green'],
+  past_due: ['Payment due', 'text-amber'],
+  paused: ['Paused: unpaid', 'text-red'],
+};
+
+// The monthly fee: where the store stands, its invoices, and recording a
+// payment made some other way (a transfer, cash).
+function BillingCard({ tenant, billing, isOwner, onSaved }) {
+  const toast = useToast();
+  const record = useMutation({
+    mutationFn: () => recordPlanPayment(tenant.id, window.prompt('Note (how it was paid)?') ?? null),
+    onSuccess: (r) => {
+      toast(r.ok ? 'Payment recorded' : 'Nothing to record', r.ok ? 'success' : 'error');
+      onSaved();
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  const free = billing?.price === 0;
+  const [label, tone] = free ? ['No plan fee', 'text-muted'] : BILLING_LABEL[tenant.billing_status] ?? ['—', 'text-muted'];
+
+  return (
+    <section className="card p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-ink">Plan fee</h2>
+        <span className={`text-xs font-semibold ${tone}`}>{label}</span>
+      </div>
+      <dl className="mt-2 space-y-1 text-sm">
+        <Row label="Per month" value={free ? 'Free' : formatNaira(billing?.price ?? 0)} plain />
+        <Row label="Paid until" value={tenant.paid_until ? dateOnly(tenant.paid_until) : tenant.status === 'onboarding' ? 'Trial starts on approval' : '—'} plain />
+        <Row label="Auto-renew" value={tenant.auto_renew ? 'On' : 'Off'} plain />
+      </dl>
+      {billing?.invoices?.length ? (
+        <ul className="mt-3 space-y-1 border-t border-line pt-2 text-xs">
+          {billing.invoices.slice(0, 4).map((i) => (
+            <li key={i.id} className="flex justify-between gap-2">
+              <span className="text-muted">{dateOnly(i.period_start)}</span>
+              <span className="text-ink">{formatNaira(i.amount)}</span>
+              <span className={i.status === 'paid' ? 'text-green' : 'text-amber'}>
+                {i.status === 'paid' ? `paid · ${i.paid_via}` : i.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {isOwner && !free && tenant.paid_until ? (
+        <button
+          type="button"
+          disabled={record.isPending}
+          onClick={() => record.mutate()}
+          className="mt-3 w-full rounded-pill border border-line py-1.5 text-xs font-semibold text-ink hover:bg-surface-2"
+        >
+          Record a month paid another way
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function PlanCard({ tenant, isOwner, onSaved }) {
   const toast = useToast();
   const [tier, setTier] = useState(tenant.tier);
   const [pct, setPct] = useState(String(Number(tenant.commission_pct)));
+  // Blank: the plan's standard price. A number: this store's own (0 = free).
+  const [fee, setFee] = useState(tenant.plan_price == null ? '' : String(Number(tenant.plan_price)));
 
   useEffect(() => {
     setTier(tenant.tier);
     setPct(String(Number(tenant.commission_pct)));
-  }, [tenant.tier, tenant.commission_pct]);
+    setFee(tenant.plan_price == null ? '' : String(Number(tenant.plan_price)));
+  }, [tenant.tier, tenant.commission_pct, tenant.plan_price]);
 
   const save = useMutation({
-    mutationFn: () => setPlan(tenant.id, tier, Number(pct)),
+    mutationFn: () => setPlan(tenant.id, tier, Number(pct), fee.trim() === '' ? null : Number(fee)),
     onSuccess: () => {
       toast('Plan updated. Features now match it.', 'success');
       onSaved();
@@ -257,7 +324,9 @@ function PlanCard({ tenant, isOwner, onSaved }) {
     onError: (e) => toast(e.message, 'error'),
   });
 
-  const changed = tier !== tenant.tier || Number(pct) !== Number(tenant.commission_pct);
+  const currentFee = tenant.plan_price == null ? '' : String(Number(tenant.plan_price));
+  const changed =
+    tier !== tenant.tier || Number(pct) !== Number(tenant.commission_pct) || fee.trim() !== currentFee;
 
   return (
     <section className="card p-4">
@@ -293,6 +362,17 @@ function PlanCard({ tenant, isOwner, onSaved }) {
               />
             </label>
           </div>
+          <label className="mt-2 block">
+            <span className="mb-1 block text-[11px] text-muted">Monthly fee (₦)</span>
+            <input
+              inputMode="numeric"
+              value={fee}
+              onChange={(e) => setFee(e.target.value.replace(/[^0-9]/g, ''))}
+              placeholder={`${PLAN_PRICES[tier] ?? ''} (plan price)`}
+              className={FIELD}
+            />
+            <span className="mt-1 block text-[11px] text-muted">Blank for the plan's price; 0 for free.</span>
+          </label>
           <p className="mt-2 text-[11px] text-muted">
             Saving switches the store's features to the plan's. Adjust feature flags after if needed.
           </p>

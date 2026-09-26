@@ -2,6 +2,7 @@ import { require_, originOf } from '../lib/env.js';
 import { verifyWebhook, fetchTransaction } from '../lib/paystack.js';
 import { byPaymentRef } from '../lib/orders.js';
 import { settle } from './checkout.js';
+import { settlePlanPayment } from './billing.js';
 import { settleTransfer, paidOutMessage } from '../lib/transfers.js';
 import { db } from '../lib/supabase.js';
 import { chatId } from '../lib/waha.js';
@@ -54,6 +55,14 @@ export async function handlePaystackWebhook(request, env) {
 
   const reference = event?.data?.reference;
   if (!reference) return json({ ok: true, ignored: 'no reference' });
+
+  // A store paying its plan fee, not a buyer paying for an item.
+  if (event.data?.metadata?.kind === 'plan' || reference.startsWith('utb_')) {
+    const verified = await fetchTransaction(cfg.paystackKey, reference);
+    if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
+    cfg.publicOrigin = originOf(request, cfg);
+    return json({ ok: true, plan: true, ...(await settlePlanPayment(cfg, verified ?? event.data)) });
+  }
 
   const order = await byPaymentRef(cfg, reference);
 

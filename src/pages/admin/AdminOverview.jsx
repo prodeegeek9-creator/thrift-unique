@@ -93,6 +93,12 @@ export default function AdminOverview() {
               tone={data?.tenants?.awaiting ? 'amber' : 'ok'}
             />
             <Attention
+              to="/admin/tenants?filter=unpaid"
+              label="Plan fees overdue or paused"
+              value={(data?.tenants?.pastDue ?? 0) + (data?.tenants?.paused ?? 0)}
+              tone={data?.tenants?.paused ? 'red' : data?.tenants?.pastDue ? 'amber' : 'ok'}
+            />
+            <Attention
               to="/admin/tenants"
               label="Payouts not getting through"
               value={data?.payouts?.stuck ?? 0}
