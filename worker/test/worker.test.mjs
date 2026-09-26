@@ -338,6 +338,24 @@ test('an unconfigured Worker still serves the page rather than failing', async (
   } finally { restore(); }
 });
 
+// ── what reaches the Worker ──────────────────────────────────────────────────
+
+test('every path the Worker answers is routed to it before the asset layer', async () => {
+  // A path missing from run_worker_first never reaches the Worker: the asset
+  // layer answers it, and a POST there is a 405. Listing only "/" once took
+  // the WhatsApp and Paystack webhooks down.
+  const { readFile } = await import('node:fs/promises');
+  const raw = await readFile(new URL('../../wrangler.jsonc', import.meta.url), 'utf8');
+  const config = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
+  const first = config.assets.run_worker_first;
+
+  if (first === true) return;
+  assert.ok(Array.isArray(first), 'run_worker_first is a list or true');
+  for (const pattern of ['/api/*', '/', '/p/*', '/s/*']) {
+    assert.ok(first.includes(pattern), `${pattern} reaches the Worker`);
+  }
+});
+
 // ── the homepage ─────────────────────────────────────────────────────────────
 
 test('the homepage is indexable and previews as the platform', async () => {
