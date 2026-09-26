@@ -2,6 +2,10 @@ import { require_, originOf } from '../lib/env.js';
 import { verifyWebhook, fetchTransaction } from '../lib/paystack.js';
 import { byPaymentRef } from '../lib/orders.js';
 import { settle } from './checkout.js';
+import { settleTransfer, paidOutMessage } from '../lib/transfers.js';
+import { db } from '../lib/supabase.js';
+import { chatId } from '../lib/waha.js';
+import { say } from './waha.js';
 import { json } from '../lib/http.js';
 
 // POST /api/paystack/webhook
@@ -35,6 +39,13 @@ export async function handlePaystackWebhook(request, env) {
     event = JSON.parse(raw);
   } catch {
     return json({ error: 'Malformed body' }, 400);
+  }
+
+  // A payout landing in (or bouncing back from) a store's bank.
+  if (['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(event?.event)) {
+    const result = await settleTransfer(cfg, event);
+    if (result.newlyPaid) await tellPaidOut(cfg, result.payout).catch(() => {});
+    return json({ ok: true, ...result, payout: result.payout?.reference ?? null });
   }
 
   if (event?.event !== 'charge.success') {
@@ -88,4 +99,16 @@ export async function handlePaystackWebhook(request, env) {
     order: updated?.order_code ?? order.order_code,
     status: updated?.status ?? order.status,
   });
+}
+
+// "💸 ₦32,200 has been paid to your GTBank account ending 1234", to the owner
+// on the platform number.
+async function tellPaidOut(cfg, payout) {
+  const [tenant, account] = await Promise.all([
+    db(cfg).one('tenants', `id=eq.${payout.tenant_id}&select=id,whatsapp_number`),
+    db(cfg).one('payout_accounts', `tenant_id=eq.${payout.tenant_id}&select=bank_name,account_last4`),
+  ]);
+  const to = chatId(tenant?.whatsapp_number);
+  if (!to || !account) return;
+  await say(cfg, tenant, to, paidOutMessage({ amount: payout.amount, bank: account.bank_name, last4: account.account_last4 }));
 }

@@ -88,36 +88,30 @@ A build missing either variable fails outright rather than producing a bundle
 that points every request at `undefined` — that failure mode ships a dashboard
 which loads, looks perfectly normal and never shows a row.
 
-## There is no storefront, and that is a decision
+## Public pages
 
 The spec sells this as running a store *"without needing to build or maintain a
-website"*. Buyers discover an item on WhatsApp Status, Instagram, Facebook or
-TikTok, message the seller or the bot, and pay through the platform. The thing
-that scales across tiers is distribution channels, not web presence. A
-cross-seller marketplace would also compete with the sellers paying for reach,
-and re-centralise the audience they were just promised they would keep.
+website"*, and there is still no cross-seller marketplace: a platform catalogue
+would compete with the stores paying for reach. What there is, all served by
+the Worker from the same bundle:
 
-So: no catalogue, no cart, no browse, no search.
-
-Two public pages exist anyway, because "no storefront" is not "no buyer-facing
-URL":
-
-- **`/p/:code`** — one item, reached by a link somebody was sent. Instagram
-  will not make a caption clickable; a forwarded link has to render as a photo
-  and a price rather than bare text; and the bot needs to know *which* item a
-  buyer means rather than parsing "the brown jacket". The button carries the
-  product code into the opening WhatsApp message.
-- **`/confirm/:token`** — how escrow actually releases. The spec says funds are
-  held until the buyer confirms receipt but never says how. Doing it purely
-  in-bot is fragile exactly where it matters: sessions drop, the message
-  scrolls away, and somebody is releasing tens of thousands of naira by typing
-  a word with no record either side can point at later.
-
-A seller's *catalogue* page — link-in-bio, the standard answer to Instagram's
-no-links rule — is storefront-lite. It is genuinely valuable and worth selling
-later as a Growth+ feature, because it is *their* page rather than a
-marketplace. It should be a deliberate decision, not something that arrives
-because the product page grew a sibling.
+- **`/`**: the platform's own homepage: what it does, the plans, and "Open
+  your store on WhatsApp" to the platform number. Indexable, with a link
+  preview (`run_worker_first` in `wrangler.jsonc` routes it through the Worker).
+- **`/s/:slug`**: each store's own page: its listings only, its colour, its
+  WhatsApp, and "Sell with us" for thrift stores whose number is linked. Read
+  through `public_store()`, one live store at a time.
+- **`/p/:code`**: one item, reached by a link somebody was sent. Instagram will
+  not make a caption clickable; a forwarded link has to render as a photo and a
+  price rather than bare text. "Buy now" opens checkout; "More from this store"
+  links back to `/s/:slug`.
+- **`/pay/:token`**: a payment link a store sent a buyer, for one item at a
+  price agreed in chat. The price is inside the signed token.
+- **`/order/:reference`**: where Paystack returns a buyer after paying.
+- **`/confirm/:token`**: how escrow actually releases. Doing it purely in-bot
+  is fragile exactly where it matters: sessions drop, the message scrolls away,
+  and somebody is releasing tens of thousands of naira by typing a word with no
+  record either side can point at later.
 
 ## The design system
 
@@ -652,71 +646,78 @@ does it has it to hand.
 
 ## Status
 
-- Vite + React + Tailwind, building clean ✅
-- Legacy single-store site removed; repo is the new plan only ✅
-- Design tokens; no hex literals in components ✅
-- Sidebar / TopBar / BottomTabBar / SellerShell, matching the mockups ✅
-- Tenant switcher, `TenantContext`, memberships and flags ✅
-- `FLAG_MIN_TIER`, `TierBadge`, locked-but-visible navigation ✅
-- `RequireAuth` / `RequireFeature` / `RequireStaffRole` ✅
-- `FeatureUpsell` with per-feature copy for all eleven flags ✅
-- `StatusPill` covering every enum ✅
-- Login against Supabase auth ✅
-- `/p/:code` reads `public_product()` and deep-links into the bot ✅
-- Full schema **applied** to project `vhmyzawgtstjtavwzpzn` ✅
-- Tenant isolation verified end to end against real `auth.uid()`: a seller sees
-  only their own rows, cannot write into another tenant, and cannot insert a
-  payout to themselves ✅
-- Grants cut back to match the policies; advisors clean apart from the
-  deliberate findings listed above ✅
-- Tenant #1 seeded: `unique-thrift`, Business tier, 0% commission, owner
-  account confirmed and signing in ✅
-- Data layer complete: one module per domain, verified against the live schema ✅
-- All 14 seller screens built and rendered against a mocked API ✅
-- Analytics code-split: Recharts is ~40% of the bundle and a Business-tier
-  screen, so a Starter seller never downloads it ✅
-- Worker: Paystack webhook, escrow hold/release, the signed confirm link and
-  edge-rendered link previews, with 17 tests covering the money paths ✅
-- Platform console at `/admin`: overview, stores, release queue, disputes,
-  audit log — 16 tests over the privilege boundary ✅
-- WAHA integration: the listing bot, the inbound webhook, per-tenant sessions
-  linked by QR, photo upload into Supabase Storage, and posting to a seller's
-  WhatsApp Status — 52 tests, none of which need a WAHA server ✅
-- Staff invitations: owner-only, plan-checked server side, with a link the
-  owner sends over WhatsApp rather than an email that may never arrive ✅
-- The notification bell reads the seller's own rows — disputes, unposted
-  orders, a dead WhatsApp session, money waiting ✅
-- The Meta/TikTok OAuth flows answer 501 — they are gated on an app review and
-  a platform audit.
+What is live (each through a merged PR, with tests; `npm test` runs them all
+without a network, WAHA or Paystack):
 
-## Next steps
+- **Onboarding over WhatsApp** on the platform number: business name, thrift
+  store or brand, category, plan, email, commission terms (`commission-v1`).
+  The store can list while it waits; the operator approves in the console,
+  which creates the owner's login and sends it on WhatsApp.
+- **Listing**: by WhatsApp (photo → name → price → condition) or from the
+  dashboard (photos uploaded from the browser into the store's own folder).
+  Posting to the store's WhatsApp Status, automatically or on demand.
+- **Items brought to thrift stores**: people message the store's own number
+  starting with SELL; the store reviews them under "Items to review", sets its
+  price and approves; the seller is told on WhatsApp.
+- **The owner's menu** on the platform number: STORE, REVIEW, DASHBOARD, and
+  `LINK <code> <price>` for a payment link.
+- **Public pages**: homepage, store pages, product pages (above).
+- **Checkout**: Buy now and payment links → Paystack → order paid, item off
+  sale, owner and buyer told on WhatsApp, escrow link for escrow plans.
+- **Paying stores**: the owner adds a bank account (checked with the bank
+  through Paystack; only the last four digits are kept), and payouts go out as
+  Paystack transfers automatically (at once on Starter, on release for escrow),
+  settled by Paystack's transfer webhooks and retried hourly.
+- **The operator console** at `/admin`: approvals, plans and commission, store
+  details, a look inside each store, payouts (pause, retry), escrow release,
+  disputes, platform WhatsApp health, and an append-only audit log.
+- **Security boundaries**: RLS is strictly tenant-scoped with no admin
+  exception; operator access is checked in the Worker only; store owners can
+  change only name, logo, colour and number on their store (migration 0022).
 
-1. Fill `.env` with the publishable key and open the dashboard. Every screen is
-   a scaffold, so what this proves is the chain underneath: sign-in →
-   `TenantContext` → RLS → the right store.
-2. Phase 2 — the data layer: `lib/products.js`, `lib/orders.js`,
-   `lib/payouts.js`, one module per domain, no `supabase.from()` in a page.
-3. Set the Worker's secrets: `SUPABASE_SERVICE_KEY`, `TOKEN_SECRET`,
-   `PAYSTACK_SECRET_KEY`, via `wrangler secret put`. Point Paystack's webhook at
-   `/api/paystack/webhook`.
+## Planned, not built
 
-   `PUBLIC_ORIGIN` is not one of them. It is the origin this app answers on and
-   appears in every link the product sends, so it belongs in `wrangler.jsonc`
-   under `vars` — committed, reviewed, deployed with the code. It is optional:
-   the Worker falls back to whichever host a request arrived on, so links work
-   before it is set. Pin it once there is a canonical domain, so links name
-   that one even when somebody reaches the dashboard on a workers.dev URL. A
-   wrong value there is worse than none, because it overrides the fallback.
-4. Submit the Meta App Review and the TikTok audit. One-time platform-level
-   gates with multi-week lead times, and both block phase 5.
-5. Stand up WAHA and set `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`,
-   `WAHA_WEBHOOK_SECRET` and `PUBLIC_ORIGIN` on the Worker. Create the platform
-   session in WAHA with a webhook pointed at `/api/waha/webhook` carrying
-   `X-Thrift-Secret`; tenant sessions create themselves when a seller links.
-   Until those are set the bot answers nothing and logs what it would have sent,
-   which is the intended unconfigured state rather than an error.
+From the spec, this README's earlier notes, and decisions made while building:
 
-   `deploy/waha/` has the docker-compose setup (NOWEB engine — no browser, a
-   few MB per session rather than the few hundred MB WEBJS keeps per tenant)
-   and a step-by-step README covering the VPS, the platform session's
-   bootstrap curl commands, and the QR scan.
+1. **What stores owe consignors** (payouts part 3): when a consignor's item
+   sells, the store sees what it owes them; "Mark paid" sends the consignor a
+   WhatsApp confirmation. The store pays them itself.
+2. **Plan fees**: nothing charges the monthly subscription yet. Commission is
+   collected; the plan price is only quoted.
+3. **Instagram and Facebook posting** (Growth+), and **TikTok** (Business): the
+   OAuth routes answer `501`. Each needs a Meta App Review or TikTok audit,
+   with weeks of lead time, before it can be built against anything real.
+4. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
+   Payment links cover the common case today.
+5. **Refunds**: resolving a dispute for the buyer reverses the hold and records
+   it; returning money to the buyer's card is still a separate manual step.
+6. **Upgrade nudges** based on listing and sales volume ("You've listed 20
+   items this month — Growth adds…").
+7. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+   stock?"), a dedicated support bot, a structured dispute workflow.
+8. **Custom domain and subdomains**: point a domain at the Worker, then offer
+   `store.domain` to higher plans.
+9. **A separate operator login** at its own address, apart from store accounts.
+10. **Live payments**: switch Paystack from test to live once the business
+    account is verified (Transfers enabled, OTP off for API transfers).
+
+## Setup
+
+Worker secrets (`npx wrangler versions secret put NAME`, then
+`npx wrangler versions deploy`):
+
+| Secret | What for |
+|---|---|
+| `SUPABASE_SERVICE_KEY` | everything the Worker writes |
+| `TOKEN_SECRET` | signed links: payment links, escrow confirmation |
+| `PAYSTACK_SECRET_KEY` | checkout, transfers, and verifying Paystack's webhooks |
+| `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`, `WAHA_WEBHOOK_SECRET` | WhatsApp (see `deploy/waha/`) |
+
+In Paystack, point the webhook at `/api/paystack/webhook`: it carries both
+`charge.success` and the `transfer.*` events. For live transfers, enable
+Transfers, turn off OTP for API transfers, and keep enough balance to pay out,
+because transfers are drawn from the Paystack balance.
+
+`PUBLIC_ORIGIN` is not a secret. It is the origin in every link the product
+sends, so it belongs in `wrangler.jsonc` under `vars` once there is a canonical
+domain. Until then the Worker uses whichever host a request arrived on.

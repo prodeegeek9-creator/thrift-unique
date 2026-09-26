@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { callWorker } from './api.js';
 
 // Money out.
 //
@@ -17,7 +18,7 @@ import { supabase } from './supabase.js';
 // first time anyone notices is when a seller disputes a payout.
 
 const PAYOUT_COLUMNS =
-  'id, amount, commission, status, reference, failure_reason, paid_at, created_at';
+  'id, amount, commission, status, reference, failure_reason, sent_at, paid_at, created_at';
 
 export async function fetchPayouts(tenantId, { limit = 50 } = {}) {
   if (!tenantId) return [];
@@ -94,4 +95,35 @@ export async function fetchPayoutItems(tenantId, payoutId) {
 
 function sum(rows, pick) {
   return (rows ?? []).reduce((total, row) => total + (pick(row) || 0), 0);
+}
+
+// Where the store is paid: bank, last four digits and the name on the
+// account. Owners and managers can read it; changing it goes through the
+// Worker, which checks it with the bank first (worker/routes/payouts.js).
+export async function fetchPayoutAccount(tenantId) {
+  if (!tenantId) return null;
+  const { data, error } = await supabase
+    .from('payout_accounts')
+    .select('bank_name, account_last4, account_name, updated_at')
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export const fetchBanks = (tenantId) =>
+  callWorker(`/api/payouts/banks?tenant=${encodeURIComponent(tenantId)}`, { method: 'GET' });
+
+export const resolveBankAccount = (tenantId, bankCode, accountNumber) =>
+  callWorker('/api/payouts/resolve', { body: { tenant: tenantId, bank_code: bankCode, account_number: accountNumber } });
+
+export const saveBankAccount = (tenantId, bankCode, accountNumber) =>
+  callWorker('/api/payouts/account', { body: { tenant: tenantId, bank_code: bankCode, account_number: accountNumber } });
+
+// What a payout's status means to the store.
+export function payoutStatusLabel(p) {
+  if (p.status === 'paid') return 'Paid';
+  if (p.status === 'sending') return 'Sending';
+  if (p.status === 'failed') return 'Failed';
+  return p.failure_reason ? 'Waiting · retrying' : 'Waiting';
 }

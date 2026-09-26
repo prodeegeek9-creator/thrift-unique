@@ -1,5 +1,6 @@
 import { db } from './supabase.js';
 import { split } from './money.js';
+import { sendPayout } from './transfers.js';
 
 // The order lifecycle, server side. Everything here runs under the service
 // key, so every query names its tenant explicitly — Postgres has stopped
@@ -124,6 +125,13 @@ async function createPayout(cfg, order) {
     'payout_items',
     { payout_id: payout.id, order_id: order.id, amount: net },
     { returning: false }
+  );
+
+  // Straight to the store's bank, if it can go now. If not (no account yet,
+  // paused, Paystack said no), it stays pending for the hourly sweep. Never
+  // allowed to fail the payment that caused it.
+  await sendPayout(cfg, payout).catch((err) =>
+    console.error('payout not sent:', payout.reference, err?.message ?? err)
   );
 
   return payout;

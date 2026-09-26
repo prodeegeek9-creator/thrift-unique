@@ -23,6 +23,8 @@ export const keys = {
 
   payouts: (t) => ['tenant', t, 'payouts'],
   balance: (t) => ['tenant', t, 'balance'],
+  payoutAccount: (t) => ['tenant', t, 'payout-account'],
+  banks: (t) => ['tenant', t, 'banks'],
 
   contacts: (t, search = '') => ['tenant', t, 'contacts', search],
   disputes: (t) => ['tenant', t, 'disputes'],
