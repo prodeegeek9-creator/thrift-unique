@@ -52,6 +52,13 @@ export default function Payouts() {
     <>
       <PageHeader title="Payouts" subtitle="What you have been paid, and what is pending." />
 
+      {Number(tenant?.owed_to_platform) > 0 ? (
+        <div className="mb-4 rounded-card border border-amber/30 bg-amber-lt px-4 py-3 text-sm text-amber">
+          You owe {formatNaira(tenant.owed_to_platform)} from refunds of sales you had already been paid for. It
+          comes out of your next payouts automatically.
+        </div>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -103,6 +110,11 @@ export default function Payouts() {
                       <tr key={p.id} className="border-b border-line/60 last:border-0">
                         <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">
                           {formatNaira(p.amount)}
+                          {Number(p.withheld) > 0 ? (
+                            <span className="block text-[11px] font-normal text-muted">
+                              {formatNaira(p.withheld)} kept toward refunds
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-4 py-3 text-xs text-muted">{p.reference ?? '—'}</td>
                         <td className="px-4 py-3">

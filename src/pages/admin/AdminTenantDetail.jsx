@@ -671,11 +671,22 @@ function PayoutsSection({ tenant, account, payouts, isOwner, onChanged }) {
           Payouts are paused. They keep adding up and go out when resumed.
         </p>
       ) : null}
+      {Number(tenant.owed_to_platform) > 0 ? (
+        <p className="mt-2 rounded-lg bg-amber-lt px-3 py-2 text-xs text-amber">
+          Owes {formatNaira(tenant.owed_to_platform)} from refunds of sales it had already been paid for. It comes out
+          of the store's next payouts.
+        </p>
+      ) : null}
       {payouts.length ? (
         <ul className="mt-3 divide-y divide-line text-sm">
           {payouts.map((p) => (
             <li key={p.id} className="flex flex-wrap items-center gap-3 py-2">
-              <span className="w-24 font-semibold text-ink">{formatNaira(p.amount)}</span>
+              <span className="w-24 font-semibold text-ink">
+                {formatNaira(p.amount)}
+                {Number(p.withheld) > 0 ? (
+                  <span className="block text-[11px] font-normal text-muted">+{formatNaira(p.withheld)} kept</span>
+                ) : null}
+              </span>
               <span className="text-xs text-muted">{p.reference}</span>
               <StatusPill status={p.status} label={payoutStatusLabel(p)} />
               {p.failure_reason ? <span className="text-xs text-red">{p.failure_reason}</span> : null}

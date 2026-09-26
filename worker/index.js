@@ -19,6 +19,7 @@ import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
 import { handleCheckout } from './routes/checkout.js';
+import { handleOrders } from './routes/orders.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -136,6 +137,11 @@ async function api(request, env, path) {
   // Buying: starting a Paystack payment, payment links, the return page.
   if (path.startsWith('/api/checkout')) {
     return handleCheckout(request, env, path);
+  }
+
+  // A store refunding one of its orders.
+  if (path.startsWith('/api/orders')) {
+    return handleOrders(request, env, path);
   }
 
   // Posting a listing to the store's WhatsApp Status from the dashboard.

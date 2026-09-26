@@ -57,7 +57,10 @@ export function TenantProvider({ children }) {
             // waha_status, but not waha_session: the Channels screen has to
             // show whether the seller's WhatsApp is actually working, and a
             // status is a state rather than an identifier.
-            'whatsapp_number, waha_status, commission_pct, store_type, category, created_at' +
+            'whatsapp_number, waha_status, commission_pct, store_type, category, created_at, ' +
+            // What the store owes back from refunds of sales it had already
+            // been paid for; the Payouts screen explains smaller transfers.
+            'owed_to_platform' +
           ')'
         )
         .eq('user_id', user.id);

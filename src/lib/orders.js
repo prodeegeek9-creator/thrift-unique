@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { callWorker } from './api.js';
 
 // Orders, and the escrow state machine that sits underneath them.
 
@@ -170,3 +171,29 @@ export async function markShipped(tenantId, id) {
   if (error) throw error;
   return data;
 }
+
+// ── refunds ──────────────────────────────────────────────────────────────────
+//
+// The buyer's money back to their card, through the Worker (it talks to
+// Paystack). Owners and managers only; the refunds table is readable by the
+// same people.
+
+export async function fetchRefund(tenantId, orderId) {
+  if (!tenantId || !orderId) return null;
+  const { data, error } = await supabase
+    .from('refunds')
+    .select('id, amount, status, reason, store_debt, failure_reason, created_at, processed_at')
+    .eq('tenant_id', tenantId)
+    .eq('order_id', orderId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// What refunding would do: { refundable, amount, store_debt } or
+// { refundable: false, reason }.
+export const previewRefund = (tenantId, orderId) =>
+  callWorker('/api/orders/refund', { body: { tenant: tenantId, order: orderId, preview: true } });
+
+export const refundOrder = (tenantId, orderId, { reason, relist }) =>
+  callWorker('/api/orders/refund', { body: { tenant: tenantId, order: orderId, reason, relist } });

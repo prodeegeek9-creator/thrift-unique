@@ -20,7 +20,7 @@ const OUTCOMES = [
   {
     id: 'refunded',
     label: 'Buyer was right',
-    detail: 'Reverse the hold. Returning the money to their card is a separate step.',
+    detail: 'Refund the buyer in full to their card, through Paystack. Needs an owner.',
     tone: 'red',
   },
   {
@@ -44,7 +44,16 @@ export default function AdminDisputes() {
   const resolve = useMutation({
     mutationFn: ({ id, outcome, resolution }) => resolveDispute(id, outcome, resolution),
     onSuccess: (r) => {
-      toast(r.moved === 'refunded' ? 'Hold reversed' : r.moved === 'released' ? 'Funds released' : 'Closed', 'success');
+      toast(
+        r.moved === 'refunded'
+          ? 'Refund sent to Paystack'
+          : r.moved === 'refund_failed'
+            ? 'Resolved, but Paystack refused the refund. Retry it under Refunds.'
+            : r.moved === 'released'
+              ? 'Funds released'
+              : 'Closed',
+        r.moved === 'refund_failed' ? 'error' : 'success'
+      );
       setWorking(null);
       qc.invalidateQueries({ queryKey: ['admin'] });
     },

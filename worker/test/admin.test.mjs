@@ -40,6 +40,7 @@ function seed() {
     orders: [
       { id: ORDER, tenant_id: TENANT, order_code: 'UT-2001', amount: 35000, commission: 2800,
         status: 'escrow', escrow_status: 'held', confirmed_at: null, payment_ref: 'REF-9',
+        paid_at: new Date(Date.now() - 86_400_000).toISOString(),
         confirm_deadline: new Date(Date.now() + 86_400_000).toISOString() },
     ],
     disputes: [
@@ -254,26 +255,59 @@ test('resolving for the seller releases the hold', async () => {
   } finally { restore(); }
 });
 
-test('resolving for the buyer reverses the hold and pays nobody', async () => {
-  const { sb, restore } = ctx();
+test('resolving for the buyer refunds their card through Paystack and pays nobody', async () => {
+  const refunds = [];
+  const { sb, restore } = ctx({
+    paystack: async (url, init) => {
+      if (url.endsWith('/refund')) {
+        refunds.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ status: true, data: { id: 555, status: 'pending' } }), { status: 200 });
+      }
+      throw new Error(`unexpected paystack call ${url}`);
+    },
+  });
   try {
-    await worker.fetch(
+    const res = await worker.fetch(
       call(`/api/admin/disputes/${DISPUTE}/resolve`, {
         token: 'tok-owner', method: 'POST', body: { outcome: 'refunded', resolution: 'Never arrived' },
       }),
       env(), {}
     );
+    assert.equal(res.status, 200);
 
     assert.equal(sb.tables.orders[0].escrow_status, 'refunded');
     assert.equal(sb.tables.orders[0].status, 'refunded');
     assert.equal(sb.tables.payouts.length, 0, 'a refund paid the seller');
 
-    // The payment reference is carried into the audit row, because returning
-    // the money to the card is a separate deliberate step and whoever does it
-    // needs the reference.
+    // The whole payment back to the card it came from.
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0].transaction, 'REF-9');
+    assert.equal(refunds[0].amount, undefined, 'a full refund names no amount');
+
+    const refund = sb.tables.refunds[0];
+    assert.equal(refund.status, 'pending');
+    assert.equal(refund.paystack_refund_id, '555');
+    assert.equal(refund.store_debt, 0, 'the store was never paid, so it owes nothing');
+    assert.equal(refund.requested_via, 'dispute');
+
     const entry = sb.tables.operator_audit.at(-1);
     assert.equal(entry.detail.payment_ref, 'REF-9');
     assert.equal(entry.detail.moved, 'refunded');
+  } finally { restore(); }
+});
+
+test('support cannot refund from a dispute', async () => {
+  const { sb, restore } = ctx();
+  try {
+    const res = await worker.fetch(
+      call(`/api/admin/disputes/${DISPUTE}/resolve`, {
+        token: 'tok-support', method: 'POST', body: { outcome: 'refunded', resolution: 'x' },
+      }),
+      env(), {}
+    );
+    assert.equal(res.status, 403);
+    assert.equal(sb.tables.orders[0].status, 'escrow');
+    assert.equal(sb.tables.disputes[0].status, 'open');
   } finally { restore(); }
 });
 

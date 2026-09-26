@@ -18,7 +18,7 @@ import { callWorker } from './api.js';
 // first time anyone notices is when a seller disputes a payout.
 
 const PAYOUT_COLUMNS =
-  'id, amount, commission, status, reference, failure_reason, sent_at, paid_at, created_at';
+  'id, amount, commission, withheld, status, reference, failure_reason, sent_at, paid_at, created_at';
 
 export async function fetchPayouts(tenantId, { limit = 50 } = {}) {
   if (!tenantId) return [];
@@ -125,5 +125,6 @@ export function payoutStatusLabel(p) {
   if (p.status === 'paid') return 'Paid';
   if (p.status === 'sending') return 'Sending';
   if (p.status === 'failed') return 'Failed';
+  if (p.status === 'cancelled') return 'Cancelled · refunded';
   return p.failure_reason ? 'Waiting · retrying' : 'Waiting';
 }

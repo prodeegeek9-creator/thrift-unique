@@ -20,6 +20,7 @@ export const keys = {
 
   orders: (t, filter = 'all') => ['tenant', t, 'orders', filter],
   order: (t, id) => ['tenant', t, 'order', id],
+  orderRefund: (t, id) => ['tenant', t, 'order', id, 'refund'],
 
   payouts: (t) => ['tenant', t, 'payouts'],
   balance: (t) => ['tenant', t, 'balance'],

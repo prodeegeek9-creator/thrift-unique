@@ -1,6 +1,7 @@
 import { db } from './supabase.js';
 import { split } from './money.js';
 import { sendPayout } from './transfers.js';
+import { takeDebt, adjustDebt } from './debt.js';
 
 // The order lifecycle, server side. Everything here runs under the service
 // key, so every query names its tenant explicitly — Postgres has stopped
@@ -108,17 +109,32 @@ export async function releaseEscrow(cfg, order, { reason }) {
 async function createPayout(cfg, order) {
   const { net, commission } = split(order.amount, pctFrom(order));
 
-  const payout = await db(cfg).insert('payouts', {
+  // A store that refunded sales it had already been paid for owes that money
+  // back (lib/refunds.js). It comes out of this payout first.
+  const withheld = await takeDebt(cfg, order.tenant_id, net);
+  const amount = Math.round((net - withheld) * 100) / 100;
+
+  const row = {
     tenant_id: order.tenant_id,
-    amount: net,
+    amount,
     commission,
-    status: 'pending',
+    withheld,
+    // Nothing left to transfer when the whole sale went to the debt.
+    status: amount > 0 ? 'pending' : 'paid',
+    paid_at: amount > 0 ? null : new Date().toISOString(),
     // Derived from the order, so a retry hits the unique index instead of
     // creating a second payout for the same sale.
     reference: `PO-${order.order_code}`,
-  });
+  };
 
-  // The insert above collides on a replay; treat that as already done.
+  // If no payout comes of this (a replay colliding on the reference, or a
+  // failure), what was taken toward the debt goes back.
+  let payout = null;
+  try {
+    payout = await db(cfg).insert('payouts', row);
+  } finally {
+    if (!payout && withheld) await adjustDebt(cfg, order.tenant_id, withheld).catch(() => {});
+  }
   if (!payout) return null;
 
   await db(cfg).insert(
@@ -130,6 +146,7 @@ async function createPayout(cfg, order) {
   // Straight to the store's bank, if it can go now. If not (no account yet,
   // paused, Paystack said no), it stays pending for the hourly sweep. Never
   // allowed to fail the payment that caused it.
+  if (payout.status !== 'pending') return payout;
   await sendPayout(cfg, payout).catch((err) =>
     console.error('payout not sent:', payout.reference, err?.message ?? err)
   );

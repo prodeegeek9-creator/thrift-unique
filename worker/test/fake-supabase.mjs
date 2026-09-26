@@ -33,6 +33,9 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     payout_accounts: [],
     plan_invoices: [],
     billing_cards: [],
+    refunds: [],
+    disputes: [],
+    operator_audit: [],
     ...structuredClone(seed),
   };
 
@@ -51,6 +54,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     payout_accounts: 'tenant_id',
     billing_cards: 'tenant_id',
     plan_invoices: ['tenant_id', 'period_start'],
+    refunds: 'order_id',
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.
@@ -75,7 +79,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       else if (k === 'limit') limit = Number(v);
       else if (k === 'order' || k === 'on_conflict') continue;
       else {
-        const m = /^(eq|lt|gt|in|not\.is|is)\.(.*)$/s.exec(v);
+        const m = /^(eq|neq|lt|gt|in|not\.is|is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
@@ -86,6 +90,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     return filters.every((f) => {
       const cell = row[f.col];
       if (f.op === 'eq') return String(cell) === f.val;
+      if (f.op === 'neq') return String(cell) !== f.val;
       if (f.op === 'lt') return new Date(cell) < new Date(f.val);
       if (f.op === 'gt') return new Date(cell) > new Date(f.val);
       if (f.op === 'is') return f.val === 'null' ? cell == null : String(cell) === f.val;

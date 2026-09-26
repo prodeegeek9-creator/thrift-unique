@@ -4,6 +4,7 @@ import { byPaymentRef } from '../lib/orders.js';
 import { settle } from './checkout.js';
 import { settlePlanPayment } from './billing.js';
 import { settleTransfer, paidOutMessage } from '../lib/transfers.js';
+import { settleRefundEvent } from '../lib/refunds.js';
 import { db } from '../lib/supabase.js';
 import { chatId } from '../lib/waha.js';
 import { say } from './waha.js';
@@ -47,6 +48,11 @@ export async function handlePaystackWebhook(request, env) {
     const result = await settleTransfer(cfg, event);
     if (result.newlyPaid) await tellPaidOut(cfg, result.payout).catch(() => {});
     return json({ ok: true, ...result, payout: result.payout?.reference ?? null });
+  }
+
+  // A refund reaching (or failing to reach) a buyer's card.
+  if (String(event?.event ?? '').startsWith('refund.')) {
+    return json({ ok: true, ...(await settleRefundEvent(cfg, event)) });
   }
 
   if (event?.event !== 'charge.success') {
