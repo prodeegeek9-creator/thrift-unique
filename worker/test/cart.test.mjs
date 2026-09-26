@@ -46,6 +46,8 @@ function seed({ tier = 'growth', checkout = true, escrow = true } = {}) {
     refunds: [],
     status_posts: [],
     listing_channel_posts: [],
+    tenant_members: [{ tenant_id: TENANT, user_id: 'user-staff', role: 'staff' }],
+    submissions: [],
   };
 }
 
@@ -60,6 +62,11 @@ function fakeWaha() {
       handler: async (url, init) => {
         const path = new URL(url).pathname;
         if (path === '/api/sendText') sent.push(JSON.parse(init.body));
+        const lid = /\/lids\/(.+)$/.exec(path)?.[1];
+        if (lid) {
+          const pn = { [`${OWNER_NUMBER.slice(3)}@lid`]: `${OWNER_NUMBER}@c.us`, '555@lid': '2348055555555@c.us' }[decodeURIComponent(lid)];
+          return pn ? new Response(JSON.stringify({ lid: decodeURIComponent(lid), pn }), { status: 200 }) : new Response('{}', { status: 404 });
+        }
         if (path.endsWith('/status/new-message-id')) return new Response(JSON.stringify({ id: 'BAE5STATUS1' }), { status: 200 });
         if (path.endsWith('/status/image')) statuses.push(JSON.parse(init.body));
         return new Response('{}', { status: 200 });
@@ -375,5 +382,53 @@ test('CANCEL after a payment link drops the unpaid cart and its orders', async (
     assert.equal(sb.tables.carts[0].status, 'cancelled');
     assert.ok(sb.tables.orders.every((o) => o.status === 'cancelled'));
     assert.equal(sb.tables.products[0].status, 'active');
+  } finally { restore(); }
+});
+
+test('the dashboard lists the chats on hold, and Resume bot hands one or all back', async () => {
+  const { sb, sent, restore } = setup({}, { tokens: { 'tok-staff': { id: 'user-staff', email: 's@x.test' } } });
+  const api = (path, { method = 'GET', body, token = 'tok-staff' } = {}) =>
+    worker.fetch(
+      new Request(`https://vendwyze.test/api/waha${path}`, {
+        method,
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+      E(),
+      {}
+    );
+  try {
+    sb.tables.carts.push({ id: 'c1', tenant_id: TENANT, chat_id: '555@lid', buyer_name: 'Tolu', payment_ref: 'utc_x', amount: 1, created_at: new Date().toISOString() });
+    await say(
+      ownerSends('I will send you the account number', '555@lid'),
+      ownerSends('Hello', BUYER),
+      // Messaging yourself, or a Status post: nobody is waiting on the bot there.
+      ownerSends('note to self', `${OWNER_NUMBER.slice(3)}@lid`)
+    );
+
+    assert.ok((await api(`/holds?tenant=${TENANT}`, { token: null })).status >= 401, 'signed-out');
+
+    let { holds } = await (await api(`/holds?tenant=${TENANT}`)).json();
+    assert.deepEqual(
+      holds.map((h) => [h.chat_id, h.name, h.phone, h.note]).sort(),
+      [
+        ['2348011111111@c.us', null, '2348011111111', 'Hello'],
+        ['555@lid', 'Tolu', '2348055555555', 'I will send you the account number'],
+      ]
+    );
+
+    const one = await (await api('/holds/resume', { method: 'POST', body: { tenant: TENANT, chat: BUYER } })).json();
+    assert.equal(one.resumed, 1);
+    ({ holds } = await (await api(`/holds?tenant=${TENANT}`)).json());
+    assert.deepEqual(holds.map((h) => h.chat_id), ['555@lid']);
+
+    // And the bot answers there again.
+    await say(msg('BUY JKT001'));
+    assert.match(last(sent), /Added/);
+
+    const all = await (await api('/holds/resume', { method: 'POST', body: { tenant: TENANT } })).json();
+    assert.equal(all.resumed, 2, 'the rest, including the note-to-self chat');
+    ({ holds } = await (await api(`/holds?tenant=${TENANT}`)).json());
+    assert.deepEqual(holds, []);
   } finally { restore(); }
 });
