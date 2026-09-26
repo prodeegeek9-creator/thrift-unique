@@ -14,6 +14,9 @@ import {
   TRIAL_DAYS,
 } from '../lib/billing.js';
 import { say } from './waha.js';
+import { TIERS, PLAN_PITCH, COMING_SOON } from '../lib/plans.js';
+import { quoteChange, changePlan, PlanChangeError } from '../lib/planChange.js';
+import { nudgeStats, pickNudge, recordLocked } from '../lib/nudges.js';
 
 // The plan fee, from the store's side.
 //
@@ -21,6 +24,10 @@ import { say } from './waha.js';
 //                                           status, card, invoices
 //   POST /api/billing/pay-now { tenant }    open this month's invoice early
 //   POST /api/billing/auto-renew { tenant, on }
+//   POST /api/billing/change-plan { tenant, tier }   up now (paying the
+//                                           difference), down at period end
+//   GET  /api/billing/nudge?tenant=…        the dashboard's upgrade card
+//   POST /api/billing/locked { tenant, flag }  a screen the plan doesn't include
 //   GET  /api/billing/pay/:ref              the pay page (public: the link
 //   POST /api/billing/pay/:ref              travels on WhatsApp)
 //
@@ -33,6 +40,9 @@ export async function handleBilling(request, env, path) {
   if (rest === '/' && method === 'GET') return summary(request, env);
   if (rest === '/pay-now' && method === 'POST') return payNow(request, env);
   if (rest === '/auto-renew' && method === 'POST') return autoRenew(request, env);
+  if (rest === '/change-plan' && method === 'POST') return changePlanRoute(request, env);
+  if (rest === '/nudge' && method === 'GET') return nudge(request, env);
+  if (rest === '/locked' && method === 'POST') return locked(request, env);
   const pay = rest.match(/^\/pay\/(utb_[a-z0-9]{12,40})$/);
   if (pay && method === 'GET') return payPage(request, env, pay[1]);
   if (pay && method === 'POST') return startPayment(request, env, pay[1]);
@@ -59,7 +69,8 @@ async function member(request, env, tenantId, roles) {
   }
 }
 
-const TENANT_FIELDS = 'id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew';
+const TENANT_FIELDS =
+  'id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew,next_tier,next_tier_at';
 
 async function summary(request, env) {
   const tenantId = new URL(request.url).searchParams.get('tenant');
@@ -71,14 +82,28 @@ async function summary(request, env) {
     db(cfg).one('billing_cards', `tenant_id=eq.${tenantId}&select=card_brand,card_last4,exp_month,exp_year`),
     db(cfg).select(
       'plan_invoices',
-      `tenant_id=eq.${tenantId}&select=id,tier,amount,period_start,period_end,status,payment_ref,paid_at,paid_via,created_at` +
+      `tenant_id=eq.${tenantId}&select=id,kind,from_tier,tier,amount,period_start,period_end,status,payment_ref,paid_at,paid_via,created_at` +
         '&order=period_start.desc&limit=12'
     ),
   ]);
   if (!tenant) return json({ error: 'No such store' }, 404);
 
-  const open = invoices.find((i) => i.status === 'open') ?? null;
+  const open = invoices.find((i) => i.status === 'open' && (i.kind ?? 'period') === 'period') ?? null;
+  const upgrade = invoices.find((i) => i.status === 'open' && i.kind === 'upgrade') ?? null;
+  const now = new Date();
   return json({
+    // The plan picker: each plan's price and what it gives, and what moving
+    // to it would do right now.
+    plans: TIERS.map((tier) => ({
+      tier,
+      price: PLAN_PRICES[tier],
+      features: PLAN_PITCH[tier],
+      coming_soon: COMING_SOON[tier] ?? null,
+      change: quoteChange(tenant, tier, now),
+    })),
+    next_tier: tenant.next_tier ?? null,
+    next_tier_at: tenant.next_tier_at ?? null,
+    open_upgrade: upgrade ? { tier: upgrade.tier, amount: Number(upgrade.amount), pay_url: payPageUrl(cfg, upgrade) } : null,
     tier: tenant.tier,
     price: priceFor(tenant),
     standard_prices: PLAN_PRICES,
@@ -88,7 +113,7 @@ async function summary(request, env) {
     auto_renew: Boolean(tenant.auto_renew && card),
     card: card ? { brand: card.card_brand, last4: card.card_last4, exp: [card.exp_month, card.exp_year].filter(Boolean).join('/') } : null,
     open_invoice: open ? { ...open, pay_url: payPageUrl(cfg, open) } : null,
-    invoices: invoices.map(({ payment_ref, ...i }) => i),
+    invoices: invoices.filter((i) => i.status !== 'void').map(({ payment_ref, ...i }) => i),
   });
 }
 
@@ -124,6 +149,56 @@ async function autoRenew(request, env) {
   return json({ ok: true, auto_renew: on });
 }
 
+// ── CHANGING PLAN ────────────────────────────────────────────────────────────
+
+const refAlphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
+function newRef() {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  return `utb_${Array.from(bytes, (b) => refAlphabet[b % refAlphabet.length]).join('')}`;
+}
+
+// Owner only: it changes what the store pays.
+async function changePlanRoute(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { cfg, refusal } = await member(request, env, body?.tenant, ['owner']);
+  if (refusal) return refusal;
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${body.tenant}&select=${TENANT_FIELDS}`);
+  if (!tenant) return json({ error: 'No such store' }, 404);
+
+  try {
+    const result = await changePlan(cfg, tenant, body?.tier, { newRef });
+    if (result.done === 'pay') {
+      return json({ ok: true, done: 'pay', amount: Number(result.invoice.amount), pay_url: payPageUrl(cfg, result.invoice) });
+    }
+    return json({ ok: true, done: result.done, effective_at: result.effective_at ?? null, tier: body.tier });
+  } catch (err) {
+    if (err instanceof PlanChangeError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
+// The upgrade card on the dashboard, if one applies. Anybody on the team sees
+// the dashboard; only the owner can act on it.
+async function nudge(request, env) {
+  const tenantId = new URL(request.url).searchParams.get('tenant');
+  const { cfg, refusal } = await member(request, env, tenantId, null);
+  if (refusal) return refusal;
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=${TENANT_FIELDS}`);
+  if (!tenant || tenant.status !== 'active') return json({ nudge: null });
+  return json({ nudge: pickNudge(tenant, await nudgeStats(cfg, tenant)) });
+}
+
+// A screen the store's plan doesn't include was opened: remembered for the
+// nudges, once a day per screen.
+async function locked(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const { cfg, refusal } = await member(request, env, body?.tenant, null);
+  if (refusal) return refusal;
+  const recorded = await recordLocked(cfg, body.tenant, String(body?.flag ?? ''));
+  return json({ ok: true, recorded });
+}
+
 // ── THE PAY PAGE ─────────────────────────────────────────────────────────────
 
 async function invoiceByRef(cfg, ref) {
@@ -151,6 +226,8 @@ async function payPage(request, env, ref) {
 
   return json({
     store: tenant?.name ?? null,
+    kind: invoice.kind ?? 'period',
+    from_tier: invoice.from_tier ?? null,
     tier: invoice.tier,
     amount: Number(invoice.amount),
     period_start: invoice.period_start,
@@ -167,6 +244,9 @@ async function startPayment(request, env, ref) {
 
   const { invoice, tenant } = await invoiceByRef(cfg, ref);
   if (!invoice) return json({ error: 'No such invoice.' }, 404);
+  if (invoice.status === 'void') {
+    return json({ error: 'This payment link was replaced. Open Billing in your dashboard to start again.' }, 409);
+  }
   if (invoice.status !== 'open') return json({ error: 'This invoice is already paid.' }, 409);
 
   const body = await request.json().catch(() => ({}));

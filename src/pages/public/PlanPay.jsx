@@ -61,7 +61,10 @@ export default function PlanPay() {
 
   if (!invoice && !error) return <LogoLoader fullScreen label="Loading" />;
 
-  const plan = invoice?.tier ? invoice.tier[0].toUpperCase() + invoice.tier.slice(1) : '';
+  const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : '');
+  const plan = cap(invoice?.tier);
+  const fromPlan = cap(invoice?.from_tier);
+  const upgrade = invoice?.kind === 'upgrade';
 
   return (
     <div className="min-h-dvh bg-bg px-4 py-6">
@@ -84,7 +87,9 @@ export default function PlanPay() {
               <p className="mt-1 text-sm text-muted">
                 {invoice.store} · {plan} plan · {formatNaira(invoice.amount)}
               </p>
-              <p className="mt-3 text-sm text-text">Your store is all set. We've sent the details on WhatsApp.</p>
+              <p className="mt-3 text-sm text-text">
+                {upgrade ? `You're on ${plan} now.` : 'Your store is all set.'} We've sent the details on WhatsApp.
+              </p>
               <a href="/dashboard/billing" className="mt-4 inline-block text-sm font-semibold text-green">
                 Go to Billing
               </a>
@@ -100,14 +105,28 @@ export default function PlanPay() {
               ) : null}
               <div className="mt-4 flex items-baseline justify-between border-y border-line py-3">
                 <div>
-                  <p className="text-sm font-medium text-ink">{plan} plan, one month</p>
-                  <p className="text-xs text-muted">
-                    {dateOnly(invoice.period_start)} – {dateOnly(invoice.period_end)}
-                  </p>
+                  {upgrade ? (
+                    <>
+                      <p className="text-sm font-medium text-ink">
+                        Upgrade{fromPlan ? ` from ${fromPlan}` : ''} to {plan}
+                      </p>
+                      <p className="text-xs text-muted">
+                        The difference for the rest of this month, to {dateOnly(invoice.period_end)}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-ink">{plan} plan, one month</p>
+                      <p className="text-xs text-muted">
+                        {dateOnly(invoice.period_start)} – {dateOnly(invoice.period_end)}
+                      </p>
+                    </>
+                  )}
                 </div>
                 <p className="font-display text-xl font-semibold text-ink">{formatNaira(invoice.amount)}</p>
               </div>
 
+              {upgrade ? null : (
               <label className="mt-4 flex items-start gap-2 text-sm text-ink">
                 <input
                   type="checkbox"
@@ -122,6 +141,7 @@ export default function PlanPay() {
                   </span>
                 </span>
               </label>
+              )}
 
               {error ? <p className="mt-3 text-sm text-red">{error}</p> : null}
               {returned && invoice.status === 'open' ? (

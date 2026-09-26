@@ -704,6 +704,15 @@ without a network, WAHA or Paystack):
   "Renew automatically" is on (migration 0024; the card's authorization stays
   in a table only the Worker can read). The operator can set a store's price
   (0 for free) and record a payment made outside Paystack.
+- **Changing plan and upgrade nudges**: the store owner picks a plan on the
+  Billing page. Up is immediate once they pay the difference for the rest of
+  the paid month (free on the trial); down waits for the end of the paid
+  month (`worker/lib/planChange.js`, migration 0027). A card on the dashboard,
+  and a WhatsApp message at most once a fortnight (9am Lagos), suggest the next
+  plan when a store opens a screen its plan lacks, sells something over
+  ₦50,000 on Starter, or passes a month's sales or listings
+  (`worker/lib/nudges.js`). Never to a store that is overdue, on an agreed
+  price, or moving down.
 - **Refunds**: from the order page, a dispute or the release queue, back to the
   buyer's card through Paystack less Paystack's fee, only while the payment is
   still held. Paystack's `refund.*` webhooks settle them.
@@ -724,13 +733,11 @@ From the spec, this README's earlier notes, and decisions made while building:
    with weeks of lead time, before it can be built against anything real.
 2. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
    Payment links cover the common case today.
-3. **Upgrade nudges** based on listing and sales volume ("You've listed 20
-   items this month — Growth adds…").
-4. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+3. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
-5. **Custom domain and subdomains**: point a domain at the Worker, then offer
+4. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-6. **Live payments**: switch Paystack from test to live once the business
+5. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup
@@ -764,5 +771,7 @@ page. In Supabase, under Authentication → URL Configuration, set the Site URL 
 the site's address, since a link Supabase itself sends falls back to it.
 
 `PUBLIC_ORIGIN` is not a secret. It is the origin in every link the product
-sends, so it belongs in `wrangler.jsonc` under `vars` once there is a canonical
-domain. Until then the Worker uses whichever host a request arrived on.
+sends, and it is set in `wrangler.jsonc` under `vars` (the workers.dev address
+for now; change it when the Vendwyze domain is attached). The hourly cron needs
+it: it has no request to take a host from, so without it the plan-fee
+reminders and upgrade nudges it sends had no address in their links.

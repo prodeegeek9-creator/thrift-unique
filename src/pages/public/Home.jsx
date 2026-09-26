@@ -26,13 +26,13 @@ const PLANS = [
     price: '₦25,000',
     commission: '7% per sale',
     featured: true,
-    points: ['Everything in Starter', 'Instagram & Facebook posting', 'Buyer protection (escrow)', 'Checkout inside WhatsApp', 'Customer list & disputes'],
+    points: ['Everything in Starter', 'Buyer protection (escrow)', 'Customer list & disputes', 'Instagram & Facebook posting (coming soon)'],
   },
   {
     name: 'Business',
     price: '₦75,000',
     commission: 'Commission agreed with you',
-    points: ['Everything in Growth', 'TikTok posting', 'Staff logins', 'Analytics', 'Dedicated support'],
+    points: ['Everything in Growth', 'Staff logins', 'Sales analytics', 'Priority support', 'TikTok posting (coming soon)'],
   },
 ];
 

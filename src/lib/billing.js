@@ -136,3 +136,15 @@ export async function startPlanPayment(ref, autoRenew) {
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
   return body;
 }
+
+// Changing plan (owner only). Answers { done: 'changed' | 'pay' | 'scheduled'
+// | 'kept', pay_url?, amount?, effective_at? }. See worker/lib/planChange.js.
+export const changePlan = (tenantId, tier) => callWorker('/api/billing/change-plan', { body: { tenant: tenantId, tier } });
+
+// The dashboard's upgrade card: { nudge } or { nudge: null }.
+export const fetchNudge = (tenantId) =>
+  callWorker(`/api/billing/nudge?tenant=${encodeURIComponent(tenantId)}`, { method: 'GET' });
+
+// A screen the plan doesn't include was opened. Fire and forget.
+export const recordLocked = (tenantId, flag) =>
+  callWorker('/api/billing/locked', { body: { tenant: tenantId, flag } }).catch(() => null);
