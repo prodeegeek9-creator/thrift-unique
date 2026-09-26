@@ -4,7 +4,8 @@ import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { parsePrice } from '../lib/bot.js';
 import { approvedSellerMessage, declinedSellerMessage, paidConsignorMessage } from '../lib/intake.js';
-import { postToStatus, say } from './waha.js';
+import { postToStatus, say, setConversation } from './waha.js';
+import { SAY as BANK_SAY, applyChange, accountFor } from '../lib/consignorBank.js';
 
 // Deciding on an item somebody brought to the store.
 //
@@ -23,6 +24,7 @@ export async function handleSubmissions(request, env, path) {
   const rest = path.slice('/api/submissions'.length) || '/';
   if (rest === '/decide' && request.method === 'POST') return decide(request, env);
   if (rest === '/paid' && request.method === 'POST') return markPaid(request, env);
+  if (rest === '/account-change' && request.method === 'POST') return decideAccountChange(request, env);
   return json({ error: 'Not found' }, 404);
 }
 
@@ -212,4 +214,67 @@ async function markPaid(request, env) {
   );
 
   return json({ ok: true, notified });
+}
+
+// POST /api/submissions/account-change { tenant, id, decision: 'approve' | 'reject' }
+//
+// The store's half of a consignor changing where they're paid. Their own half
+// is the confirmation the bot sends ~2 hours after they ask; the change
+// happens only when both have said yes, whichever comes second. Owner and
+// manager, like marking a consignor paid.
+async function decideAccountChange(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  const body = await request.json().catch(() => ({}));
+  const tenantId = body?.tenant;
+  const id = String(body?.id ?? '');
+  const decision = body?.decision;
+
+  let member;
+  try {
+    member = await requireMember(request, cfg, tenantId, { roles: ['owner', 'manager'] });
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'Bad change' }, 400);
+  if (!['approve', 'reject'].includes(decision)) return json({ error: 'Bad decision' }, 400);
+
+  const at = new Date().toISOString();
+  const rows = await db(cfg).update(
+    'consignor_account_changes',
+    `id=eq.${id}&tenant_id=eq.${tenantId}&status=eq.pending&store_decision=eq.pending`,
+    {
+      store_decision: decision === 'approve' ? 'approved' : 'rejected',
+      decided_by: member.userId,
+      decided_at: at,
+      ...(decision === 'reject' ? { status: 'rejected' } : {}),
+    }
+  );
+  if (!rows.length) return json({ error: 'This change was already decided, or has lapsed.' }, 409);
+  const change = rows[0];
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,name,waha_session,waha_status`);
+  const tell = (text) =>
+    tenant?.waha_session && tenant.waha_status === 'WORKING'
+      ? say(cfg, tenant, change.seller_chat_id, text, { session: tenant.waha_session })
+      : false;
+
+  if (decision === 'reject') {
+    const account = await accountFor(cfg, tenantId, change.seller_chat_id);
+    // A confirmation still waiting on them is moot now.
+    const conv = await db(cfg).one(
+      'bot_conversations',
+      `tenant_id=eq.${tenantId}&chat_id=eq.${encodeURIComponent(change.seller_chat_id)}&select=state,draft`
+    );
+    if (conv?.state === 'bank_verify' && conv.draft?.change_id === change.id) {
+      await setConversation(cfg, tenant, change.seller_chat_id, { state: 'idle', draft: {} });
+    }
+    if (account) await tell(BANK_SAY.storeRejected(tenant.name, account));
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  // Approved. Applied now if they've already confirmed; otherwise when they do.
+  const applied = await applyChange(cfg, change);
+  if (applied) await tell(BANK_SAY.applied(change));
+  return json({ ok: true, status: applied ? 'applied' : 'waiting_for_seller' });
 }

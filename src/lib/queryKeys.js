@@ -17,6 +17,8 @@ export const keys = {
 
   submissions: (t, status = 'pending') => ['tenant', t, 'submissions', status],
   submissionCounts: (t) => ['tenant', t, 'submissions', 'counts'],
+  consignorAccounts: (t) => ['tenant', t, 'submissions', 'accounts'],
+  accountChanges: (t) => ['tenant', t, 'submissions', 'account-changes'],
 
   orders: (t, filter = 'all') => ['tenant', t, 'orders', filter],
   order: (t, id) => ['tenant', t, 'order', id],

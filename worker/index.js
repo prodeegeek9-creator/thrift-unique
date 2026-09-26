@@ -14,7 +14,7 @@ import { renderHomePage, renderProductPage, renderStorePage } from './routes/sto
 import { releaseExpiredHolds, sendOwedPayouts, runBilling } from './routes/escrow.js';
 import { handlePayouts } from './routes/payouts.js';
 import { handleBilling } from './routes/billing.js';
-import { handleWaha } from './routes/waha.js';
+import { handleWaha, consignorBankSweep } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
@@ -78,6 +78,9 @@ export default {
         // And plan fees: invoices, reminders, auto-renew, pausing.
         .then(() => runBilling(env))
         .then((r) => r && console.log(`billing sweep: ${JSON.stringify(r)}`))
+        // Payout account changes: the 2-hour confirmation, and expiry.
+        .then(() => consignorBankSweep(env))
+        .then((r) => r && console.log(`consignor bank sweep: ${JSON.stringify(r)}`))
     );
   },
 };

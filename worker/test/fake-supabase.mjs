@@ -56,6 +56,13 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     billing_cards: 'tenant_id',
     plan_invoices: ['tenant_id', 'period_start'],
     refunds: 'order_id',
+    bot_conversations: ['tenant_id', 'chat_id'],
+    consignor_accounts: ['tenant_id', 'seller_chat_id'],
+  };
+
+  // Column defaults the real tables have, which the code reads back.
+  const defaults = {
+    consignor_account_changes: () => ({ id: crypto.randomUUID(), requested_at: new Date().toISOString(), status: 'pending', store_decision: 'pending' }),
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.
@@ -185,7 +192,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       }
 
       // created_at defaults to now() on the real tables; queries filter on it.
-      const row = { id: `row-${nextId++}`, created_at: new Date().toISOString(), ...body };
+      const row = { id: `row-${nextId++}`, created_at: new Date().toISOString(), ...(defaults[table]?.() ?? {}), ...body };
       // products.public_code has a column default in the real schema; the
       // storefront link and the bot's confirmation both read it back.
       if (table === 'products' && !row.public_code) row.public_code = `PC${nextId}`;
