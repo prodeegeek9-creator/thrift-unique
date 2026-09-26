@@ -461,7 +461,11 @@ async function listItem(cfg, tenant, chatId, action) {
   }
 
   const posted = await postToStatus(cfg, tenant, product);
-  await say(cfg, tenant, chatId, listedMessage(product, { origin: cfg.publicOrigin, posted }));
+  // No payout account yet: reminded with every listing (only once payments
+  // are on, since there's nothing to pay out before that).
+  const needsBank = Boolean(cfg.paystackKey) &&
+    !(await db(cfg).one('payout_accounts', `tenant_id=eq.${tenant.id}&select=tenant_id`).catch(() => true));
+  await say(cfg, tenant, chatId, listedMessage(product, { origin: cfg.publicOrigin, posted, needsBank }));
 }
 
 export async function uploadAll(cfg, tenantId, images) {

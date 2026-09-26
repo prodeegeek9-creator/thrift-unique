@@ -388,7 +388,7 @@ function summary(draft, tenant) {
 // What the bot says once the product actually exists. Written here rather than
 // in the route so that the whole conversation, including its last line, can be
 // read in one file.
-export function listedMessage(product, { origin, posted } = {}) {
+export function listedMessage(product, { origin, posted, needsBank = false } = {}) {
   const link = origin ? `${origin}/p/${product.public_code}` : `/p/${product.public_code}`;
 
   const lines = [
@@ -404,6 +404,16 @@ export function listedMessage(product, { origin, posted } = {}) {
     // their contacts, and finding out weeks later that Status was never
     // connected is the worst version of this.
     lines.push('', 'Link your WhatsApp in the dashboard to post listings to your Status automatically.');
+  }
+
+  // Sent after every listing until it's done: a sale with nowhere to pay it
+  // waits, and the store owner may not know why.
+  if (needsBank) {
+    const where = origin ? `${origin}/dashboard/payouts` : '/dashboard/payouts';
+    lines.push(
+      '',
+      `💳 You haven't added the bank account we pay your sales into. Until you do, money from sales waits with us. Add it here:\n${where}`
+    );
   }
 
   lines.push(
