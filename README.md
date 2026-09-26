@@ -728,7 +728,11 @@ without a network, WAHA or Paystack):
   answered directly, anything else about it is left for the owner. The
   Channels page has a "Resume bot" card: which chats are on hold, who each is
   with and what the owner typed, and a button to hand a chat (or all of them)
-  back to the bot early (`GET/POST /api/waha/holds*`).
+  back to the bot early (`GET/POST /api/waha/holds*`). "Buy" on its own, or
+  "cart" with nothing in it, is told how to buy: send BUY and a code (a real
+  one from the store), with the store's page. WhatsApp buttons aren't used:
+  WAHA's NOWEB engine doesn't send them, and WhatsApp only shows them
+  reliably through its official Cloud API.
 - **Changing plan and upgrade nudges**: the store owner picks a plan on the
   Billing page. Up is immediate once they pay the difference for the rest of
   the paid month (free on the trial); down waits for the end of the paid
