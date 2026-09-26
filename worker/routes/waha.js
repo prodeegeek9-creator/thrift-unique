@@ -20,7 +20,7 @@ import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
-import { cartStep, codesIn, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
+import { cartStep, codesIn, isBuy, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
 import {
   parseEvent,
@@ -617,9 +617,18 @@ async function storeSession(cfg, event) {
       '&select=state,draft,updated_at,paused_until'
   );
 
-  // The owner is answering this chat themselves: the bot keeps out of it.
+  // The owner is answering this chat themselves: the bot keeps out of it,
+  // unless it is asked for by name. SELL or BUY <code> is somebody wanting the
+  // bot (often because the owner just told them to send it), so that lifts
+  // the pause.
+  const asked = SELL.test(String(event.body ?? '')) || isBuy(event.body);
   if (conversation?.paused_until && new Date(conversation.paused_until) > new Date()) {
-    return json({ ok: true, ignored: 'owner is handling this chat' });
+    if (!asked) return json({ ok: true, ignored: 'owner is handling this chat' });
+    await db(cfg).update(
+      'bot_conversations',
+      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}`,
+      { paused_until: null }
+    );
   }
 
   const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(String(event.body ?? ''));
