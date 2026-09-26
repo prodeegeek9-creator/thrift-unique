@@ -91,7 +91,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       else if (k === 'order') order = v;
       else if (k === 'on_conflict') continue;
       else {
-        const m = /^(eq|neq|lt|gt|lte|gte|in|not\.is|is)\.(.*)$/s.exec(v);
+        const m = /^(eq|neq|lt|gt|lte|gte|in|not\.in|not\.is|is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
@@ -134,6 +134,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (f.op === 'is') return f.val === 'null' ? cell == null : String(cell) === f.val;
       if (f.op === 'not.is') return f.val === 'null' ? cell != null : String(cell) !== f.val;
       if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));
+      if (f.op === 'not.in') return cell != null && !f.val.replace(/[()]/g, '').split(',').includes(String(cell));
       return false;
     });
   }

@@ -1,6 +1,7 @@
 import { db } from './supabase.js';
 import { split } from './money.js';
 import { sendPayout } from './transfers.js';
+import { CONFIRM_WINDOW_DAYS } from './plans.js';
 
 // The order lifecycle, server side. Everything here runs under the service
 // key, so every query names its tenant explicitly — Postgres has stopped
@@ -11,7 +12,7 @@ import { sendPayout } from './transfers.js';
 // Without a deadline a buyer who simply stops replying freezes the seller's
 // money forever, which is the failure mode that makes sellers distrust escrow
 // and go back to asking for bank transfers.
-export const CONFIRM_WINDOW_DAYS = 7;
+export { CONFIRM_WINDOW_DAYS };
 
 const ORDER_FIELDS =
   'id,tenant_id,order_code,product_id,buyer_id,amount,commission,status,' +

@@ -196,7 +196,7 @@ export default function Product() {
           ) : (
             product.tenant_name
           )}{' '}
-          · Payment protected by Vendwyze
+          · Secure payment through Vendwyze
         </p>
       </div>
 

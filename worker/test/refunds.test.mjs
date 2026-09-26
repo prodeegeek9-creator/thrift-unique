@@ -187,7 +187,7 @@ test('once the payment is released to the store, there is no refund', async () =
 
     const res = await storeRefund();
     assert.equal(res.status, 409);
-    assert.match((await res.json()).error, /open a dispute/);
+    assert.match((await res.json()).error, /between the store and the buyer/);
     assert.equal(sb.tables.refunds.length, 0);
     assert.equal(sb.tables.orders[0].status, 'completed');
     assert.equal(ps.calls.length, 0);

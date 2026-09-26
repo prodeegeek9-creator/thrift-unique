@@ -19,6 +19,11 @@ export const TRIAL_DAYS = 14;
 export const COMMISSION = { starter: 8, growth: 7, business: 7 };
 export const GRACE_DAYS = 7;
 
+// How long a buyer has to confirm receipt before an escrow hold releases on
+// its own (lib/orders.js). Here rather than there so the bot's plan list and
+// terms can quote it without importing the order code.
+export const CONFIRM_WINDOW_DAYS = 7;
+
 export const FLAG_MIN_TIER = {
   contacts: 'growth',
   disputes: 'growth',

@@ -835,10 +835,22 @@ in this order, before Paystack is switched to live (item 4 below).
    line on what was done, which goes in the audit log. A problem Paystack
    sends again after that opens again. WhatsApp webhook health was already on
    the overview, from `webhook_activity`.
-4. **Refund policy stated where sellers choose a plan.** Without escrow the
-   payout goes out the same day, and after that a buyer's only route is a
-   dispute with the store. Say so in the bot's plan list and on the pricing
-   page.
+4. **Refund policy stated where sellers choose a plan.** *Done.* The bot's
+   plan list, the terms a seller accepts (now `terms-v3`, so it is clear who
+   agreed to which) and the homepage's pricing all say it: on Starter the
+   store is paid the same day, so after that a complaint is between the store
+   and the buyer; on Growth and Business the payment is held until the buyer
+   confirms delivery, or for 7 days, and can be refunded until then. The terms
+   also say a payment for an item already sold is refunded in full at no cost
+   to the store. Two things found on the way, and fixed:
+   - The 7-day release ran even with a dispute open, so a buyer who
+     complained on day 6 could lose their refund on day 7. The sweep now
+     leaves a hold alone while its order has an open dispute
+     (`worker/routes/escrow.js`).
+   - Every store and product page said "Payment protected by Vendwyze", which
+     isn't so on Starter. They now say "Secure payment through Vendwyze", and
+     refund refusals no longer tell buyers to "open a dispute", which only a
+     store can do.
 5. **Daily reconciliation.** Orders against Paystack transactions against
    payouts; any difference shows in `/admin`.
 6. **Payment links for one buyer (to decide).** A link carries a price agreed

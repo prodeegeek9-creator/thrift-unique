@@ -314,7 +314,7 @@ test('a business opens a store over WhatsApp, and it waits for approval', async 
     // The acceptance the whole commercial relationship rests on: when, and
     // which wording.
     assert.ok(store.disclaimer_accepted_at);
-    assert.equal(store.disclaimer_version, 'terms-v2');
+    assert.equal(store.disclaimer_version, 'terms-v3');
 
     const seeded = supabase.calls.find((c) => c.rpc === 'seed_tenant_features');
     assert.deepEqual(seeded?.args, { target: store.id, plan: 'growth' });

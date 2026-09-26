@@ -14,7 +14,7 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
-import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION } from './plans.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION, CONFIRM_WINDOW_DAYS } from './plans.js';
 
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
@@ -136,7 +136,7 @@ export const MAX_BUSINESS_NAME = 60;
 
 // Bumped whenever the wording of TERMS changes, so the version stored against
 // a store always names the text its owner actually said YES to.
-export const DISCLAIMER_VERSION = 'terms-v2';
+export const DISCLAIMER_VERSION = 'terms-v3';
 
 // Commission per plan: see lib/plans.js.
 export { COMMISSION };
@@ -214,8 +214,8 @@ const SIGNUP = {
   badCategory: `Reply with a number from 1 to ${CATEGORIES.length}.`,
   askPlan:
     'Pick a plan:\n\n' +
-    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
-    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
+    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day. Because you're paid straight away, a buyer with a problem sorts it out with you.\n\n` +
+    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale. Each payment is held until the buyer confirms it arrived, or ${CONFIRM_WINDOW_DAYS} days pass, and can be refunded to them until then.\n\n` +
     `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds sales analytics, staff logins and priority support (TikTok posting coming soon). Commission agreed with you.\n\n` +
     `Your first ${TRIAL_DAYS} days are free, and you can change plan later. Reply 1, 2 or 3.`,
   badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
@@ -235,6 +235,12 @@ export function termsMessage(tier) {
     tier === 'starter'
       ? "You're paid the same day the buyer pays."
       : "The buyer's payment is held until they confirm they've received the item, then released to you.";
+  // What a buyer can get back, and until when (lib/refunds.js). Starter is
+  // paid at once, so there is nothing held to refund from for long.
+  const refunds =
+    tier === 'starter'
+      ? "Refunds: you're paid the same day, so Vendwyze can only refund a buyer before your payout has gone. After that, a complaint is between you and the buyer."
+      : `Refunds: a buyer's payment is held until they confirm it arrived, or for ${CONFIRM_WINDOW_DAYS} days. Until then it can be refunded to them, less Paystack's fee. After that, a complaint is between you and the buyer.`;
   const rate =
     tier === 'business'
       ? `A ${pct}% commission applies to every sale paid through Vendwyze until we agree a different rate with you.`
@@ -244,6 +250,8 @@ export function termsMessage(tier) {
     '*Before we set you up — our terms*\n\n' +
     `• ${rate}\n` +
     `• ${payout}\n` +
+    `• ${refunds}\n` +
+    "• If a buyer pays for an item that has already sold, Vendwyze refunds them in full and you're not charged.\n" +
     '• Buyers always pay through Vendwyze. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
     `• Your plan is free for ${TRIAL_DAYS} days after your store is approved, then ${formatNaira(PLAN_PRICES[tier] ?? PLAN_PRICES.starter)} a month, paid in advance. If it isn't paid within ${GRACE_DAYS} days of the due date, your store is paused until it is.\n\n` +
     'Reply *YES* to accept, or *CANCEL*.'

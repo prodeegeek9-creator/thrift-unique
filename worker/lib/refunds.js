@@ -9,9 +9,9 @@ import { say } from '../routes/waha.js';
 //
 // Only while Vendwyze still holds the money. Once the buyer has confirmed the
 // item and the payment has been released to the store, or the store has
-// otherwise been paid for the sale, there is no refund: the buyer can open a
-// dispute, and that is settled between them and the store. So a refund never
-// takes money back from a store.
+// otherwise been paid for the sale, there is no refund through Vendwyze: a
+// complaint after that is settled between the buyer and the store. So a refund
+// never takes money back from a store.
 //
 //   held in escrow                     refundable; escrow can no longer release it
 //   no escrow, payout not yet sent     refundable; the payout is cancelled
@@ -49,7 +49,7 @@ const REFUNDABLE = ['paid', 'escrow', 'processing'];
 const MAX_REASON = 300;
 
 const RELEASED =
-  "The payment has already been released to the store, so it can't be refunded. The buyer can open a dispute instead.";
+  "The payment has already been released to the store, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.";
 
 // What refunding this order would do, without doing it: what the buyer paid,
 // Paystack's fee, and what goes back. The fee is read from Paystack; if that
@@ -124,7 +124,7 @@ export async function refundOrder(cfg, order, { reason = null, via, by = null, r
       )
       .catch(() => {});
     await db(cfg).del('refunds', `id=eq.${refund.id}`).catch(() => {});
-    throw new RefundError("The store's payout for this order has just gone out, so it can't be refunded. The buyer can open a dispute instead.");
+    throw new RefundError("The store's payout for this order has just gone out, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.");
   }
 
   if (relist) await relistIfFree(cfg, order);
@@ -214,7 +214,7 @@ async function whyNot(cfg, order) {
 
   const payout = await payoutFor(cfg, order);
   if (payout && ['sending', 'paid'].includes(payout.status)) {
-    return "The store has already been paid for this order, so it can't be refunded. The buyer can open a dispute instead.";
+    return "The store has already been paid for this order, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.";
   }
   return null;
 }

@@ -322,6 +322,41 @@ test('the sweep releases only holds past their deadline', async () => {
   } finally { restore(); }
 });
 
+test('the sweep leaves a hold alone while its dispute is open, and releases it once resolved', async () => {
+  const past = new Date(Date.now() - 86_400_000).toISOString();
+  const held = (id) => ({ id, tenant_id: TENANT, order_code: `UT-${id}`, amount: 10000, commission: 800,
+    escrow_status: 'held', status: 'escrow', confirm_deadline: past, confirmed_at: null });
+
+  const sb = makeFakeSupabase({
+    tenants: [{ id: TENANT, commission_pct: 8 }],
+    tenant_features: [],
+    orders: [held('open'), held('review'), held('settled'), held('plain')],
+    disputes: [
+      { id: 'd1', tenant_id: TENANT, order_id: 'open', status: 'open' },
+      { id: 'd2', tenant_id: TENANT, order_id: 'review', status: 'under_review' },
+      { id: 'd3', tenant_id: TENANT, order_id: 'settled', status: 'resolved' },
+    ],
+    payouts: [], payout_items: [],
+  });
+
+  const restore = installFetch({ supabase: sb });
+  try {
+    const first = await releaseExpiredHolds(env());
+    assert.equal(first.released, 2, 'the undisputed one and the one whose dispute is over');
+    const status = (id) => sb.tables.orders.find((o) => o.id === id).escrow_status;
+    assert.equal(status('open'), 'held', 'the buyer can still be refunded');
+    assert.equal(status('review'), 'held');
+    assert.equal(status('settled'), 'released');
+    assert.equal(status('plain'), 'released');
+
+    // Resolved without a release or refund: the next run lets it go.
+    sb.tables.disputes.find((d) => d.id === 'd1').status = 'resolved';
+    await releaseExpiredHolds(env());
+    assert.equal(status('open'), 'released');
+    assert.equal(status('review'), 'held');
+  } finally { restore(); }
+});
+
 // ── the shared product link ──────────────────────────────────────────────────
 
 test('an unconfigured Worker still serves the page rather than failing', async () => {
