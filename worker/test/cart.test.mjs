@@ -334,8 +334,27 @@ test('when the owner types in a chat, the bot steps back from it', async () => {
     assert.ok(sb.tables.bot_conversations[0].paused_until);
 
     const count = toBuyer(sent).length;
-    await say(msg('BUY BAG002'), msg('checkout'));
+    await say(msg('checkout'), msg('Can you deliver to Ikeja?'));
     assert.equal(toBuyer(sent).length, count, 'the bot talked over the owner');
+
+    // Asked for by name, it answers, and the pause is over.
+    await say(msg('BUY BAG002'));
+    assert.match(last(sent), /Added \*Tote bag\*/);
+    assert.equal(sb.tables.bot_conversations[0].paused_until, null);
+  } finally { restore(); }
+});
+
+test('SELL reaches the bot even in a chat the owner has just typed in', async () => {
+  const { sb, sent, restore } = setup({ tier: 'starter', checkout: false, escrow: false });
+  sb.tables.tenants[0].store_type = 'consignment';
+  try {
+    // "Send SELL to my number and the bot will help you"
+    await say(ownerSends('Send SELL to this number and the bot will take you through it'));
+    assert.ok(sb.tables.bot_conversations[0].paused_until);
+
+    await say(msg('Sell'));
+    assert.match(last(sent), /assistant/i);
+    assert.equal(sb.tables.bot_conversations[0].paused_until ?? null, null);
   } finally { restore(); }
 });
 

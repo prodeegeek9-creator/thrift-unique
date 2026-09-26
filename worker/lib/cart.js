@@ -55,6 +55,12 @@ const ASK = new RegExp(
   'i'
 );
 
+// "BUY <code>": someone asking the bot, by name, for an item. It gets an
+// answer even in a chat the owner has been typing in (routes/waha.js).
+export function isBuy(text) {
+  return BUY.test(String(text ?? ''));
+}
+
 // The item a message is about: its own BUY code, or the code in the Status
 // post (or shared link) it replies to. Status captions carry "BUY <code>" and
 // the /p/<code> link.
