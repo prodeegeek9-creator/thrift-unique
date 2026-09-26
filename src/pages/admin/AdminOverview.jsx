@@ -93,6 +93,12 @@ export default function AdminOverview() {
               tone={data?.tenants?.awaiting ? 'amber' : 'ok'}
             />
             <Attention
+              to="/admin/tenants"
+              label="Payouts not getting through"
+              value={data?.payouts?.stuck ?? 0}
+              tone={data?.payouts?.stuck ? 'red' : 'ok'}
+            />
+            <Attention
               to="/admin/disputes"
               label="Open disputes"
               value={data?.openDisputes ?? 0}

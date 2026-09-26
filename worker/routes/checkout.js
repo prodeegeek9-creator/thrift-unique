@@ -269,9 +269,10 @@ async function afterPayment(cfg, order, tenant) {
   );
   const doubleSale = sold.length === 0;
 
-  const [product, buyer] = await Promise.all([
+  const [product, buyer, account] = await Promise.all([
     db(cfg).one('products', `id=eq.${order.product_id}&select=title,public_code`),
     db(cfg).one('buyers', `id=eq.${order.buyer_id}&select=name,phone`),
+    db(cfg).one('payout_accounts', `tenant_id=eq.${tenant.id}&select=bank_name,account_last4`),
   ]);
   const title = product?.title ?? 'your item';
   const amount = formatNaira(order.amount);
@@ -292,7 +293,9 @@ async function afterPayment(cfg, order, tenant) {
       '',
       escrow
         ? "The payment is held until the buyer confirms it arrived, then it's released to you."
-        : "Your payout is on its way to your bank account."
+        : account
+          ? `Your payout is on its way to your ${account.bank_name} account ending ${account.account_last4}.`
+          : `Add your bank account under Payouts in your dashboard to receive it: ${cfg.publicOrigin ?? ''}/dashboard/payouts`
     );
     if (doubleSale) {
       lines.push('', '⚠️ This item was already sold to someone else. Contact the buyer to arrange a refund or a swap.');

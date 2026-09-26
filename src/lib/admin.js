@@ -72,6 +72,11 @@ export const setDetails = (tenantId, details) =>
 // terms quote these (COMMISSION in worker/lib/bot.js); keep them in step.
 export const DEFAULT_COMMISSION = { starter: 8, growth: 7, business: 7 };
 
+export const setPayoutsPaused = (tenantId, paused) =>
+  call(`/tenants/${tenantId}/payouts-paused`, { method: 'POST', body: { paused } });
+
+export const retryPayout = (payoutId) => call(`/payouts/${payoutId}/retry`, { method: 'POST', body: {} });
+
 export const forceRelease = (orderId, reason) =>
   call(`/escrow/${orderId}/release`, { method: 'POST', body: { reason } });
 
@@ -87,6 +92,9 @@ export const AUDIT_LABELS = {
   'tenant.approve': 'Approved a new store',
   'tenant.plan': 'Changed a store’s plan or commission',
   'tenant.details': 'Edited a store’s details',
+  'payouts.pause': 'Paused a store’s payouts',
+  'payouts.resume': 'Resumed a store’s payouts',
+  'payouts.retry': 'Retried a payout',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
 };

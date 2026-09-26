@@ -30,6 +30,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     submissions: [],
     listing_channel_posts: [],
     webhook_activity: [],
+    payout_accounts: [],
     ...structuredClone(seed),
   };
 
@@ -45,6 +46,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     // Composite: one row per store and flag.
     tenant_features: ['tenant_id', 'flag'],
     buyers: ['tenant_id', 'phone'],
+    payout_accounts: 'tenant_id',
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.

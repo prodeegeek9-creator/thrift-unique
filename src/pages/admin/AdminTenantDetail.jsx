@@ -11,7 +11,10 @@ import {
   setFlag,
   setPlan,
   setTenantStatus,
+  setPayoutsPaused,
+  retryPayout,
 } from '../../lib/admin.js';
+import { payoutStatusLabel } from '../../lib/payouts.js';
 import { FLAG_MIN_TIER } from '../../lib/features.js';
 import { formatNaira } from '../../lib/money.js';
 import { dateOnly, relative } from '../../lib/time.js';
@@ -70,7 +73,7 @@ export default function AdminTenantDetail({ operator }) {
     return <p className="card p-8 text-center text-sm text-muted">No such store.</p>;
   }
 
-  const { tenant, signup, flags, members, stats, listings, submissions } = data;
+  const { tenant, signup, flags, members, stats, listings, submissions, payoutAccount, payouts } = data;
   const pending = tenant.status === 'onboarding';
 
   return (
@@ -218,6 +221,13 @@ export default function AdminTenantDetail({ operator }) {
         </div>
       </div>
 
+      <PayoutsSection
+        tenant={tenant}
+        account={payoutAccount}
+        payouts={payouts ?? []}
+        isOwner={isOwner}
+        onChanged={invalidate}
+      />
       <ListingsSection tenant={tenant} listings={listings} />
       <ReviewSection tenant={tenant} submissions={submissions} />
     </div>
@@ -527,6 +537,85 @@ function ListingsSection({ tenant, listings }) {
       {(counts.active ?? 0) + (counts.sold ?? 0) + (counts.draft ?? 0) + (counts.archived ?? 0) > recent.length ? (
         <p className="mt-3 text-[11px] text-muted">Showing the {recent.length} most recent.</p>
       ) : null}
+    </section>
+  );
+}
+
+// Where the store is paid and what has gone out. Owners can hold payouts
+// (they keep accruing) and push a stuck one again.
+function PayoutsSection({ tenant, account, payouts, isOwner, onChanged }) {
+  const toast = useToast();
+  const pause = useMutation({
+    mutationFn: (paused) => setPayoutsPaused(tenant.id, paused),
+    onSuccess: (r) => {
+      toast(r.paused ? 'Payouts paused' : `Payouts resumed${r.sent ? `, ${r.sent} sent` : ''}`, 'success');
+      onChanged();
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+  const retry = useMutation({
+    mutationFn: (id) => retryPayout(id),
+    onSuccess: (r) => {
+      toast(r.ok ? 'Sent to Paystack' : `Not sent: ${r.result}`, r.ok ? 'success' : 'error');
+      onChanged();
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  return (
+    <section className="card mt-4 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-ink">Payouts</h2>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-muted">
+            {account
+              ? `${account.bank_name} ••••${account.account_last4} · ${account.account_name}`
+              : 'No bank account yet: payouts wait'}
+          </span>
+          {isOwner ? (
+            <button
+              type="button"
+              disabled={pause.isPending}
+              onClick={() => pause.mutate(!tenant.payouts_paused)}
+              className={`rounded-pill px-3 py-1 font-semibold ${
+                tenant.payouts_paused ? 'bg-green text-white' : 'border border-red/30 text-red'
+              }`}
+            >
+              {tenant.payouts_paused ? 'Resume payouts' : 'Pause payouts'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {tenant.payouts_paused ? (
+        <p className="mt-2 rounded-lg bg-amber-lt px-3 py-2 text-xs text-amber">
+          Payouts are paused. They keep adding up and go out when resumed.
+        </p>
+      ) : null}
+      {payouts.length ? (
+        <ul className="mt-3 divide-y divide-line text-sm">
+          {payouts.map((p) => (
+            <li key={p.id} className="flex flex-wrap items-center gap-3 py-2">
+              <span className="w-24 font-semibold text-ink">{formatNaira(p.amount)}</span>
+              <span className="text-xs text-muted">{p.reference}</span>
+              <StatusPill status={p.status} label={payoutStatusLabel(p)} />
+              {p.failure_reason ? <span className="text-xs text-red">{p.failure_reason}</span> : null}
+              <span className="ml-auto text-xs text-muted">{dateOnly(p.paid_at ?? p.created_at)}</span>
+              {isOwner && p.status === 'pending' ? (
+                <button
+                  type="button"
+                  disabled={retry.isPending}
+                  onClick={() => retry.mutate(p.id)}
+                  className="text-xs font-semibold text-green"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-muted">No payouts yet.</p>
+      )}
     </section>
   );
 }

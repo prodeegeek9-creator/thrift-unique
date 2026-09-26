@@ -4,6 +4,7 @@ import { approvedMessage } from '../lib/bot.js';
 import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
 import { TIERS, FLAG_MIN_TIER, planIncludes } from '../lib/plans.js';
 import { normalizeNumber } from '../lib/phone.js';
+import { sendPayout, MAX_ATTEMPTS } from '../lib/transfers.js';
 import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
@@ -59,6 +60,12 @@ export async function handleAdmin(request, env, path) {
   const details = rest.match(/^\/tenants\/([0-9a-f-]{36})\/details$/i);
   if (details && method === 'POST') return setDetails(request, cfg, op, details[1]);
 
+  const paused = rest.match(/^\/tenants\/([0-9a-f-]{36})\/payouts-paused$/i);
+  if (paused && method === 'POST') return setPayoutsPaused(request, cfg, op, paused[1]);
+
+  const retry = rest.match(/^\/payouts\/([0-9a-f-]{36})\/retry$/i);
+  if (retry && method === 'POST') return retryPayout(cfg, op, retry[1]);
+
   const release = rest.match(/^\/escrow\/([0-9a-f-]{36})\/release$/i);
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
 
@@ -71,12 +78,13 @@ export async function handleAdmin(request, env, path) {
 // ── READS ────────────────────────────────────────────────────────────────────
 
 async function overview(cfg, request) {
-  const [tenants, orders, held, disputes, platform] = await Promise.all([
+  const [tenants, orders, held, disputes, platform, owed] = await Promise.all([
     db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
     platformHealth(cfg, request),
+    db(cfg).select('payouts', 'status=in.(pending,sending)&select=amount,status,failure_reason,attempts'),
   ]);
 
   const gross = sum(orders, (o) => Number(o.amount));
@@ -113,6 +121,13 @@ async function overview(cfg, request) {
     },
     openDisputes: disputes.length,
     platform,
+    // Money the platform owes stores and has not yet got to them. `stuck` is
+    // the number to act on: Paystack refused, or it ran out of attempts.
+    payouts: {
+      owed: owed.length,
+      amount: sum(owed, (p) => Number(p.amount)),
+      stuck: owed.filter((p) => p.status === 'pending' && (p.failure_reason || p.attempts >= MAX_ATTEMPTS)).length,
+    },
 
     // WhatsApp, across the platform.
     //
@@ -213,7 +228,7 @@ async function listTenants(cfg) {
 }
 
 async function tenantView(cfg, tenantId) {
-  const [tenant, flags, members, orders, products, submissions] = await Promise.all([
+  const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts] = await Promise.all([
     db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
     db(cfg).select(
@@ -232,6 +247,16 @@ async function tenantView(cfg, tenantId) {
       'submissions',
       `tenant_id=eq.${tenantId}&select=id,title,asking_price,seller_name,status,images,created_at` +
         '&order=created_at.desc&limit=200'
+    ),
+    // Never the recipient code: it is what a transfer is sent with.
+    db(cfg).one(
+      'payout_accounts',
+      `tenant_id=eq.${tenantId}&select=bank_name,account_last4,account_name,updated_at`
+    ),
+    db(cfg).select(
+      'payouts',
+      `tenant_id=eq.${tenantId}&select=id,amount,commission,status,reference,failure_reason,attempts,sent_at,paid_at,created_at` +
+        '&order=created_at.desc&limit=20'
     ),
   ]);
 
@@ -262,6 +287,8 @@ async function tenantView(cfg, tenantId) {
       counts: countStatus(products),
       recent: products.slice(0, 24),
     },
+    payoutAccount,
+    payouts,
     submissions: {
       counts: countStatus(submissions),
       pending: submissions.filter((x) => x.status === 'pending').slice(0, 20),
@@ -388,6 +415,46 @@ async function setPlan(request, cfg, op, tenantId) {
   });
 
   return json({ ok: true, tier, commission_pct: pct });
+}
+
+// Holding a store's payouts: they keep accruing, and wait. Released by
+// unpausing, which also sends what is owed.
+async function setPayoutsPaused(request, cfg, op, tenantId) {
+  const { paused } = await request.json().catch(() => ({}));
+  if (typeof paused !== 'boolean') return json({ error: 'Need { paused }' }, 400);
+
+  const rows = await db(cfg).update('tenants', `id=eq.${tenantId}`, { payouts_paused: paused });
+  if (!rows.length) return json({ error: 'No such tenant' }, 404);
+
+  await audit(cfg, op.userId, paused ? 'payouts.pause' : 'payouts.resume', { tenantId });
+
+  let sent = 0;
+  if (!paused) {
+    const pending = await db(cfg).select(
+      'payouts',
+      `tenant_id=eq.${tenantId}&status=eq.pending&select=*&order=created_at.asc&limit=100`
+    );
+    for (const p of pending) if ((await sendPayout(cfg, p).catch(() => null)) === 'sent') sent += 1;
+  }
+  return json({ ok: true, paused, sent });
+}
+
+// One more go at a payout that is stuck: Paystack refused it, or it used up
+// its attempts. The attempt count starts again.
+async function retryPayout(cfg, op, payoutId) {
+  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=*`);
+  if (!payout) return json({ error: 'No such payout' }, 404);
+  if (payout.status !== 'pending') return json({ error: `This payout is ${payout.status}, not waiting.` }, 409);
+
+  await db(cfg).update('payouts', `id=eq.${payoutId}`, { attempts: 0 }, { returning: false });
+  const result = await sendPayout(cfg, { ...payout, attempts: 0 });
+
+  await audit(cfg, op.userId, 'payouts.retry', {
+    tenantId: payout.tenant_id,
+    subject: payout.reference,
+    detail: { result },
+  });
+  return json({ ok: result === 'sent', result });
 }
 
 const STORE_TYPES = ['consignment', 'brand'];

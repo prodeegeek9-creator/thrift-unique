@@ -1,6 +1,7 @@
 import { config } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { releaseEscrow } from '../lib/orders.js';
+import { sendAllPending } from '../lib/transfers.js';
 
 // The sweep that makes escrow safe to sell.
 //
@@ -42,4 +43,11 @@ export async function releaseExpiredHolds(env, { limit = 100 } = {}) {
   }
 
   return { checked: due?.length ?? 0, released };
+}
+
+// Payouts that could not go when they were created. See lib/transfers.js.
+export async function sendOwedPayouts(env) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey || !cfg.paystackKey) return null;
+  return sendAllPending(cfg);
 }

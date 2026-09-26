@@ -31,6 +31,8 @@ const TONES = {
   posted: { label: 'Posted', tone: 'green' },
   queued: { label: 'Queued', tone: 'amber' },
   failed: { label: 'Failed', tone: 'red' },
+  // Payouts: handed to Paystack, waiting for the bank.
+  sending: { label: 'Sending', tone: 'amber' },
 };
 
 const CLASSES = {

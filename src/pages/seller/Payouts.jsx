@@ -5,7 +5,8 @@ import StatTile from '../../components/ui/StatTile.jsx';
 import StatusPill from '../../components/ui/StatusPill.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { fetchBalance, fetchPayouts } from '../../lib/payouts.js';
+import { fetchBalance, fetchPayouts, payoutStatusLabel } from '../../lib/payouts.js';
+import PayoutAccountCard from '../../components/PayoutAccountCard.jsx';
 import { formatNaira } from '../../lib/money.js';
 import { dateOnly } from '../../lib/time.js';
 import { keys } from '../../lib/queryKeys.js';
@@ -15,6 +16,13 @@ import { keys } from '../../lib/queryKeys.js';
 // Not a progress bar — it belongs to no particular order. Sellers on Growth
 // and Business are being asked to wait for money they can see, and the thing
 // that makes that tolerable is knowing the shape of the wait.
+// Starter: no hold, so no waiting on the buyer.
+const DIRECT_STEPS = [
+  'Buyer pays through us',
+  'Commission comes off',
+  'The rest goes to your bank the same day',
+];
+
 const ESCROW_STEPS = [
   'Buyer pays',
   'We hold the funds',
@@ -24,7 +32,7 @@ const ESCROW_STEPS = [
 ];
 
 export default function Payouts() {
-  const { tenant, can } = useTenant();
+  const { tenant, can, role } = useTenant();
   const tenantId = tenant?.id;
   const hasEscrow = can('escrow');
 
@@ -98,7 +106,7 @@ export default function Payouts() {
                         </td>
                         <td className="px-4 py-3 text-xs text-muted">{p.reference ?? '—'}</td>
                         <td className="px-4 py-3">
-                          <StatusPill status={p.status === 'paid' ? 'paid' : p.status} />
+                          <StatusPill status={p.status} label={payoutStatusLabel(p)} />
                           {p.failure_reason ? (
                             <span className="ml-2 text-xs text-red">{p.failure_reason}</span>
                           ) : null}
@@ -115,6 +123,9 @@ export default function Payouts() {
           </div>
         </div>
 
+        <div className="space-y-4">
+        <PayoutAccountCard tenantId={tenantId} isOwner={role === 'owner'} />
+
         <div className="card h-fit p-4">
           <h2 className="text-sm font-semibold text-ink">
             {hasEscrow ? 'How escrow works' : 'How you get paid'}
@@ -126,7 +137,7 @@ export default function Payouts() {
           </p>
 
           <ol className="mt-4 space-y-3">
-            {(hasEscrow ? ESCROW_STEPS : ESCROW_STEPS.slice(0, 3)).map((step, i) => (
+            {(hasEscrow ? ESCROW_STEPS : DIRECT_STEPS).map((step, i) => (
               <li key={step} className="flex items-start gap-2.5">
                 <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-green-lt text-[10px] font-semibold text-green">
                   {i + 1}
@@ -143,6 +154,7 @@ export default function Payouts() {
               the confirmation window closes.
             </p>
           ) : null}
+        </div>
         </div>
       </div>
     </>

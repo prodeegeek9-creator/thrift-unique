@@ -11,7 +11,8 @@ import { handlePaystackWebhook } from './routes/paystack.js';
 import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
 import { renderHomePage, renderProductPage, renderStorePage } from './routes/storefront.js';
-import { releaseExpiredHolds } from './routes/escrow.js';
+import { releaseExpiredHolds, sendOwedPayouts } from './routes/escrow.js';
+import { handlePayouts } from './routes/payouts.js';
 import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
@@ -66,9 +67,12 @@ export default {
   // buyer who may never come back.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      releaseExpiredHolds(env).then((r) =>
-        console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`)
-      )
+      releaseExpiredHolds(env)
+        .then((r) => console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`))
+        // Then anything still owed: a store that has since added its bank
+        // account, a transfer Paystack refused because the balance was short.
+        .then(() => sendOwedPayouts(env))
+        .then((r) => r && console.log(`payout sweep: checked ${r.checked}, sent ${r.sent}`))
     );
   },
 };
@@ -113,6 +117,11 @@ async function api(request, env, path) {
   // both end in a WhatsApp message from the store's own session.
   if (path.startsWith('/api/submissions')) {
     return handleSubmissions(request, env, path);
+  }
+
+  // A store's bank account, for its payouts.
+  if (path.startsWith('/api/payouts')) {
+    return handlePayouts(request, env, path);
   }
 
   // Buying: starting a Paystack payment, payment links, the return page.
