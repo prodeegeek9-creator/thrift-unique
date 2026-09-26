@@ -416,6 +416,13 @@ export function savedMessage(product) {
   );
 }
 
+export function paymentLinkMessage({ title, price, url }) {
+  return (
+    `💳 Payment link for *${title}* — ${formatNaira(price)}:\n${url}\n\n` +
+    'Send it to the buyer. It works for 3 days, and the item comes off sale as soon as it is paid.'
+  );
+}
+
 export function formatNaira(amount) {
   const n = Number(amount) || 0;
   const whole = Number.isInteger(n) ? n : Math.round(n * 100) / 100;
@@ -475,6 +482,22 @@ function idleStep(text, image, ctx = {}) {
     };
   }
 
+  // "LINK JBU4PE 30k": a payment link for a price agreed in chat. Before the
+  // menu words, since a bare "link" is the store page.
+  const pay = MENU_PAYLINK.exec(text);
+  if (pay) {
+    const price = pay[2] ? parsePrice(pay[2]) : null;
+    if (pay[2] && price == null) {
+      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k*, or leave the price off to use the listed one.");
+    }
+    return {
+      state: 'idle',
+      draft: {},
+      replies: [],
+      action: { type: 'payment_link', code: pay[1].toUpperCase(), price },
+    };
+  }
+
   // The menu's own words, before START: "review items" is not a listing.
   if (MENU_STORE.test(text)) return done(storeLinkMessage(ctx));
   if (MENU_REVIEW.test(text)) return done(reviewMessage(ctx));
@@ -496,6 +519,7 @@ function idleStep(text, image, ctx = {}) {
 // mistaken for a request.
 
 const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
+const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s+(.+))?$/i;
 const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
 const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
 
@@ -512,7 +536,12 @@ export function menuMessage(ctx = {}) {
   if (!isBrand(ctx)) {
     lines.push(`📥 *REVIEW* for items people sent you${pending ? ` (${pending} waiting)` : ''}`);
   }
-  lines.push('💻 *DASHBOARD* to manage listings, orders and payouts', '', 'Reply *cancel* any time to stop.');
+  lines.push(
+    '💳 *LINK code price* for a payment link to send a buyer (e.g. LINK JBU4PE 30k)',
+    '💻 *DASHBOARD* to manage listings, orders and payouts',
+    '',
+    'Reply *cancel* any time to stop.'
+  );
   return lines.join('\n');
 }
 

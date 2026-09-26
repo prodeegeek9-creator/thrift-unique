@@ -12,7 +12,9 @@ import {
   signupStep,
   submittedMessage,
   savedMessage,
+  paymentLinkMessage,
 } from '../lib/bot.js';
+import { makePaymentLink } from '../lib/paylinks.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
 import {
@@ -262,7 +264,39 @@ async function message(cfg, event) {
     await listItem(cfg, tenant, event.from, result.action);
   }
 
+  if (result.action?.type === 'payment_link') {
+    await sendPaymentLink(cfg, tenant, event.from, result.action);
+  }
+
   return json({ ok: true });
+}
+
+// "LINK JBU4PE 30k" from a store owner: a checkout link for one of their
+// items, at the agreed price or the listed one.
+async function sendPaymentLink(cfg, tenant, chat, { code, price }) {
+  if (!cfg.tokenSecret || !cfg.paystackKey) {
+    await say(cfg, tenant, chat, "Online payment isn't set up yet, so I can't make payment links. We'll let you know when it is.");
+    return;
+  }
+  if (tenant.status !== 'active') {
+    await say(cfg, tenant, chat, 'Payment links open once your store is approved.');
+    return;
+  }
+  const product = await db(cfg).one(
+    'products',
+    `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,title,price,status`
+  );
+  if (!product) {
+    await say(cfg, tenant, chat, `I can't find an item with the code *${code}* in your store. The code is under each listing, and at the end of its link.`);
+    return;
+  }
+  if (product.status !== 'active') {
+    await say(cfg, tenant, chat, `*${product.title}* isn't for sale any more (${product.status}).`);
+    return;
+  }
+  const amount = price ?? Number(product.price);
+  const url = await makePaymentLink(cfg, product, amount);
+  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url }));
 }
 
 // What the product actually becomes.

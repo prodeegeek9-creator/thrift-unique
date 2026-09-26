@@ -1,8 +1,7 @@
-import { require_ } from '../lib/env.js';
-import { db } from '../lib/supabase.js';
+import { require_, originOf } from '../lib/env.js';
 import { verifyWebhook, fetchTransaction } from '../lib/paystack.js';
-import { koboToNaira } from '../lib/money.js';
-import { byPaymentRef, markPaid } from '../lib/orders.js';
+import { byPaymentRef } from '../lib/orders.js';
+import { settle } from './checkout.js';
 import { json } from '../lib/http.js';
 
 // POST /api/paystack/webhook
@@ -71,31 +70,17 @@ export async function handlePaystackWebhook(request, env) {
     return json({ ok: true, ignored: `status ${verified.status}` });
   }
 
-  let amountNaira;
-  try {
-    amountNaira = koboToNaira(kobo);
-  } catch (err) {
-    console.error('paystack: bad amount', kobo, err.message);
-    return json({ ok: true, ignored: 'bad amount' });
-  }
-
-  const tenant = await db(cfg).one(
-    'tenants',
-    `id=eq.${order.tenant_id}&select=id,commission_pct,slug`
-  );
-  if (!tenant) {
-    console.error('paystack: order has no tenant', order.id);
-    return json({ ok: true, unmatched: true });
-  }
-
-  const { order: updated, replayed } = await markPaid(cfg, order, tenant, {
-    amountNaira,
-    reference,
+  // Steps 4 and 5, and what follows a sale: see settle() in checkout.js,
+  // which the buyer's return page shares so the two meet exactly once.
+  cfg.publicOrigin = originOf(request, cfg);
+  const { order: updated, replayed, ignored } = await settle(cfg, order, {
+    kobo,
     // Attribution, recorded at the only moment it is knowable. Paystack's own
     // `channel` is the payment method (card, bank), not where the buyer found
-    // the item — that comes from the metadata the bot set when it quoted them.
-    channel: event.data?.metadata?.source_channel ?? order.source_channel,
+    // the item — that comes from the metadata set when checkout started.
+    channel: event.data?.metadata?.source_channel ?? null,
   });
+  if (ignored) return json({ ok: true, ignored });
 
   return json({
     ok: true,

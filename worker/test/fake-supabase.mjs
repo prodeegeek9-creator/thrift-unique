@@ -44,6 +44,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     webhook_activity: 'session',
     // Composite: one row per store and flag.
     tenant_features: ['tenant_id', 'flag'],
+    buyers: ['tenant_id', 'phone'],
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.
@@ -186,6 +187,8 @@ export function installFetch({
   paystackStatus = 'success',
   tokens = {},
   waha = null,
+  // Any other Paystack call (initialize, transfers): (url, init) => Response.
+  paystack = null,
 }) {
   const real = globalThis.fetch;
 
@@ -223,6 +226,8 @@ export function installFetch({
         { status: 200 }
       );
     }
+
+    if (paystack && url.startsWith('https://api.paystack.co/')) return paystack(url, init);
 
     throw new Error(`test tried to reach the network: ${url}`);
   };
