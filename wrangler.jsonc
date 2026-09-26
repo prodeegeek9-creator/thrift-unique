@@ -63,10 +63,21 @@
     // worker/index.js.
     "not_found_handling": "single-page-application",
 
-    // "/" is a real file (index.html), so without this the asset layer answers
-    // it and the Worker never runs. The Worker serves the homepage itself, to
-    // lift the document's noindex and add a link preview — see
-    // renderHomePage() in worker/routes/storefront.js.
-    "run_worker_first": ["/"]
+    // Which requests reach the Worker before the asset layer.
+    //
+    // Everything the Worker answers must be listed. Once this is a list, the
+    // asset layer takes every request that is not on it, and it answers a
+    // POST it cannot serve with 405: that is how the WhatsApp and Paystack
+    // webhooks went dark when only "/" was here.
+    //
+    //   /api/*   webhooks and the dashboard's Worker calls
+    //   /        the homepage, served with indexing and a link preview
+    //   /p/*     product pages, rendered with their link preview
+    //   /s/*     store pages, likewise
+    //
+    // Everything else (the dashboard's routes, the JS and CSS) stays with the
+    // asset layer and its single-page fallback. worker.test.mjs checks this
+    // list against what worker/index.js routes.
+    "run_worker_first": ["/api/*", "/", "/p/*", "/s/*"]
   }
 }
