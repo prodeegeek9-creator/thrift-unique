@@ -10,6 +10,7 @@ import { ownerSay } from './billing.js';
 import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
+import { reconcile } from '../lib/reconcile.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
@@ -97,6 +98,7 @@ export async function handleAdmin(request, env, path) {
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
 
   if (rest === '/money' && method === 'GET') return moneyProblems(cfg);
+  if (rest === '/reconcile' && method === 'POST') return reconcileNow(cfg, op);
   const problem = rest.match(/^\/problems\/([0-9a-f-]{36})\/resolve$/i);
   if (problem && method === 'POST') return resolveProblem(request, cfg, op, problem[1]);
 
@@ -125,6 +127,7 @@ async function overview(cfg, request) {
     db(cfg).select('payment_problems', 'resolved_at=is.null&select=kind'),
     db(cfg).select('refunds', 'status=eq.failed&select=id'),
   ]);
+  const lastRun = await db(cfg).one('reconciliation_runs', 'select=ran_at,error&order=ran_at.desc').catch(() => null);
 
   const gross = sum(orders, (o) => Number(o.amount));
   const now = Date.now();
@@ -174,9 +177,14 @@ async function overview(cfg, request) {
     // console's Money page): a payment nobody can match or apply, a refund
     // Paystack refused, calls to the Paystack webhook it did not sign.
     money: {
-      unmatched: problems.filter((p) => p.kind !== 'bad_signature').length,
+      unmatched: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)).length,
+      transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)).length,
       refundsFailed: refundsFailed.length,
       badSignatureDays: problems.filter((p) => p.kind === 'bad_signature').length,
+      // When the books were last checked against Paystack. Older than a day
+      // and a bit means the daily check has stopped running.
+      lastCheckAt: lastRun?.ran_at ?? null,
+      lastCheckFailed: Boolean(lastRun?.error),
     },
 
     // WhatsApp, across the platform.
@@ -825,6 +833,11 @@ async function storeMemberLink(cfg, op, tenantId, userId) {
 
 // ── REFUNDS ──────────────────────────────────────────────────────────────────
 
+// Payment problems by what they are about: money coming in, or money going
+// out to stores (lib/problems.js, lib/reconcile.js).
+const PAYMENT_KINDS = ['unmatched_payment', 'unsettled_payment', 'amount_mismatch', 'missing_payment'];
+const TRANSFER_KINDS = ['payout_mismatch', 'unknown_transfer'];
+
 // A payout the platform owes and is not getting to the store: Paystack
 // refused it, it ran out of attempts, or it went to Paystack over a day ago
 // and Paystack never said it arrived.
@@ -840,7 +853,7 @@ function stuckPayout(p) {
 // nobody could match, and webhooks Paystack did not sign, from
 // payment_problems (lib/problems.js).
 async function moneyProblems(cfg) {
-  const [problems, payouts, refunds] = await Promise.all([
+  const [problems, payouts, refunds, lastRun] = await Promise.all([
     db(cfg).select(
       'payment_problems',
       'resolved_at=is.null&select=id,kind,reference,amount,detail,first_seen,last_seen&order=last_seen.desc&limit=200'
@@ -855,17 +868,32 @@ async function moneyProblems(cfg) {
       'status=eq.failed&select=id,tenant_id,paid,amount,platform_fee,reason,failure_reason,requested_via,created_at,' +
         'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
     ),
+    db(cfg).one('reconciliation_runs', 'select=*&order=ran_at.desc'),
   ]);
   const stuck = payouts.filter(stuckPayout);
   const names = await tenantNames(cfg, [...stuck, ...refunds].map((r) => r.tenant_id));
   const named = (r) => ({ ...r, tenant_name: names[r.tenant_id] ?? null });
 
   return json({
-    payments: problems.filter((p) => p.kind !== 'bad_signature'),
+    payments: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)),
+    transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)),
     badSignatures: problems.filter((p) => p.kind === 'bad_signature'),
     payouts: stuck.map(named),
     refunds: refunds.map(named),
+    // The last daily check against Paystack (lib/reconcile.js).
+    lastRun: lastRun ?? null,
   });
+}
+
+// POST /api/admin/reconcile: the daily check, now. Settles what Paystack's
+// record settles, like the scheduled run, so it is an owner's, and audited.
+async function reconcileNow(cfg, op) {
+  if (!cfg.paystackKey) return json({ error: 'Paystack is not set up on the platform yet.' }, 503);
+  const run = await reconcile(cfg);
+  await audit(cfg, op.userId, 'reconcile.run', {
+    detail: { payments: run.payments, transfers: run.transfers, settled_late: run.settled_late, problems: run.problems, error: run.error },
+  });
+  return json({ ok: !run.error, run });
 }
 
 // POST /api/admin/problems/:id/resolve { note }: an owner has dealt with it

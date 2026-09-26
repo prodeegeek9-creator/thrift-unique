@@ -15,6 +15,7 @@ import { releaseExpiredHolds, sendOwedPayouts, runBilling } from './routes/escro
 import { handlePayouts } from './routes/payouts.js';
 import { handleBilling } from './routes/billing.js';
 import { handleWaha, consignorBankSweep } from './routes/waha.js';
+import { reconcileSweep } from './lib/reconcile.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
@@ -81,6 +82,9 @@ export default {
         // Payout account changes: the 2-hour confirmation, and expiry.
         .then(() => consignorBankSweep(env))
         .then((r) => r && console.log(`consignor bank sweep: ${JSON.stringify(r)}`))
+        // Once a day: our books against Paystack's (lib/reconcile.js).
+        .then(() => reconcileSweep(env, { now: new Date(event.scheduledTime ?? Date.now()) }))
+        .then((r) => r && console.log(`reconciliation: ${JSON.stringify(r)}`))
     );
   },
 };

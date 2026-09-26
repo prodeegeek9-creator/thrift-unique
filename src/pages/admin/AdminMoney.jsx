@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
-import { fetchMoney, resolveProblem, retryPayout, retryRefund } from '../../lib/admin.js';
+import { fetchMoney, resolveProblem, retryPayout, retryRefund, runReconcile } from '../../lib/admin.js';
 import { formatNaira } from '../../lib/money.js';
 import { dateTime } from '../../lib/time.js';
 
@@ -16,6 +16,11 @@ import { dateTime } from '../../lib/time.js';
 //   refunds that failed         a buyer is owed money back
 //   unsigned webhook calls      often a wrong PAYSTACK_SECRET_KEY, which
 //                               turns every real payment away
+//   transfers that don't match  from the daily check against Paystack
+//
+// The daily check (worker/lib/reconcile.js) also finds payments and payouts
+// our records disagree with Paystack about; it settles what Paystack's own
+// record settles and lists the rest here.
 //
 // Looking is for anyone on the admin team; acting is for owners, and every
 // action is in the audit log.
@@ -25,7 +30,11 @@ export default function AdminMoney({ operator }) {
   const { data, isLoading } = useQuery({ queryKey: ['admin', 'money'], queryFn: fetchMoney });
 
   const count =
-    (data?.payments?.length ?? 0) + (data?.payouts?.length ?? 0) + (data?.refunds?.length ?? 0) + (data?.badSignatures?.length ?? 0);
+    (data?.payments?.length ?? 0) +
+    (data?.transfers?.length ?? 0) +
+    (data?.payouts?.length ?? 0) +
+    (data?.refunds?.length ?? 0) +
+    (data?.badSignatures?.length ?? 0);
 
   return (
     <>
@@ -40,8 +49,10 @@ export default function AdminMoney({ operator }) {
         </div>
       ) : (
         <div className="space-y-4">
+          <LastCheck run={data?.lastRun} isOwner={isOwner} />
           <BadSignatures rows={data?.badSignatures ?? []} isOwner={isOwner} />
           <Payments rows={data?.payments ?? []} isOwner={isOwner} />
+          <Transfers rows={data?.transfers ?? []} isOwner={isOwner} />
           <Payouts rows={data?.payouts ?? []} isOwner={isOwner} />
           <Refunds rows={data?.refunds ?? []} isOwner={isOwner} />
         </div>
@@ -98,11 +109,106 @@ function BadSignatures({ rows, isOwner }) {
   );
 }
 
+// When the books were last checked against Paystack, and a way to check now.
+// No run in over a day means the daily check has stopped, which is exactly
+// the kind of silence this page exists to end.
+const STALE_MS = 26 * 3_600_000;
+function LastCheck({ run, isOwner }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const check = useMutation({
+    mutationFn: runReconcile,
+    onSuccess: (r) => {
+      const { run: done } = r;
+      toast(
+        done.error
+          ? `The check stopped: ${done.error}`
+          : `Checked ${done.payments} payments and ${done.transfers} transfers. ${done.settled_late} settled, ${done.problems} to look at.`,
+        done.error ? 'error' : 'success'
+      );
+      qc.invalidateQueries({ queryKey: ['admin'] });
+    },
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  const stale = !run || Date.now() - new Date(run.ran_at).getTime() > STALE_MS;
+  const bad = stale || Boolean(run?.error);
+  return (
+    <section
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-card border p-4 text-sm ${
+        bad ? 'border-red/30 bg-red-lt text-red' : 'border-line bg-surface text-text'
+      }`}
+    >
+      <p>
+        {!run
+          ? 'The books have not been checked against Paystack yet. The check runs every morning at 4am.'
+          : run.error
+            ? `The last check against Paystack (${dateTime(run.ran_at)}) stopped: ${run.error}`
+            : `Checked against Paystack ${dateTime(run.ran_at)}: ${run.payments} payments and ${run.transfers} transfers from the week before. ` +
+              `${run.settled_late} settled that had been missed; ${run.payouts_updated} payouts brought up to date.` +
+              (stale ? ' That was over a day ago, so the daily check may have stopped.' : '')}
+      </p>
+      {isOwner ? (
+        <button
+          type="button"
+          disabled={check.isPending}
+          onClick={() => check.mutate()}
+          className="shrink-0 rounded-pill border border-line bg-surface px-3 py-1 text-xs font-medium text-ink hover:bg-surface-2 disabled:opacity-60"
+        >
+          {check.isPending ? 'Checking…' : 'Check now'}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+// What each kind of problem is, in a word, beside its amount.
+const KIND = {
+  unmatched_payment: 'No match',
+  unsettled_payment: "Couldn't apply",
+  amount_mismatch: 'Amount differs',
+  missing_payment: 'Not on Paystack',
+  payout_mismatch: 'Payout differs',
+  unknown_transfer: 'Not our payout',
+};
+
+function Kind({ kind }) {
+  return KIND[kind] ? (
+    <span className="mr-1.5 rounded-pill bg-red-lt px-2 py-0.5 text-[11px] font-semibold text-red">{KIND[kind]}</span>
+  ) : null;
+}
+
+function Transfers({ rows, isOwner }) {
+  return (
+    <Section
+      title="Transfers that don't match"
+      why="From the daily check: a payout recorded as paid that Paystack has no successful transfer for, or a transfer out of the balance that isn't one of our payouts."
+      empty="Every transfer matched a payout."
+      count={rows.length}
+    >
+      {rows.map((p) => (
+        <li key={p.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm">
+          <div className="min-w-0">
+            <p className="font-medium text-ink">
+              <Kind kind={p.kind} />
+              {p.amount != null ? formatNaira(p.amount) : 'Amount unknown'}{' '}
+              {p.reference ? <span className="font-mono text-xs font-normal text-muted">{p.reference}</span> : null}
+            </p>
+            <p className="mt-0.5 text-xs text-muted">{p.detail}</p>
+            <p className="mt-0.5 text-[11px] text-muted">First seen {dateTime(p.first_seen)}</p>
+          </div>
+          {isOwner ? <Resolve id={p.id} /> : null}
+        </li>
+      ))}
+    </Section>
+  );
+}
+
 function Payments({ rows, isOwner }) {
   return (
     <Section
-      title="Payments nobody can match"
-      why="Paystack took this money, and no order, cart or plan fee has its reference. Find what it was for on Paystack, then settle it or refund it there."
+      title="Payments that don't match"
+      why="Paystack took this money and our records don't agree: no order, cart or plan fee has its reference, it couldn't be applied, the amount differs, or we have it as paid and Paystack doesn't. Check it on Paystack, then settle or refund it there."
       empty="Every payment matched something."
       count={rows.length}
     >
@@ -110,6 +216,7 @@ function Payments({ rows, isOwner }) {
         <li key={p.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm">
           <div className="min-w-0">
             <p className="font-medium text-ink">
+              <Kind kind={p.kind} />
               {p.amount != null ? formatNaira(p.amount) : 'Amount unknown'}{' '}
               <span className="font-mono text-xs font-normal text-muted">{p.reference}</span>
             </p>

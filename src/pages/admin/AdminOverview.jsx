@@ -36,6 +36,22 @@ export default function AdminOverview() {
 
       <PlatformCard platform={data?.platform} loading={isLoading} />
 
+      {/* The daily check against Paystack stopping is silent otherwise: the
+          books just stop being checked. */}
+      {data?.money && (data.money.lastCheckFailed || checkIsStale(data.money.lastCheckAt)) ? (
+        <Link
+          to="/admin/money"
+          className="mb-4 flex items-center gap-3 rounded-card border border-amber/30 bg-amber-lt p-4 text-sm text-amber"
+        >
+          <Icon name="payouts" className="h-5 w-5 shrink-0" />
+          {data.money.lastCheckFailed
+            ? 'The last check of the books against Paystack failed. See the Money page.'
+            : data.money.lastCheckAt
+              ? `The books were last checked against Paystack ${dateTime(data.money.lastCheckAt)}. The daily check may have stopped.`
+              : 'The books have not been checked against Paystack yet. It runs every morning at 4am, or from the Money page.'}
+        </Link>
+      ) : null}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile
           icon="team"
@@ -102,9 +118,15 @@ export default function AdminOverview() {
                 All of it is listed, with what to do, on the Money page. */}
             <Attention
               to="/admin/money"
-              label="Payments nobody can match"
+              label="Payments that don't match"
               value={data?.money?.unmatched ?? 0}
               tone={data?.money?.unmatched ? 'red' : 'ok'}
+            />
+            <Attention
+              to="/admin/money"
+              label="Transfers that don't match"
+              value={data?.money?.transfers ?? 0}
+              tone={data?.money?.transfers ? 'red' : 'ok'}
             />
             <Attention
               to="/admin/money"
@@ -153,6 +175,8 @@ export default function AdminOverview() {
     </>
   );
 }
+
+const checkIsStale = (at) => !at || Date.now() - new Date(at).getTime() > 26 * 3_600_000;
 
 function Attention({ to, label, value, tone }) {
   return (

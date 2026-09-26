@@ -108,6 +108,8 @@ export const forceRelease = (orderId, reason) =>
 // that aren't getting through, webhooks Paystack did not sign.
 export const fetchMoney = () => call('/money');
 export const resolveProblem = (id, note) => call(`/problems/${id}/resolve`, { method: 'POST', body: { note } });
+// The daily check against Paystack, now (worker/lib/reconcile.js).
+export const runReconcile = () => call('/reconcile', { method: 'POST', body: {} });
 
 export const fetchRefunds = () => call('/refunds');
 export const retryRefund = (id) => call(`/refunds/${id}/retry`, { method: 'POST', body: {} });
@@ -140,4 +142,5 @@ export const AUDIT_LABELS = {
   'refund.create': 'Refunded a buyer',
   'refund.retry': 'Retried a refund',
   'problem.resolve': 'Marked a money problem sorted',
+  'reconcile.run': 'Checked the books against Paystack',
 };

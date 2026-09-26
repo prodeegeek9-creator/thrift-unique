@@ -121,7 +121,7 @@ test('the overview counts money problems, and the Money page lists each', async 
     await send(await signed({ event: 'charge.success', data: {} }, 'sk_wrong'));
 
     const { body: overview } = await send(admin('/overview'));
-    assert.deepEqual(overview.money, { unmatched: 1, refundsFailed: 1, badSignatureDays: 1 });
+    assert.deepEqual(overview.money, { unmatched: 1, transfers: 0, refundsFailed: 1, badSignatureDays: 1, lastCheckAt: null, lastCheckFailed: false });
     assert.equal(overview.payouts.stuck, 2, 'refused, and sent two days ago with no word from Paystack');
 
     const { status, body } = await send(admin('/money', { token: 'tok-support' }));

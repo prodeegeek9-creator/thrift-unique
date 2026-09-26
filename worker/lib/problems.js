@@ -7,7 +7,11 @@ import { db } from './supabase.js';
 // Recording one never fails its caller. The webhook has to answer Paystack
 // whatever happens here, and a problem that can't be written is logged.
 
-const KINDS = ['unmatched_payment', 'unsettled_payment', 'bad_signature'];
+const KINDS = [
+  'unmatched_payment', 'unsettled_payment', 'bad_signature',
+  // From the daily check against Paystack (lib/reconcile.js, migration 0035).
+  'amount_mismatch', 'missing_payment', 'payout_mismatch', 'unknown_transfer',
+];
 
 // Seen again, it is the same row, reopened if it had been marked sorted.
 export async function noteProblem(cfg, { kind, key, reference = null, amount = null, detail = null }) {

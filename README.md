@@ -489,8 +489,8 @@ current findings are the intended design and should not be "fixed":
 
 - **`rls_enabled_no_policy`** on `bot_conversations`, `bot_messages`,
   `whatsapp_secrets`, `channel_connections`, `platform_admins`,
-  `operator_audit` and `payment_problems`, among others the Worker alone
-  uses. That is the pattern, not an oversight — RLS on, no policy, no grant,
+  `operator_audit`, `payment_problems` and `reconciliation_runs`, among
+  others the Worker alone uses. That is the pattern, not an oversight — RLS on, no policy, no grant,
   reachable only under the service key.
 - **`public_product()` executable by `anon`.** It is the storefront's one
   public read and returns a fixed, safe column list by design.
@@ -747,8 +747,8 @@ without a network, WAHA or Paystack):
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
   disputes, platform WhatsApp health, a Money page for payments nobody can
-  match and payouts or refunds that aren't getting through, and an
-  append-only audit log.
+  match and payouts or refunds that aren't getting through, a daily check of
+  the books against Paystack, and an append-only audit log.
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
@@ -851,8 +851,26 @@ in this order, before Paystack is switched to live (item 4 below).
      isn't so on Starter. They now say "Secure payment through Vendwyze", and
      refund refusals no longer tell buyers to "open a dispute", which only a
      store can do.
-5. **Daily reconciliation.** Orders against Paystack transactions against
-   payouts; any difference shows in `/admin`.
+5. **Daily reconciliation.** *Done* (`worker/lib/reconcile.js`, migration
+   0035). Every morning at 4am Lagos time, or from "Check now" on the Money
+   page, the Worker lists Paystack's successful payments and its transfers for
+   the past week and compares them with our records:
+   - A payment Paystack took that nobody applied (its webhook was lost, and
+     the buyer never came back to the return page) is settled, through the
+     same code the webhook runs, and the buyer and store are told as usual.
+     So is a WhatsApp cart or plan fee in the same state.
+   - A transfer whose outcome we missed is recorded: a success marks the
+     payout paid, a failure or reversal puts it back to be retried.
+   - Everything else goes to the Money page: a payment no order, cart or plan
+     fee has; one for a cancelled order; an amount that differs; an order or
+     plan fee we have as paid in the last 48 hours that Paystack has no
+     successful payment for (each asked about on its own first); a payout we
+     have as paid that Paystack failed or has no transfer for; a transfer out
+     of the balance that isn't one of our payouts.
+   Each run is kept in `reconciliation_runs`. The Money page shows the last
+   one, and the overview warns if the check failed or hasn't run in over a
+   day. Paystack's list endpoints are paged 100 at a time; a week with more
+   than 5,000 payments stops the check with an error rather than check part.
 6. **Payment links for one buyer (to decide).** A link carries a price agreed
    in chat, often a discount, and today anyone it is forwarded to can pay it.
    Should it only work for the phone number it was made for?

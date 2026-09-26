@@ -38,6 +38,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     disputes: [],
     operator_audit: [],
     payment_problems: [],
+    reconciliation_runs: [],
     ...structuredClone(seed),
   };
 
@@ -242,6 +243,9 @@ export function installFetch({
   waha = null,
   // Any other Paystack call (initialize, transfers): (url, init) => Response.
   paystack = null,
+  // Per reference, instead of the one answer above: ref => transaction data,
+  // or null for a reference Paystack has never heard of.
+  paystackVerify = null,
 }) {
   const real = globalThis.fetch;
 
@@ -271,6 +275,13 @@ export function installFetch({
     }
 
     if (url.startsWith(SUPABASE_URL)) return supabase.handler(url, init);
+
+    if (paystackVerify && url.startsWith('https://api.paystack.co/transaction/verify/')) {
+      const data = paystackVerify(decodeURIComponent(url.split('/').pop()));
+      return data
+        ? new Response(JSON.stringify({ status: true, data }), { status: 200 })
+        : new Response(JSON.stringify({ status: false, message: 'Transaction reference not found' }), { status: 404 });
+    }
 
     if (url.startsWith('https://api.paystack.co/transaction/verify/')) {
       if (paystackAmountKobo == null) return new Response('nope', { status: 404 });
