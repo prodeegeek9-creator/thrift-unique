@@ -753,9 +753,15 @@ pauses stores that stay unpaid; it needs nothing beyond the secrets above. For l
 Transfers, turn off OTP for API transfers, and keep enough balance to pay out,
 because transfers are drawn from the Paystack balance.
 
-In Supabase, under Authentication → URL Configuration, the redirect list must
-allow the site's paths (for example `https://<your-domain>/**`): sign-in links
-land on `/dashboard` for stores and `/admin/login` for the admin team.
+Set-password links never use Supabase's own one-time link, which anything that
+opens it spends (WAHA and WhatsApp open every link they send to build a
+preview). They go to our `/welcome` (stores) or `/admin/welcome` (the console)
+with the token in the fragment, and that page redeems it only when the person
+presses Continue (`worker/lib/accounts.js`, `src/pages/Welcome.jsx`). Somebody
+whose link was already used replies *PASSWORD* to the platform number for a new
+one; the console can also make one from a store's Team card or the Admin team
+page. In Supabase, under Authentication → URL Configuration, set the Site URL to
+the site's address, since a link Supabase itself sends falls back to it.
 
 `PUBLIC_ORIGIN` is not a secret. It is the origin in every link the product
 sends, so it belongs in `wrangler.jsonc` under `vars` once there is a canonical

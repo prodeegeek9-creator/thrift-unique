@@ -1,10 +1,12 @@
-import { NavLink, Route, Routes } from 'react-router-dom';
+import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
 import Icon from '../../components/ui/Icon.jsx';
 import { BrandLockup } from '../../components/ui/BrandMark.jsx';
-import { ConsoleAuthProvider, useConsoleSignOut } from '../../lib/adminAuth.jsx';
+import { ConsoleAuthProvider, useConsoleAuth, useConsoleSignOut } from '../../lib/adminAuth.jsx';
+import { consoleSupabase } from '../../lib/supabase.js';
+import { WelcomeScreen } from '../Welcome.jsx';
 
 import RequireOperator from './RequireOperator.jsx';
-import AdminLogin from './AdminLogin.jsx';
+import AdminLogin, { ConsoleBadge } from './AdminLogin.jsx';
 import AdminOverview from './AdminOverview.jsx';
 import AdminTenants from './AdminTenants.jsx';
 import AdminTenantDetail from './AdminTenantDetail.jsx';
@@ -34,12 +36,32 @@ export default function AdminRoutes() {
     <ConsoleAuthProvider>
       <Routes>
         <Route path="login" element={<AdminLogin />} />
+        <Route path="welcome" element={<ConsoleWelcome />} />
         <Route
           path="*"
           element={<RequireOperator>{(operator) => <Console operator={operator} />}</RequireOperator>}
         />
       </Routes>
     </ConsoleAuthProvider>
+  );
+}
+
+// An admin team invitation or new sign-in link, redeemed into the console's
+// own session when they press Continue.
+function ConsoleWelcome() {
+  const { setRecovering } = useConsoleAuth();
+  const navigate = useNavigate();
+  return (
+    <WelcomeScreen
+      client={consoleSupabase}
+      dark
+      badge={<ConsoleBadge />}
+      help="Ask a platform owner for a new sign-in link."
+      onVerified={() => {
+        setRecovering(true);
+        navigate('/admin/login', { replace: true });
+      }}
+    />
   );
 }
 

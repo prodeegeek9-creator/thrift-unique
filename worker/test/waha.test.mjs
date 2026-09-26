@@ -1442,6 +1442,65 @@ test('an owner saying hi gets the menu, with the items waiting for them', async 
   }
 });
 
+// PASSWORD: a new set-password link for the owner, sent back to the store's
+// own number, pointing at our welcome page rather than Supabase's one-time
+// link (WAHA fetches every URL it sends for a preview, which would spend it).
+test('an owner who replies PASSWORD gets a fresh set-password link for their own account', async () => {
+  const supabase = makeFakeSupabase({
+    ...seed(),
+    tenant_members: [
+      { tenant_id: TENANT, user_id: OWNER.id, role: 'owner', email: 'owner@store.test', invited_at: '2026-09-01T00:00:00Z' },
+      { tenant_id: TENANT, user_id: STAFF.id, role: 'staff', email: 'staff@store.test', invited_at: '2026-09-02T00:00:00Z' },
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const routed = globalThis.fetch;
+  const generated = [];
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/auth/v1/admin/generate_link')) {
+      const body = JSON.parse(init.body);
+      generated.push({ ...body, url });
+      return new Response(
+        JSON.stringify({
+          user: { id: OWNER.id, email: body.email },
+          properties: { action_link: 'https://x.supabase.co/auth/v1/verify?token=t', hashed_token: 'hashed-t', verification_type: body.type },
+        }),
+        { status: 200 }
+      );
+    }
+    return routed(input, init);
+  };
+  try {
+    await converse([incoming('PASSWORD')], wahaEnv());
+    assert.equal(generated.length, 1);
+    assert.equal(generated[0].type, 'recovery');
+    assert.equal(generated[0].email, 'owner@store.test');
+
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].chatId, SELLER_CHAT);
+    assert.match(waha.sent[0].text, /https:\/\/uniquethrift\.ng\/welcome#token_hash=hashed-t&type=recovery/);
+    assert.doesNotMatch(waha.sent[0].text, /auth\/v1\/verify/);
+  } finally {
+    globalThis.fetch = routed;
+    restore();
+  }
+});
+
+test('PASSWORD before approval explains there is no account yet', async () => {
+  const supabase = makeFakeSupabase({ ...seed({ tenant: { status: 'onboarding' } }), tenant_members: [] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('forgot password')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.match(waha.sent[0].text, /created when your store is approved/);
+  } finally {
+    restore();
+  }
+});
+
 test('every webhook that gets through records when WhatsApp last reached us', async () => {
   const supabase = makeFakeSupabase(seed());
   const waha = makeFakeWaha();

@@ -48,7 +48,11 @@ function setup(opts = {}) {
       return new Response(
         JSON.stringify({
           user: { id, email: body.email },
-          properties: { action_link: `https://project.supabase.co/auth/v1/verify?type=${body.type}&t=${id}` },
+          properties: {
+            action_link: `https://project.supabase.co/auth/v1/verify?type=${body.type}&t=${id}`,
+            hashed_token: `hashed-${id}`,
+            verification_type: body.type,
+          },
         }),
         { status: 200 }
       );
@@ -118,7 +122,9 @@ test('adding a new person creates their account and hands back a link to the con
     assert.equal(generated.length, 1);
     assert.equal(generated[0].type, 'invite');
     assert.equal(generated[0].email, 'new@x.test');
-    assert.equal(new URL(generated[0].url).searchParams.get('redirect_to'), 'https://uniquethrift.test/admin/login');
+    assert.equal(new URL(generated[0].url).searchParams.get('redirect_to'), 'https://uniquethrift.test/admin/welcome');
+    // The console's own welcome page, which only uses the token on a tap.
+    assert.match(body.link, /^https:\/\/uniquethrift\.test\/admin\/welcome#token_hash=hashed-/);
 
     const row = sb.tables.platform_admins.find((r) => r.email === 'new@x.test');
     assert.equal(row.level, 'support');
@@ -258,6 +264,37 @@ test('/me tells the console who is signed in', async () => {
     const res = await worker.fetch(call('/api/admin/me', { token: 'tok-owner' }), env(), {});
     const body = await res.json();
     assert.deepEqual(body, { level: 'owner', email: OWNER.email, user_id: OWNER.id });
+  } finally {
+    restore();
+  }
+});
+
+// A store's team, from the store's page in the console: a new set-password
+// link for somebody whose invitation never worked.
+test('an owner can make a new sign-in link for a store member; support cannot', async () => {
+  const TENANT = '33333333-0000-0000-0000-000000000001';
+  const MEMBER = '33333333-0000-0000-0000-000000000002';
+  const { sb, generated, restore } = setup();
+  sb.tables.tenant_members = [{ tenant_id: TENANT, user_id: MEMBER, role: 'owner', email: 'shop@store.test' }];
+  try {
+    const path = `/api/admin/tenants/${TENANT}/members/${MEMBER}/link`;
+    const support = await worker.fetch(call(path, { token: 'tok-support', method: 'POST', body: {} }), env(), {});
+    assert.equal(support.status, 403);
+
+    const res = await worker.fetch(call(path, { token: 'tok-owner', method: 'POST', body: {} }), env(), {});
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.match(body.link, /^https:\/\/uniquethrift\.test\/welcome#token_hash=hashed-.*&type=recovery$/);
+    assert.equal(generated.at(-1).type, 'recovery');
+    assert.equal(generated.at(-1).email, 'shop@store.test');
+    assert.equal(sb.tables.operator_audit.at(-1).action, 'member.link');
+
+    const stranger = await worker.fetch(
+      call(`/api/admin/tenants/${TENANT}/members/${OWNER.id}/link`, { token: 'tok-owner', method: 'POST', body: {} }),
+      env(),
+      {}
+    );
+    assert.equal(stranger.status, 404);
   } finally {
     restore();
   }

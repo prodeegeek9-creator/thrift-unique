@@ -13,8 +13,10 @@ import {
   submittedMessage,
   savedMessage,
   paymentLinkMessage,
+  passwordLinkMessage,
 } from '../lib/bot.js';
 import { makePaymentLink } from '../lib/paylinks.js';
+import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
@@ -276,7 +278,37 @@ async function message(cfg, event) {
     await sendPaymentLink(cfg, tenant, event.from, result.action);
   }
 
+  if (result.action?.type === 'password_link') {
+    await sendPasswordLink(cfg, tenant, event.from);
+  }
+
   return json({ ok: true });
+}
+
+// PASSWORD from a store owner: a new set-password link for the store's owner
+// account, sent back to the store's own number. The number is the store's
+// identity on this channel; the link goes nowhere else.
+async function sendPasswordLink(cfg, tenant, chat) {
+  const owner = await db(cfg).one(
+    'tenant_members',
+    `tenant_id=eq.${tenant.id}&role=eq.owner&select=email&order=invited_at.asc.nullslast`
+  );
+  if (!owner?.email) {
+    await say(cfg, tenant, chat, 'Your dashboard account is created when your store is approved. We will send you the link then.');
+    return;
+  }
+  let link = null;
+  try {
+    ({ link } = await generateInvite(cfg, owner.email, { type: 'recovery', origin: cfg.publicOrigin ?? null, landing: '/welcome' }));
+  } catch (err) {
+    console.error('password link failed:', err?.message ?? err);
+  }
+  await say(
+    cfg,
+    tenant,
+    chat,
+    link ? passwordLinkMessage({ link, email: owner.email }) : "I couldn't make a link just now. Please try again in a few minutes."
+  );
 }
 
 // "LINK JBU4PE 30k" from a store owner: a checkout link for one of their

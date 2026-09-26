@@ -90,6 +90,10 @@ export const setTeamLevel = (userId, level) => call(`/team/${userId}`, { method:
 export const removeFromTeam = (userId) => call(`/team/${userId}`, { method: 'POST', body: { remove: true } });
 export const newTeamLink = (userId) => call(`/team/${userId}/link`, { method: 'POST', body: {} });
 
+// A new set-password link for somebody on a store's team.
+export const newMemberLink = (tenantId, userId) =>
+  call(`/tenants/${tenantId}/members/${userId}/link`, { method: 'POST', body: {} });
+
 export const setPayoutsPaused = (tenantId, paused) =>
   call(`/tenants/${tenantId}/payouts-paused`, { method: 'POST', body: { paused } });
 
@@ -127,6 +131,7 @@ export const AUDIT_LABELS = {
   'team.level': 'Changed an admin’s level',
   'team.remove': 'Removed somebody from the admin team',
   'team.link': 'Made a new sign-in link for an admin',
+  'member.link': 'Made a new sign-in link for a store member',
   'refund.create': 'Refunded a buyer',
   'refund.retry': 'Retried a refund',
 };

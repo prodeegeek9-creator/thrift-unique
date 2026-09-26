@@ -646,3 +646,12 @@ test('a brand store has no review queue in its menu', () => {
   assert.doesNotMatch(step(null, text('hi'), brand).replies[0], /REVIEW/);
   assert.match(step(null, text('review'), brand).replies[0], /nothing to review/);
 });
+
+test('PASSWORD asks for a set-password link, and the menu offers it', async () => {
+  const { step, menuMessage } = await import('../lib/bot.js');
+  for (const text of ['PASSWORD', 'forgot password', 'reset password']) {
+    const r = step(null, { body: text }, { tenant: { name: 'Shop', status: 'active' } });
+    assert.deepEqual(r.action, { type: 'password_link' }, text);
+  }
+  assert.match(menuMessage({ tenant: { name: 'Shop' } }), /PASSWORD/);
+});
