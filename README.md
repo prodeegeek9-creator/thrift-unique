@@ -740,6 +740,20 @@ without a network, WAHA or Paystack):
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
+- **Where consignors are paid** (`worker/lib/consignorBank.js`, migration
+  0031): after somebody's first item, the bot on the store's number asks for
+  their bank and account number only; Paystack's account lookup supplies the
+  name, which they confirm with YES. The rules are told in that same message:
+  a change must be to an account in the **same name** as the first (compared
+  by name parts, in any order, since banks print names differently), at most
+  **twice in 6 months**, confirmed by them on WhatsApp **about 2 hours after
+  they ask** (so the question reaches the phone after whoever asked may have
+  put it down; the hourly sweep sends it, between 2 and 3 hours) and
+  **approved by the store**. It takes effect when both have said yes; a
+  confirmation unanswered for 2 days lapses, and "NO, it wasn't me" cancels
+  it and warns the owner. *BANK* on the store's number starts a change. Items
+  to review shows the owner and managers where to pay each consignor, and the
+  changes waiting for their approval.
 - **Share kit** for Instagram, TikTok and Facebook: since none of the three
   can be posted to automatically yet (below), the dashboard's Share button and
   the bot's *SHARE* command hand the seller an item's photos and a caption

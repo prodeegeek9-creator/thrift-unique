@@ -9,7 +9,7 @@ import { callWorker } from './api.js';
 // credential stays server side. See worker/routes/submissions.js.
 
 const COLUMNS =
-  'id, seller_name, seller_phone, title, asking_price, condition, images, status, ' +
+  'id, seller_chat_id, seller_name, seller_phone, title, asking_price, condition, images, status, ' +
   'decline_reason, product_id, decided_at, created_at, ' +
   'sold_at, owed_amount, consignor_paid_at, consignor_paid_note';
 
@@ -92,4 +92,41 @@ export function sellLink(tenant) {
   if (!number) return null;
   const text = `SELL — I'd like ${tenant.name ?? 'you'} to sell an item for me`;
   return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
+}
+
+// ── Where consignors are paid ────────────────────────────────────────────────
+//
+// Collected on WhatsApp (the bank checks the name; see
+// worker/lib/consignorBank.js). Owner and managers can read them; for anyone
+// else the database returns nothing, and the page shows nothing.
+
+export async function fetchConsignorAccounts(tenantId) {
+  if (!tenantId) return {};
+  const { data, error } = await supabase
+    .from('consignor_accounts')
+    .select('seller_chat_id, bank_name, account_number, account_name, updated_at')
+    .eq('tenant_id', tenantId)
+    .limit(1000);
+  if (error) throw error;
+  return Object.fromEntries((data ?? []).map((a) => [a.seller_chat_id, a]));
+}
+
+// Changes waiting for the store's yes or no.
+export async function fetchAccountChanges(tenantId) {
+  if (!tenantId) return [];
+  const { data, error } = await supabase
+    .from('consignor_account_changes')
+    .select(
+      'id, seller_chat_id, bank_name, account_number, account_name, old_bank_name, old_account_number, ' +
+        'requested_at, verify_sent_at, verified_at, store_decision, status'
+    )
+    .eq('tenant_id', tenantId)
+    .eq('status', 'pending')
+    .order('requested_at', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function decideAccountChange(tenantId, id, decision) {
+  return callWorker('/api/submissions/account-change', { body: { tenant: tenantId, id, decision } });
 }

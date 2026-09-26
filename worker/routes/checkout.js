@@ -11,6 +11,7 @@ import { formatNaira } from '../lib/bot.js';
 import { confirmToken } from './confirm.js';
 import { say } from './waha.js';
 import { soldConsignorMessage } from '../lib/intake.js';
+import { accountFor } from '../lib/consignorBank.js';
 import { settleCart, cartView, isCartRef } from '../lib/cartCheckout.js';
 
 // Buying on the platform.
@@ -345,7 +346,12 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
       cfg,
       tenant,
       brought.seller_chat_id,
-      soldConsignorMessage({ store: tenant.name, title: brought.title, owed: brought.owed_amount ?? brought.asking_price }),
+      soldConsignorMessage({
+        store: tenant.name,
+        title: brought.title,
+        owed: brought.owed_amount ?? brought.asking_price,
+        needsBank: !(await accountFor(cfg, tenant.id, brought.seller_chat_id).catch(() => true)),
+      }),
       { session: tenant.waha_session }
     );
   }
