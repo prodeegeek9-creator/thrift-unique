@@ -13,6 +13,8 @@ async function publicCall(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error(payload.error ?? `Request failed (${res.status})`);
     err.status = res.status;
+    // sold, held, held_minutes: what a page needs to show instead of an error.
+    err.body = payload;
     throw err;
   }
   return payload;

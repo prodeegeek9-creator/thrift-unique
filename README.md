@@ -689,6 +689,10 @@ without a network, WAHA or Paystack):
 - **Public pages**: homepage, store pages, product pages (above).
 - **Checkout**: Buy now and payment links → Paystack → order paid, item off
   sale, owner and buyer told on WhatsApp, escrow link for escrow plans.
+- **One buyer at a time for each item**: pressing Pay holds the item for 15
+  minutes, and every route shows "Payment in progress" meanwhile
+  (`worker/lib/holds.js`, migration 0031). See item 1 under "Before live
+  money".
 - **Paying stores**: the owner adds a bank account (checked with the bank
   through Paystack; only the last four digits are kept), and payouts go out as
   Paystack transfers automatically (at once on Starter, on release for escrow),
@@ -740,16 +744,29 @@ without a network, WAHA or Paystack):
 Decided after an outside review of this README, to be done one at a time and
 in this order, before Paystack is switched to live (item 4 below).
 
-1. **One buyer at a time for each item.** When a buyer has entered their
-   details and pressed Pay, the item is held for them for 15 minutes. Everyone
-   else sees "Payment in progress" instead of the Pay button: on the product
-   page, on a payment link, and for WhatsApp BUY and carts (a cart holds all
-   its items or none). If the payment goes through, the item shows "Sold". If
-   not, the button comes back when the 15 minutes are up. The hold is on the
-   product, not the link, so every route checks the same thing. Taking it is a
-   single conditional update, so two buyers pressing Pay at once can't both
-   get it. An expired hold is released only after asking Paystack whether that
-   payment went through. One active hold per phone number per store.
+1. **One buyer at a time for each item.** *Done* (`worker/lib/holds.js`,
+   migration 0031). When a buyer has entered their details and pressed Pay,
+   the item is held for them for 15 minutes, before an order or a Paystack
+   page exists. Everyone else sees "Payment in progress" instead of the Pay
+   button: on the product page, on a payment link, and for WhatsApp BUY. The
+   link page says "Paid" once the item has sold, and the button comes back if
+   the payment doesn't go through. The hold is on the product, not the link,
+   so every route checks the same thing, and taking it is a single
+   conditional update, so two buyers pressing Pay at once can't both get it.
+   - A hold is never cleared by a timer. When one has run out, the next buyer
+     to press Pay first asks Paystack whether that payment went through; if it
+     did, it is settled there and then and the item shows as sold.
+   - The buyer who is paying can press Pay again with the same number and is
+     sent back to the same Paystack page, not a second payment.
+   - One payment at a time per phone number per store.
+   - A WhatsApp cart holds each of its items under the cart's reference. An
+     item somebody else is paying for is left out of the link and the buyer is
+     told, the same way a sold item already was. Cancelling or replacing the
+     cart puts its items straight back. Asking for the link again checks the
+     cart still has everything; if not, it offers a new link for the rest.
+   - A hold running out is not the end of that payment: the order stays
+     awaiting payment, so a Paystack page left open can still be paid. If
+     someone else has the item by then, that is item 2.
 2. **A late second payment is refunded in full, and nobody is credited.** A
    Paystack page left open past its hold can still be paid after someone else
    has bought the item. Today the seller's payout is created before the item is

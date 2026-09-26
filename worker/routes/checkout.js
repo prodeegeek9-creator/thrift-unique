@@ -11,7 +11,8 @@ import { formatNaira } from '../lib/bot.js';
 import { confirmToken } from './confirm.js';
 import { say } from './waha.js';
 import { soldConsignorMessage } from '../lib/intake.js';
-import { settleCart, cartView, isCartRef } from '../lib/cartCheckout.js';
+import { settleCart, cartView, isCartRef, cartRefOf } from '../lib/cartCheckout.js';
+import { takeHold, releaseHold, markSold, heldMinutes } from '../lib/holds.js';
 
 // Buying on the platform.
 //
@@ -60,6 +61,8 @@ async function readLink(env, token) {
   if (!claims || claims.k !== 'pay') return json({ error: 'This payment link has expired or is not valid.' }, 410);
 
   const found = await buyable(cfg, { id: claims.p });
+  // Sold is an answer the link's page shows, not an error: "Paid".
+  if (found.sold) return json({ error: 'This item has been paid for.', sold: true }, 409);
   if (found.error) return json({ error: found.error }, found.status);
   return json({ ...publicView(found), price: claims.a });
 }
@@ -113,6 +116,19 @@ async function start(request, env) {
   if (!buyer?.id) throw new Error('buyer upsert returned no row');
 
   const reference = `utp_${random(20, 'abcdefghijkmnpqrstuvwxyz23456789')}`;
+
+  // The item, for this buyer alone, before an order or a Paystack page exists
+  // (lib/holds.js). A buyer coming back to an item they are already paying
+  // for goes back to the same Paystack page rather than opening a second.
+  const hold = await takeHold(cfg, { productId: product.id, tenantId: tenant.id, ref: reference, buyerId: buyer.id });
+  if (hold.held?.mine) {
+    const open = await byPaymentRef(cfg, hold.held.ref);
+    if (open?.status === 'awaiting_payment' && open.checkout_url) {
+      return json({ ok: true, url: open.checkout_url, reference: open.payment_ref, order_code: open.order_code, resumed: true });
+    }
+  }
+  if (!hold.ok) return holdRefused(hold);
+
   let order = null;
   for (let i = 0; i < 4 && !order; i += 1) {
     order = await db(cfg).insert(
@@ -136,7 +152,10 @@ async function start(request, env) {
       { onConflict: 'order_code' }
     );
   }
-  if (!order) throw new Error('could not allocate an order code');
+  if (!order) {
+    await releaseHold(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
+    throw new Error('could not allocate an order code');
+  }
 
   let checkout;
   try {
@@ -160,21 +179,47 @@ async function start(request, env) {
     await db(cfg)
       .update('orders', `id=eq.${order.id}&status=eq.awaiting_payment`, { status: 'cancelled' }, { returning: false })
       .catch(() => {});
+    await releaseHold(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
     return json({ error: "Couldn't start the payment. Try again in a minute." }, 502);
   }
 
+  await db(cfg)
+    .update('orders', `id=eq.${order.id}`, { checkout_url: checkout.authorization_url }, { returning: false })
+    .catch((err) => console.error('checkout: could not keep the checkout url:', err?.message ?? err));
+
   return json({ ok: true, url: checkout.authorization_url, reference, order_code: order.order_code });
 }
+
+// Why this buyer can't pay for this item right now, in words for the page.
+function holdRefused(hold) {
+  if (hold.sold) return json({ error: 'Sorry, this item has sold.', sold: true }, 409);
+  if (hold.busy) {
+    return json({
+      error: `You're already paying for ${hold.busy.title}. Finish that payment first, or try again in about ${minutes(hold.busy.minutes)}.`,
+      busy: true,
+    }, 409);
+  }
+  const m = hold.held.minutes;
+  return json({
+    error: hold.held.mine
+      ? `You already have a payment open for this item. Finish it, or try again in about ${minutes(m)}.`
+      : `Someone else is paying for this item right now. If their payment doesn't go through, it'll be available again in about ${minutes(m)}.`,
+    held: true,
+    held_minutes: m,
+  }, 409);
+}
+
+const minutes = (n) => `${n} minute${n === 1 ? '' : 's'}`;
 
 // The item, if it can be bought right now: live, in a live store, not sold.
 async function buyable(cfg, { id, code }) {
   const filter = id ? `id=eq.${id}` : `public_code=eq.${encodeURIComponent(code.toUpperCase())}`;
   const product = await db(cfg).one(
     'products',
-    `${filter}&select=id,tenant_id,public_code,title,price,condition,images,status`
+    `${filter}&select=id,tenant_id,public_code,title,price,condition,images,status,held_until`
   );
   if (!product) return { error: 'That item no longer exists.', status: 404 };
-  if (product.status !== 'active') return { error: 'Sorry, this item has sold.', status: 409 };
+  if (product.status !== 'active') return { error: 'Sorry, this item has sold.', status: 409, sold: true };
 
   const tenant = await db(cfg).one(
     'tenants',
@@ -193,6 +238,8 @@ function publicView({ product, tenant }) {
     price: Number(product.price),
     condition: product.condition,
     images: product.images ?? [],
+    // Minutes left while somebody else is paying for it, else null.
+    held_minutes: heldMinutes(product),
     store: { name: tenant.name, slug: tenant.slug, whatsapp: tenant.whatsapp_number },
   };
 }
@@ -290,14 +337,15 @@ export async function settle(cfg, order, { kobo, channel, notify = true }) {
 }
 
 async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
-  // Off sale. Only an item still listed matches: a second buyer who paid for
-  // something already sold is the store's to refund, and it is told so below.
-  const sold = await db(cfg).update(
-    'products',
-    `id=eq.${order.product_id}&tenant_id=eq.${tenant.id}&status=eq.active`,
-    { status: 'sold', sold_at: new Date().toISOString(), quantity_available: 0 }
-  );
-  const doubleSale = sold.length === 0;
+  // Off sale, for this payment: the item is its if it holds it, or if nobody
+  // else is paying for it (lib/holds.js). A second buyer who paid for
+  // something already gone is the store's to refund, and it is told so below.
+  // A cart's orders hold their items under the cart's reference.
+  const doubleSale = !(await markSold(cfg, {
+    productId: order.product_id,
+    tenantId: tenant.id,
+    ref: cartRefOf(order.payment_ref) ?? order.payment_ref,
+  }));
 
   const [product, buyer, account] = await Promise.all([
     db(cfg).one('products', `id=eq.${order.product_id}&select=title,public_code`),

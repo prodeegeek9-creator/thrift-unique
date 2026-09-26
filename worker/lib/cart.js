@@ -206,6 +206,9 @@ function add(draft, product, code, store) {
   if (product.status !== 'active') {
     return reply(draft.items.length ? 'cart' : 'idle', draft.items.length ? draft : {}, `Sorry, *${product.title}* has sold.`);
   }
+  if (product.busy_minutes) {
+    return reply(draft.items.length ? 'cart' : 'idle', draft.items.length ? draft : {}, busy(product, code));
+  }
   if (draft.items.some((i) => i.code === code)) {
     return reply('cart', draft, `*${product.title}* is already in your cart.\n\n${summary(draft, store)}${nextHint('cart')}`);
   }
@@ -237,7 +240,18 @@ function nextHint(state) {
 
 function offer(product, code) {
   if (product.status !== 'active') return `Sorry, *${product.title}* has sold.`;
+  if (product.busy_minutes) return busy(product, code);
   return `*${product.title}* is ${formatNaira(product.price)}, and it's still available. Reply *BUY ${code}* to order it.`;
+}
+
+// Somebody else is paying for it right now (lib/holds.js). The caller sets
+// busy_minutes; this stays free of the database.
+function busy(product, code) {
+  const m = product.busy_minutes;
+  return (
+    `Someone else is paying for *${product.title}* right now. If their payment doesn't go through, ` +
+    `it'll be free again in about ${m} minute${m === 1 ? '' : 's'}. Send *BUY ${code}* then.`
+  );
 }
 
 function askAddress(name) {

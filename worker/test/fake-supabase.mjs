@@ -114,6 +114,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
   function matches(row, filters) {
     return filters.every((f) => {
       const cell = row[f.col];
+      // As in SQL, NULL compares to nothing: lt, gt and neq never match it.
+      if (['lt', 'gt', 'lte', 'gte', 'neq'].includes(f.op) && cell == null) return false;
       if (f.op === 'eq') return String(cell) === f.val;
       if (f.op === 'neq') return String(cell) !== f.val;
       if (f.op === 'lt') return new Date(cell) < new Date(f.val);

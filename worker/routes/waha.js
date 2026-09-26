@@ -23,7 +23,8 @@ import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { cartStep, codesIn, isBuy, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
-import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
+import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
+import { heldMinutes } from '../lib/holds.js';
 import {
   parseEvent,
   phoneFor,
@@ -533,7 +534,7 @@ async function productForPost(cfg, tenant, messageId) {
     `tenant_id=eq.${tenant.id}&message_id=eq.${encodeURIComponent(messageId)}&select=product_id`
   );
   if (!post) return null;
-  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status`);
+  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status,held_by_ref,held_until`);
 }
 
 // One row per listing and channel (the table's unique key), updated in place
@@ -836,8 +837,13 @@ async function checkout(cfg, event, tenant, conversation) {
     if (code in products) continue;
     products[code] = await db(cfg).one(
       'products',
-      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status`
+      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status,held_by_ref,held_until`
     );
+  }
+  // Minutes somebody else is paying for each, if they are: not this chat's
+  // own cart, whose link a new BUY replaces (lib/holds.js).
+  for (const p of Object.values(products)) {
+    if (p) p.busy_minutes = p.held_by_ref && p.held_by_ref === conversation?.draft?.cart_ref ? null : heldMinutes(p);
   }
   const known = await db(cfg).one(
     'carts',
@@ -871,7 +877,24 @@ async function checkout(cfg, event, tenant, conversation) {
 
   if (result.action?.type === 'resend') {
     const url = conversation?.draft?.pay_url;
-    next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+    // Only while the link still has everything in it: an item that sold, or
+    // that somebody else took over once this link's hold ran out, means a new
+    // link for the rest.
+    const lost = url ? await cartLost(cfg, tenant.id, conversation?.draft?.cart_ref) : [];
+    if (lost.length) {
+      await abandonCart(cfg, tenant.id, conversation.draft.cart_ref).catch(() => {});
+      const { cart_ref: _r, pay_url: _u, ...draft } = result.draft;
+      next = {
+        state: 'cart_confirm',
+        draft,
+        replies: [
+          `Sorry, ${lost.join(', ')} ${lost.length === 1 ? 'is' : 'are'} no longer available on that link. Reply *PAY* for a new link for the rest.`,
+        ],
+        action: null,
+      };
+    } else {
+      next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+    }
   }
 
   if (result.action?.type === 'checkout') {
@@ -896,6 +919,7 @@ async function checkout(cfg, event, tenant, conversation) {
     } else {
       const replies = [];
       if (made.dropped?.length) replies.push(`Sorry, ${made.dropped.join(', ')} sold in the meantime, so I've left ${made.dropped.length === 1 ? 'it' : 'them'} out.`);
+      if (made.busy?.length) replies.push(busyLine(made.busy));
       replies.push(cartPayMessage({ url: made.url, total: made.total, count: made.count, escrow: made.escrow }));
       next = { state: 'cart_pay', draft: { ...result.draft, phone, cart_ref: made.ref, pay_url: made.url }, replies, action: null };
     }

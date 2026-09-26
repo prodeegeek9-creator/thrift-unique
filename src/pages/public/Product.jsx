@@ -8,6 +8,7 @@ import { firstImage, imageUrl } from '../../lib/images.js';
 import { fetchPublicStore } from '../../lib/tenants.js';
 import { checkoutEnabled } from '../../lib/checkout.js';
 import CheckoutForm from '../../components/CheckoutForm.jsx';
+import PaymentInProgress from '../../components/PaymentInProgress.jsx';
 
 // One item.
 //
@@ -62,11 +63,14 @@ export default function Product() {
     };
   }, [product?.tenant_slug, product?.public_code]);
 
+  // Bumped by "Check again" while somebody else is paying for the item.
+  const [reload, setReload] = useState(0);
+
   useEffect(() => {
     let active = true;
     // Arriving from "More from this store" lands at the top, not where the
     // last item's page was scrolled to.
-    window.scrollTo(0, 0);
+    if (!reload) window.scrollTo(0, 0);
     (async () => {
       const row = await fetchPublicProduct(code).catch(() => null);
       if (!active) return;
@@ -80,7 +84,7 @@ export default function Product() {
     return () => {
       active = false;
     };
-  }, [code]);
+  }, [code, reload]);
 
   if (state === 'loading') return <LogoLoader fullScreen label="Loading" />;
 
@@ -137,8 +141,16 @@ export default function Product() {
         ) : null}
 
         {/* Buy now when online payment is set up; WhatsApp otherwise, and
-            always as the way to ask something first. */}
-        {canPay && buying ? (
+            always as the way to ask something first. While somebody else is
+            paying for it, neither: one buyer at a time. */}
+        {canPay && product.held_minutes && !buying ? (
+          <PaymentInProgress
+            minutes={product.held_minutes}
+            onCheck={() => setReload((n) => n + 1)}
+            onMine={() => setBuying(true)}
+            askLink={askLink}
+          />
+        ) : canPay && buying ? (
           <CheckoutForm code={product.public_code} price={product.price} onCancel={() => setBuying(false)} />
         ) : canPay ? (
           <>
