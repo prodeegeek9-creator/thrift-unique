@@ -262,12 +262,21 @@ export function env(extra = {}) {
     SUPABASE_SERVICE_KEY: SERVICE_KEY,
     TOKEN_SECRET: 'token-secret-for-tests',
     PAYSTACK_SECRET_KEY: 'sk_test_secret',
+    // Behaves like Cloudflare's asset layer where it matters: /index.html is
+    // redirected to / with no body (html_handling), and a request carrying
+    // If-None-Match gets a bodiless 304. Serving either as the page is blank.
     ASSETS: {
-      fetch: async () =>
-        new Response(
-          '<!DOCTYPE html><html><head><meta name="robots" content="noindex"><title>Unique Thrift</title></head><body><div id="root"></div></body></html>',
+      fetch: async (req) => {
+        const r = req instanceof Request ? req : new Request(req);
+        if (new URL(r.url).pathname === '/index.html') {
+          return new Response(null, { status: 307, headers: { location: '/' } });
+        }
+        if (r.headers.get('if-none-match')) return new Response(null, { status: 304 });
+        return new Response(
+          '<!DOCTYPE html><html><head><meta name="robots" content="noindex"><title>Vendwyze</title></head><body><div id="root"></div><script type="module" src="/assets/index.js"></script></body></html>',
           { status: 200, headers: { 'content-type': 'text/html' } }
-        ),
+        );
+      },
     },
     ...extra,
   };
