@@ -1565,3 +1565,34 @@ test('SHARE sends the latest item\'s photos and a caption with its link; SHARE <
     restore();
   }
 });
+
+// A store with no payout account is reminded with every listing, until it
+// adds one.
+test('every listing reminds a store with no payout account to add one, and stops once it has', async () => {
+  const supabase = makeFakeSupabase({ ...seed(), payout_accounts: [] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const list = (name) =>
+    converse(
+      [
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/${name}.jpg` }),
+        incoming(name),
+        incoming('35k'),
+        incoming('2'),
+        incoming('yes'),
+      ],
+      wahaEnv()
+    );
+  try {
+    await list('Jacket');
+    assert.match(waha.sent.at(-1).text, /haven't added the bank account we pay your sales into[\s\S]*\/dashboard\/payouts/);
+    await list('Boots');
+    assert.match(waha.sent.at(-1).text, /haven't added the bank account/, 'every listing, not just the first');
+
+    supabase.tables.payout_accounts.push({ tenant_id: TENANT, bank_name: 'GTBank', account_last4: '6789' });
+    await list('Bag');
+    assert.doesNotMatch(waha.sent.at(-1).text, /haven't added the bank account/);
+  } finally {
+    restore();
+  }
+});

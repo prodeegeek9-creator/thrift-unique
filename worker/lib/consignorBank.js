@@ -115,6 +115,11 @@ export const SAY = {
     `Please note: you can change it at most *${MAX_CHANGES} times in 6 months*, the new account must be in the *same name*, ` +
     `and ${store} has to approve each change.\n\n` +
     'Reply *LATER* to do this another time.',
+  remind: (store) =>
+    `💳 Reminder: ${store} still doesn't have your bank details, so it can't pay you when your items sell.\n\n` +
+    'Send your *bank* and *account number*, e.g. *GTBank 0123456789* (the name is checked with your bank). ' +
+    `It can be changed at most ${MAX_CHANGES} times in 6 months, in the same name.\n\n` +
+    'Reply *LATER* to do this another time.',
   askChange: (store, account) =>
     `Your payout account with ${store} is ${describe(account)}.\n\n` +
     'To change it, send the new *bank* and *account number*, e.g. *GTBank 0123456789*.\n\n' +
@@ -234,12 +239,16 @@ async function changesUsed(cfg, tenantId, chat, now = new Date()) {
   return rows.length;
 }
 
-// The opening move after somebody's first item: ask, unless we already have
-// their account.
+// After every item somebody sends, until we have their account: the full ask
+// (with the rules) the first time, a short reminder after that.
 export async function firstAsk(cfg, tenant, chat) {
   const have = await accountFor(cfg, tenant.id, chat).catch(() => null);
   if (have) return null;
-  return { state: 'bank', draft: { mode: 'first' }, replies: [SAY.askFirst(tenant.name)] };
+  const items = await db(cfg)
+    .select('submissions', `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(chat)}&select=id&limit=2`)
+    .catch(() => []);
+  const text = items.length > 1 ? SAY.remind(tenant.name) : SAY.askFirst(tenant.name);
+  return { state: 'bank', draft: { mode: 'first' }, replies: [text] };
 }
 
 // bankTurn(cfg, tenant, chat, conversation, text)

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import worker from '../index.js';
 import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
-import { parseBankMessage, matchBanks, sameName, VERIFY_AFTER_HOURS } from '../lib/consignorBank.js';
+import { parseBankMessage, matchBanks, sameName, firstAsk, VERIFY_AFTER_HOURS } from '../lib/consignorBank.js';
+import { config } from '../lib/env.js';
 import { consignorBankSweep } from '../routes/waha.js';
 
 // Where a store pays the people who bring it items: bank and account number
@@ -330,5 +331,23 @@ test('two changes in 6 months, then no more; and one at a time', async () => {
 
     await say('BANK');
     assert.match(last(sent), /already changed your payout account 2 times in the last 6 months/);
+  } finally { restore(); }
+});
+
+test('asked after every item until they give it: in full the first time, a short reminder after', async () => {
+  const { sb, sent, restore } = setup();
+  const tenant = sb.tables.tenants[0];
+  try {
+    // One item so far (the seed's).
+    let ask = await firstAsk(config(E()), tenant, CONSIGNOR);
+    assert.match(ask.replies[0], /One more thing[\s\S]*2 times in 6 months[\s\S]*same name/);
+
+    sb.tables.submissions.push({ id: 's2', tenant_id: TENANT, seller_chat_id: CONSIGNOR, title: 'Bag', status: 'pending' });
+    ask = await firstAsk(config(E()), tenant, CONSIGNOR);
+    assert.match(ask.replies[0], /Reminder: Kay stores still doesn't have your bank details[\s\S]*same name/);
+    assert.equal(ask.state, 'bank');
+
+    await firstAccount(sent);
+    assert.equal(await firstAsk(config(E()), tenant, CONSIGNOR), null, 'not once they have one');
   } finally { restore(); }
 });
