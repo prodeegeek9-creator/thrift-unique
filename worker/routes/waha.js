@@ -22,7 +22,7 @@ import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
-import { cartStep, codesIn, isBuy, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
+import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
 import { heldMinutes } from '../lib/holds.js';
 import {
@@ -879,7 +879,21 @@ async function checkout(cfg, event, tenant, conversation) {
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`
   );
 
-  const result = cartStep(conversation, event, { store: tenant.name, products, quotedCode: quoted, knownName: known?.buyer_name ?? null });
+  // A real code to show somebody who sent "buy" alone: the store's newest.
+  const example = BARE_BUY.test(String(event.body ?? ''))
+    ? await db(cfg)
+        .one('products', `tenant_id=eq.${tenant.id}&status=eq.active&select=public_code&order=created_at.desc`)
+        .catch(() => null)
+    : null;
+
+  const result = cartStep(conversation, event, {
+    store: tenant.name,
+    exampleCode: example?.public_code ?? null,
+    storeUrl: cfg.publicOrigin && tenant.slug ? `${cfg.publicOrigin}/s/${tenant.slug}` : null,
+    products,
+    quotedCode: quoted,
+    knownName: known?.buyer_name ?? null,
+  });
   if (!result) return null;
 
   // The same replay guard as everywhere else, now that this is ours.

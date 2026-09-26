@@ -30,6 +30,9 @@ const BUY = /^\s*buy\s+([a-z0-9]{4,10})\b/i;
 const REMOVE = /^\s*remove\s+([a-z0-9]{4,10})\b/i;
 const CHECKOUT = /^\s*(checkout|check out|done|that'?s all|pay|proceed)\b/i;
 const SHOW = /^\s*(cart|my cart|basket|view cart)\s*$/i;
+// "buy" and nothing else: somebody who wants to buy and doesn't know the
+// item codes. Not "buy" with more words, which is a conversation.
+export const BARE_BUY = /^\s*buy\s*[?.!]*\s*$/i;
 const CANCEL = /^\s*(cancel|stop|clear|empty( cart)?|never ?mind)\b/i;
 const EDIT = /^\s*(edit|change)( address| name)?\b/i;
 const PAY = /^\s*(pay|yes|ok|okay|confirm|go)\b/i;
@@ -113,6 +116,14 @@ export function cartStep(conversation, message, ctx = {}) {
     if (ASK.test(text)) return reply(live ? state : 'idle', draft, offer(product, quoted));
     return null;
   }
+
+  // "buy" alone, or "cart" with nothing in it: somebody trying the bot
+  // without an item code. Silence reads as broken, so they're told how. Not
+  // mid-checkout, where "buy" could be an answer to a question.
+  if (BARE_BUY.test(text) && (!live || state === 'cart' || state === 'cart_pay')) {
+    return reply(live ? state : 'idle', live ? draft : {}, howToBuy(ctx, store));
+  }
+  if (!live && SHOW.test(text)) return reply('idle', {}, emptyCart(ctx));
 
   if (!live) return null;
 
@@ -251,6 +262,21 @@ function busy(product, code) {
   return (
     `Someone else is paying for *${product.title}* right now. If their payment doesn't go through, ` +
     `it'll be free again in about ${m} minute${m === 1 ? '' : 's'}. Send *BUY ${code}* then.`
+  );
+}
+
+// Where the codes are, and the store's page to find them on.
+function howToBuy(ctx, store) {
+  return (
+    `Which item would you like? Send *BUY* and the item's code${ctx.exampleCode ? `, e.g. *BUY ${ctx.exampleCode}*` : ''}. The code is under each item, and at the end of its link.` +
+    (ctx.storeUrl ? `\n\nEverything at ${store}: ${ctx.storeUrl}` : '')
+  );
+}
+
+function emptyCart(ctx) {
+  return (
+    "Your cart is empty. Send *BUY* and an item's code to add one. The code is under each item, and at the end of its link." +
+    (ctx.storeUrl ? `\n\nSee what's for sale: ${ctx.storeUrl}` : '')
   );
 }
 

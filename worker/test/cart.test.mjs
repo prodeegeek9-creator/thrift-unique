@@ -536,3 +536,43 @@ test('a reply to a Status post about an item somebody is paying for says so, not
     assert.equal(sb.tables.bot_conversations[0]?.draft?.items?.length ?? 0, 0, 'not added to a cart');
   } finally { restore(); }
 });
+
+test('"buy" on its own is told how to buy, with a real code and the store page', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    await say(msg('Buy'));
+    const text = last(sent);
+    assert.match(text, /Which item would you like\? Send \*BUY\* and the item's code, e\.g\. \*BUY (JKT001|BAG002)\*/);
+    assert.match(text, /Everything at Ada Shop: https:\/\/vendwyze\.test\/s\/shop/);
+    assert.equal(toBuyer(sent).at(-1).session, SESSION, 'from the store’s own number');
+
+    // More words than "buy" is a conversation, and stays the owner's.
+    const before = sent.length;
+    await say(msg('I want to buy something for my sister'));
+    assert.equal(sent.length, before);
+
+    // With a cart open, the cart is kept.
+    await say(msg('BUY JKT001'), msg('buy'));
+    assert.match(last(sent), /Which item would you like/);
+    await say(msg('cart'));
+    assert.match(last(sent), /Leather jacket \(JKT001\)/);
+    assert.equal(sb.tables.bot_conversations[0].state, 'cart');
+  } finally { restore(); }
+});
+
+test('"cart" with nothing in it says so, instead of nothing', async () => {
+  const { sent, restore } = setup();
+  try {
+    await say(msg('cart'));
+    assert.match(last(sent), /Your cart is empty\. Send \*BUY\* and an item's code/);
+    assert.match(last(sent), /See what's for sale: https:\/\/vendwyze\.test\/s\/shop/);
+  } finally { restore(); }
+});
+
+test('a Starter store: "buy" alone is still left for the owner', async () => {
+  const { sent, restore } = setup({ tier: 'starter', checkout: false });
+  try {
+    await say(msg('buy'), msg('cart'));
+    assert.equal(toBuyer(sent).length, 0);
+  } finally { restore(); }
+});
