@@ -91,6 +91,23 @@ export function declinedSellerMessage({ store, title, reason }) {
   return lines.join('\n');
 }
 
+// To the consignor, from the store's number, when their item sells.
+export function soldConsignorMessage({ store, title, owed }) {
+  return (
+    `🎉 Your *${title}* has sold!\n\n` +
+    `${store} owes you ${formatNaira(owed)} and will message you when it's paid.`
+  );
+}
+
+// To the consignor when the store marks them paid.
+export function paidConsignorMessage({ store, title, amount, note }) {
+  return (
+    `💸 ${store} has paid you ${formatNaira(amount)} for your *${title}*.` +
+    (note ? `\n\n${note}` : '') +
+    '\n\nThank you for selling with us! Send *SELL* any time to offer something else.'
+  );
+}
+
 // For the store owner, on the platform number, when an item arrives.
 export function newSubmissionMessage({ title, price, name, origin }) {
   return (
