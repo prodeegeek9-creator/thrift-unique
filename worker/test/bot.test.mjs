@@ -655,3 +655,35 @@ test('PASSWORD asks for a set-password link, and the menu offers it', async () =
   }
   assert.match(menuMessage({ tenant: { name: 'Shop' } }), /PASSWORD/);
 });
+
+// The Oluwafemi case: "list a new item", then the homepage's "Hi! I want to
+// set up my store." That text became the item's name and the bot then asked
+// for a price forever.
+test('a greeting mid-listing is never taken as the item name or a price', async () => {
+  const { step } = await import('../lib/bot.js');
+  const ctx = { tenant: { name: 'Oluwafemi', status: 'active', store_type: 'brand' } };
+
+  // Nothing entered yet: back to the menu, not an item called "Hi! …".
+  let r = step({ state: 'photo', draft: { images: [] }, updated_at: new Date().toISOString() }, { body: 'Hi! I want to set up my store.' }, ctx);
+  assert.equal(r.state, 'idle');
+  assert.equal(r.draft.title, undefined);
+  assert.match(r.replies[0], /Here's what you can do/);
+
+  // The "list a new item" text again just starts over.
+  r = step({ state: 'photo', draft: { images: [] }, updated_at: new Date().toISOString() }, { body: 'Hi! I want to list a new item.\nStore: oluwafemi' }, ctx);
+  assert.equal(r.state, 'photo');
+
+  // Part-way through: kept, and told where they are and how to stop.
+  const draft = { title: 'Oat Biscuit', images: [{ url: 'u', mimetype: 'image/jpeg' }] };
+  r = step({ state: 'price', draft, updated_at: new Date().toISOString() }, { body: 'hello' }, ctx);
+  assert.equal(r.state, 'price');
+  assert.deepEqual(r.draft, draft);
+  assert.match(r.replies[0], /middle of listing \*Oat Biscuit\*/);
+  assert.match(r.replies[0], /CANCEL/);
+
+  // A real price still works, and a name like "Hi-top sneakers" is still a name.
+  r = step({ state: 'price', draft, updated_at: new Date().toISOString() }, { body: '35k' }, ctx);
+  assert.equal(r.state, 'condition');
+  r = step({ state: 'title', draft: { images: draft.images }, updated_at: new Date().toISOString() }, { body: 'Hi-top sneakers' }, ctx);
+  assert.equal(r.draft.title, 'Hi-top sneakers');
+});

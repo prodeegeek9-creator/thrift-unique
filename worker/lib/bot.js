@@ -14,7 +14,7 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
-import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS } from './plans.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION } from './plans.js';
 
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
@@ -41,6 +41,11 @@ const CONDITIONS = [
 // menu, which answers greetings and anything else.
 export const CANCEL = /^(cancel|stop|quit|abort|never ?mind)\b/i;
 const START = /\b(list|sell|add|new item|post)\b/i;
+
+// Somebody who has lost track of a listing in progress: a greeting, the menu,
+// or the homepage's "Hi! I want to set up my store." Never taken as the answer
+// to whatever was being asked (see step()).
+const LOST = /^(hi|hello|hey|hiya|good (morning|afternoon|evening)|menu|help)\b|set ?up (my|a) store|open (my|a) store/i;
 
 // Words a seller types to mean "that is all the photos", which must not become
 // the item's name.
@@ -103,7 +108,7 @@ const SAY = {
   askPrice: 'How much? (e.g. 35000 or 35k)',
   askCondition:
     'What condition is it in?\n\n1 Brand new\n2 Excellent\n3 Good\n4 Fair\n\nReply with the number.',
-  badPrice: "I didn't catch a price there. Send the amount on its own — 35000, or 35k.",
+  badPrice: "I didn't catch a price there. Send the amount on its own — 35000, or 35k. (Reply *CANCEL* to stop.)",
   badCondition: 'Reply with 1, 2, 3 or 4.',
   cancelled: 'Cancelled. Nothing was posted.',
   nothingToCancel: "Nothing in progress. Say *list* when you're ready to add an item.",
@@ -133,11 +138,8 @@ export const MAX_BUSINESS_NAME = 60;
 // a store always names the text its owner actually said YES to.
 export const DISCLAIMER_VERSION = 'terms-v2';
 
-// Commission per plan, from the pricing table: the top of each range, since
-// the operator can lower a rate but raising one after acceptance would be
-// charging for something nobody agreed to. Business is negotiable, so it
-// starts at Growth's rate until the operator agrees another.
-export const COMMISSION = { starter: 8, growth: 7, business: 7 };
+// Commission per plan: see lib/plans.js.
+export { COMMISSION };
 
 const STORE_TYPES = [
   { value: 'consignment', words: ['1', 'thrift', 'thrift store', 'consignment', 'middleman'] },
@@ -454,6 +456,16 @@ export function step(conversation, message, ctx = {}) {
     return done(state === 'idle' ? SAY.nothingToCancel : SAY.cancelled);
   }
 
+  // A greeting mid-listing is somebody who has lost their place, not an item
+  // name or a price. With nothing entered yet there is nothing to lose: back
+  // to the menu (or a fresh start, for "I want to list a new item"). Otherwise
+  // say where they are. The title question is left alone: a name like
+  // "Hi-top sneakers" is a real answer there.
+  if (state !== 'idle' && state !== 'title' && !image && LOST.test(text)) {
+    if (!draft.title && !draft.images?.length) return idleStep(text, null, ctx);
+    return { state, draft, replies: [whereWeAre(state, draft)], action: null };
+  }
+
   switch (state) {
     case 'photo':
       return photoStep(draft, text, image, ctx);
@@ -468,6 +480,14 @@ export function step(conversation, message, ctx = {}) {
     default:
       return idleStep(text, image, ctx);
   }
+}
+
+function whereWeAre(state, draft) {
+  const ask = { photo: SAY.askPhoto, price: SAY.askPrice, condition: SAY.askCondition }[state] ?? 'Reply *YES* to post it.';
+  return (
+    `You're in the middle of listing${draft.title ? ` *${draft.title}*` : ' an item'}. ${ask}\n\n` +
+    'Reply *CANCEL* to stop and go back to the menu.'
+  );
 }
 
 function idleStep(text, image, ctx = {}) {
