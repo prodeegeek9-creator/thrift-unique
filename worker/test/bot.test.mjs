@@ -697,3 +697,20 @@ test('SHARE asks for the share kit, with or without a code, and the menu and lis
   assert.match(menuMessage(ctx), /SHARE code/);
   assert.match(listedMessage({ title: 'Boots', price: 1000, public_code: 'AB12' }, { origin: 'https://x.test' }), /Reply \*SHARE\*/);
 });
+
+test('LINK finds the buyer’s number however it is typed, and the price around it', async () => {
+  const { linkArgs } = await import('../lib/bot.js');
+  const cases = [
+    ['30k 08031234567', '2348031234567', '30k'],
+    ['08031234567 30k', '2348031234567', '30k'],
+    ['30k 0803 123 4567', '2348031234567', '30k'],
+    ['+234 803 123 4567 35,000', '2348031234567', '35,000'],
+    ['0803-123-4567', '2348031234567', ''],
+    ['35000', null, '35000'],
+    ['1500000 30k', null, '1500000 30k'],
+    ['', null, ''],
+  ];
+  for (const [text, phone, rest] of cases) {
+    assert.deepEqual(linkArgs(text), { phone, rest }, text);
+  }
+});

@@ -390,16 +390,18 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
   );
 }
 
-// A link to send a buyer in chat, at a price agreed there. The item comes off
-// sale when it is paid; the link lasts three days.
+// A link to send a buyer in chat, at a price agreed there, that only their
+// number can pay: a discount agreed with one buyer can't be forwarded to
+// another. The item comes off sale when it is paid; the link lasts three days.
 function PaymentLink({ tenantId, listingId, listedPrice }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState(listedPrice != null ? String(Number(listedPrice)) : '');
+  const [phone, setPhone] = useState('');
   const [made, setMade] = useState(null);
 
   const create = useMutation({
-    mutationFn: () => createPaymentLink(tenantId, listingId, price),
+    mutationFn: () => createPaymentLink(tenantId, listingId, price, phone),
     onSuccess: (result) => setMade(result),
     onError: (e) => toast(e.message, 'error'),
   });
@@ -427,7 +429,8 @@ function PaymentLink({ tenantId, listingId, listedPrice }) {
         <>
           <p className="mt-2 break-all rounded bg-surface-2 px-2 py-1.5 text-xs text-ink">{made.url}</p>
           <p className="mt-1 text-[11px] text-muted">
-            {formatNaira(made.price)} · works for 3 days · the item comes off sale once it's paid
+            {formatNaira(made.price)} · only the number ending {made.buyer_last4} can pay it · works for 3 days · the
+            item comes off sale once it's paid
           </p>
           <div className="mt-2 flex gap-2">
             <button
@@ -453,19 +456,28 @@ function PaymentLink({ tenantId, listingId, listedPrice }) {
           </div>
         </>
       ) : (
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <input
             inputMode="decimal"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
             aria-label="Agreed price"
-            className={`${INPUT} flex-1`}
+            placeholder="Price"
+            className={`${INPUT} min-w-0 flex-1`}
+          />
+          <input
+            inputMode="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            aria-label="Buyer's WhatsApp number"
+            placeholder="Buyer's number"
+            className={`${INPUT} min-w-0 flex-1`}
           />
           <button
             type="button"
-            disabled={create.isPending}
+            disabled={create.isPending || !phone.trim()}
             onClick={() => create.mutate()}
-            className="rounded-pill bg-green px-4 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-pill bg-green px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
           >
             {create.isPending ? 'Making…' : 'Make link'}
           </button>

@@ -14,6 +14,7 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
+import { normalizeNumber } from './phone.js';
 import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION, CONFIRM_WINDOW_DAYS } from './plans.js';
 
 export const MAX_IMAGES = 4;
@@ -461,10 +462,11 @@ export function savedMessage(product) {
   );
 }
 
-export function paymentLinkMessage({ title, price, url }) {
+export function paymentLinkMessage({ title, price, url, phone }) {
   return (
     `💳 Payment link for *${title}* — ${formatNaira(price)}:\n${url}\n\n` +
-    'Send it to the buyer. It works for 3 days, and the item comes off sale as soon as it is paid.'
+    (phone ? `Only the buyer on the number ending ${String(phone).slice(-4)} can pay it. ` : '') +
+    'Send it to them. It works for 3 days, and the item comes off sale as soon as it is paid.'
   );
 }
 
@@ -545,19 +547,26 @@ function idleStep(text, image, ctx = {}) {
     };
   }
 
-  // "LINK JBU4PE 30k": a payment link for a price agreed in chat. Before the
-  // menu words, since a bare "link" is the store page.
+  // "LINK JBU4PE 30k 08031234567": a payment link for a price agreed in chat,
+  // for that buyer's number alone (lib/paylinks.js). Before the menu words,
+  // since a bare "link" is the store page.
   const pay = MENU_PAYLINK.exec(text);
   if (pay) {
-    const price = pay[2] ? parsePrice(pay[2]) : null;
-    if (pay[2] && price == null) {
-      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k*, or leave the price off to use the listed one.");
+    const { phone, rest } = linkArgs(pay[2] ?? '');
+    if (!phone) {
+      return done(
+        "Add the buyer's WhatsApp number, so only they can pay it: e.g. *LINK JBU4PE 30k 08031234567*. Leave the price out to use the listed one."
+      );
+    }
+    const price = rest ? parsePrice(rest) : null;
+    if (rest && price == null) {
+      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k 08031234567*, or leave the price out to use the listed one.");
     }
     return {
       state: 'idle',
       draft: {},
       replies: [],
-      action: { type: 'payment_link', code: pay[1].toUpperCase(), price },
+      action: { type: 'payment_link', code: pay[1].toUpperCase(), price, phone },
     };
   }
 
@@ -585,6 +594,21 @@ function idleStep(text, image, ctx = {}) {
 // mistaken for a request.
 
 const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
+// What follows LINK and the code: a phone number, however it is spaced, and
+// perhaps a price. A number has at least ten digits, which no price here has.
+export function linkArgs(text) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i += 1) {
+    for (let j = words.length; j > i; j -= 1) {
+      const joined = words.slice(i, j).join('');
+      if (!/^\+?[\d-]+$/.test(joined) || joined.replace(/\D/g, '').length < 10) continue;
+      const phone = normalizeNumber(joined);
+      if (phone) return { phone, rest: [...words.slice(0, i), ...words.slice(j)].join(' ') };
+    }
+  }
+  return { phone: null, rest: words.join(' ') };
+}
+
 const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s+(.+))?$/i;
 const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
 const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
@@ -606,7 +630,7 @@ export function menuMessage(ctx = {}) {
     lines.push(`📥 *REVIEW* for items people sent you${pending ? ` (${pending} waiting)` : ''}`);
   }
   lines.push(
-    '💳 *LINK code price* for a payment link to send a buyer (e.g. LINK JBU4PE 30k)',
+    "💳 *LINK code price number* for a payment link only that buyer can pay (e.g. LINK JBU4PE 30k 08031234567)",
     '📣 *SHARE code* for a photo and caption to post on Instagram, TikTok or Facebook',
     '💻 *DASHBOARD* to manage listings, orders and payouts',
     '🔑 *PASSWORD* for a link to set a new dashboard password',

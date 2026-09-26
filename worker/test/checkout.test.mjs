@@ -175,18 +175,40 @@ test('a store makes a payment link at an agreed price, and the buyer pays exactl
     const refused = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-stranger'), E(), {});
     assert.equal(refused.status, 403);
 
-    const made = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-owner'), E(), {});
+    // Only with the buyer's number: the link is theirs alone.
+    const noNumber = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-owner'), E(), {});
+    assert.equal(noNumber.status, 400);
+    assert.match((await noNumber.json()).error, /buyer's WhatsApp number/);
+
+    const made = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k', phone: '0803 123 4567' }, 'tok-owner'), E(), {});
     assert.equal(made.status, 200);
-    const { url, price } = await made.json();
+    const { url, price, buyer_last4 } = await made.json();
     assert.equal(price, 30000);
+    assert.equal(buyer_last4, '4567');
     const token = url.match(/^https:\/\/uniquethrift\.ng\/pay\/(.+)$/)[1];
+
+    // The number itself is not in the link, only a fingerprint and its end.
+    const claims = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
+    assert.equal(JSON.stringify(claims).includes('8031234567'), false);
+    assert.equal(claims.l, '4567');
 
     const view = await (await worker.fetch(get(`/api/checkout/link/${token}`), E(), {})).json();
     assert.equal(view.price, 30000);
     assert.equal(view.title, 'Leather Jacket');
     assert.equal(view.store.name, 'Unique Thrift');
+    assert.equal(view.buyer_last4, '4567');
 
-    const res = await worker.fetch(post('/api/checkout', { token, ...BUYER }), E(), {});
+    // Forwarded to somebody else: refused, and nothing is held for them.
+    const other = await worker.fetch(post('/api/checkout', { token, ...BUYER, phone: '0805 555 1234' }), E(), {});
+    assert.equal(other.status, 403);
+    const why = await other.json();
+    assert.equal(why.other_buyer, true);
+    assert.match(why.error, /made for another buyer \(the number ending 4567\)/);
+    assert.equal(supabase.tables.orders.length, 0);
+    assert.equal(supabase.tables.products[0].held_until, undefined);
+
+    // The buyer it was made for, however they type their number.
+    const res = await worker.fetch(post('/api/checkout', { token, ...BUYER, phone: '+234 803 123 4567' }), E(), {});
     assert.equal(res.status, 200);
     assert.equal(supabase.tables.orders[0].amount, 30000);
     assert.equal(supabase.tables.orders[0].source_channel, 'whatsapp');
@@ -362,11 +384,16 @@ test('an owner asks the bot for a payment link', async () => {
   });
   const e = E({ WAHA_WEBHOOK_SECRET: 'secret' });
   try {
-    await worker.fetch(hook('LINK jbu4pe 30k', 'm1'), e, {});
+    // Without the buyer's number, the owner is asked for it.
+    await worker.fetch(hook('LINK jbu4pe 30k', 'm0'), e, {});
+    assert.match(sent.at(-1).text, /Add the buyer's WhatsApp number/);
+
+    await worker.fetch(hook('LINK jbu4pe 30k 0803 123 4567', 'm1'), e, {});
     assert.match(sent.at(-1).text, /Payment link for \*Leather Jacket\* — ₦30,000/);
     assert.match(sent.at(-1).text, /https:\/\/uniquethrift\.ng\/pay\//);
+    assert.match(sent.at(-1).text, /Only the buyer on the number ending 4567 can pay it/);
 
-    await worker.fetch(hook('link ZZZZ99', 'm2'), e, {});
+    await worker.fetch(hook('link ZZZZ99 08031234567', 'm2'), e, {});
     assert.match(sent.at(-1).text, /can't find an item with the code \*ZZZZ99\*/);
 
     // A bare "link" is still the store page.

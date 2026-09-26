@@ -2,6 +2,7 @@ import { config, require_, originOf } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { verify } from '../lib/sign.js';
+import { linkIsFor } from '../lib/paylinks.js';
 import { initializeTransaction, fetchTransaction } from '../lib/paystack.js';
 import { koboToNaira, nairaToKobo } from '../lib/money.js';
 import { markPaid, oweSeller, byPaymentRef } from '../lib/orders.js';
@@ -66,7 +67,9 @@ async function readLink(env, token) {
   // Sold is an answer the link's page shows, not an error: "Paid".
   if (found.sold) return json({ error: 'This item has been paid for.', sold: true }, 409);
   if (found.error) return json({ error: found.error }, found.status);
-  return json({ ...publicView(found), price: claims.a });
+  // Whose it is, by the last four digits of their number, so the right buyer
+  // can see it's theirs and anybody else that it isn't.
+  return json({ ...publicView(found), price: claims.a, buyer_last4: claims.l ?? null });
 }
 
 // ── STARTING A PAYMENT ───────────────────────────────────────────────────────
@@ -84,9 +87,10 @@ async function start(request, env) {
   // the agreed price a payment link carries.
   let price;
   let found;
+  let claims = null;
   let source = 'direct';
   if (body.token) {
-    const claims = await verify(cfg.tokenSecret, String(body.token));
+    claims = await verify(cfg.tokenSecret, String(body.token));
     if (!claims || claims.k !== 'pay') return json({ error: 'This payment link has expired or is not valid.' }, 410);
     found = await buyable(cfg, { id: claims.p });
     price = Number(claims.a);
@@ -109,6 +113,16 @@ async function start(request, env) {
   if (address.length < 5 || address.length > 300) return json({ error: 'Enter the delivery address.' }, 400);
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "That email doesn't look right." }, 400);
   if (!Number.isFinite(price) || price <= 0) return json({ error: 'This item has no price.' }, 409);
+
+  // A payment link is for the buyer the store agreed the price with
+  // (lib/paylinks.js). Checked before anything is held, so a forwarded link
+  // can't keep the item from the person it was made for.
+  if (claims && !(await linkIsFor(cfg, claims, phone))) {
+    return json({
+      error: `This payment link was made for another buyer${claims.l ? ` (the number ending ${claims.l})` : ''}. Message the store if you'd like to buy this.`,
+      other_buyer: true,
+    }, 403);
+  }
 
   const buyer = await db(cfg).insert(
     'buyers',

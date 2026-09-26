@@ -387,9 +387,9 @@ async function sendPasswordLink(cfg, tenant, chat) {
   );
 }
 
-// "LINK JBU4PE 30k" from a store owner: a checkout link for one of their
-// items, at the agreed price or the listed one.
-async function sendPaymentLink(cfg, tenant, chat, { code, price }) {
+// "LINK JBU4PE 30k 08031234567" from a store owner: a checkout link for one
+// of their items, at the agreed price or the listed one, for that buyer.
+async function sendPaymentLink(cfg, tenant, chat, { code, price, phone }) {
   if (!cfg.tokenSecret || !cfg.paystackKey) {
     await say(cfg, tenant, chat, "Online payment isn't set up yet, so I can't make payment links. We'll let you know when it is.");
     return;
@@ -411,8 +411,8 @@ async function sendPaymentLink(cfg, tenant, chat, { code, price }) {
     return;
   }
   const amount = price ?? Number(product.price);
-  const url = await makePaymentLink(cfg, product, amount);
-  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url }));
+  const url = await makePaymentLink(cfg, product, amount, { phone });
+  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url, phone }));
 }
 
 // What the product actually becomes.

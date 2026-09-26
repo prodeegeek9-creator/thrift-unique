@@ -73,6 +73,14 @@ export default function PayLink() {
                   <p className="text-2xl font-semibold text-ink">{formatNaira(state.link.price)}</p>
                 </div>
               </div>
+              {/* A link is for the buyer the store agreed the price with, and
+                  only their number can pay it (worker/lib/paylinks.js). */}
+              {state.link.buyer_last4 ? (
+                <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+                  This link is for the buyer on the WhatsApp number ending{' '}
+                  <span className="font-semibold text-ink">{state.link.buyer_last4}</span>. Pay with that number.
+                </p>
+              ) : null}
               {state.link.held_minutes && !paying ? (
                 <PaymentInProgress
                   minutes={state.link.held_minutes}

@@ -686,7 +686,8 @@ without a network, WAHA or Paystack):
   starting with SELL; the store reviews them under "Items to review", sets its
   price and approves; the seller is told on WhatsApp.
 - **The owner's menu** on the platform number: STORE, REVIEW, DASHBOARD, and
-  `LINK <code> <price>` for a payment link.
+  `LINK <code> <price> <buyer's number>` for a payment link only that buyer
+  can pay.
 - **Public pages**: homepage, store pages, product pages (above).
 - **Checkout**: Buy now and payment links → Paystack → order paid, item off
   sale, owner and buyer told on WhatsApp, escrow link for escrow plans.
@@ -871,9 +872,16 @@ in this order, before Paystack is switched to live (item 4 below).
    one, and the overview warns if the check failed or hasn't run in over a
    day. Paystack's list endpoints are paged 100 at a time; a week with more
    than 5,000 payments stops the check with an error rather than check part.
-6. **Payment links for one buyer (to decide).** A link carries a price agreed
-   in chat, often a discount, and today anyone it is forwarded to can pay it.
-   Should it only work for the phone number it was made for?
+6. **Payment links for one buyer.** *Done* (`worker/lib/paylinks.js`). A
+   link carries a price agreed in chat, often a discount, so it now works only
+   for the buyer's WhatsApp number it was made for: `LINK JBU4PE 30k
+   08031234567` on WhatsApp, or the number field beside the price in the
+   dashboard. The link holds an HMAC fingerprint of the number, not the
+   number (a link's contents are readable by whoever has it), and its last
+   four digits, which its page shows so the right buyer knows it's theirs.
+   Any other number is refused at Pay before the item is held, so a forwarded
+   link can't keep it from the buyer it was meant for. Links sent before this
+   change name no buyer and keep working until they expire, three days on.
 
 Considered and not doing:
 

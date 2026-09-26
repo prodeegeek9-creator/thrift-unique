@@ -4,6 +4,7 @@ import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { postToStatus } from './waha.js';
 import { makePaymentLink } from '../lib/paylinks.js';
+import { normalizeNumber } from '../lib/phone.js';
 import { parsePrice } from '../lib/bot.js';
 
 // Listing actions that need the Worker.
@@ -102,6 +103,10 @@ async function paymentLink(request, env) {
     body?.price == null || body.price === '' ? Number(product.price) : parsePrice(String(body.price));
   if (price == null) return json({ error: 'Enter a price, e.g. 30000 or 30k.' }, 400);
 
-  const url = await makePaymentLink(cfg, product, price);
-  return json({ ok: true, url, price });
+  // For one buyer: only this number can pay it (lib/paylinks.js).
+  const phone = normalizeNumber(body?.phone);
+  if (!phone) return json({ error: "Enter the buyer's WhatsApp number, e.g. 08031234567. Only they will be able to pay." }, 400);
+
+  const url = await makePaymentLink(cfg, product, price, { phone });
+  return json({ ok: true, url, price, buyer_last4: phone.slice(-4) });
 }
