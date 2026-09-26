@@ -8,11 +8,12 @@ import { keys } from '../lib/queryKeys.js';
 
 // Refunding a buyer from the order screen, and what became of it.
 //
-// Before anything moves, the Worker says what the refund would cost the store:
-// nothing if it hasn't been paid for the sale yet, or what it received, taken
-// from its next payouts, if it has. See worker/lib/refunds.js.
+// Only while Vendwyze still holds the payment: in escrow, or before the store's
+// payout has gone out. After that the buyer opens a dispute. The buyer gets
+// back what they paid less Paystack's processing fee, which Paystack keeps on
+// a refund. See worker/lib/refunds.js.
 
-const PAID = ['paid', 'escrow', 'completed', 'processing'];
+const HELD = (o) => o.escrow_status === 'held' || (o.escrow_status === 'none' && ['paid', 'processing'].includes(o.status));
 
 const STATUS = {
   pending: { tone: 'bg-amber-lt text-amber', text: 'Refund on its way to the buyer.' },
@@ -33,7 +34,7 @@ export default function RefundCard({ tenantId, order, canRefund }) {
 
   if (!canRefund || isLoading) return null;
   if (refund) return <RefundStatus refund={refund} />;
-  if (!order.paid_at || !PAID.includes(order.status)) return null;
+  if (!order.paid_at || !HELD(order)) return null;
   return <RefundForm tenantId={tenantId} order={order} />;
 }
 
@@ -48,10 +49,10 @@ function RefundStatus({ refund }) {
           <dt className="text-muted">Back to the buyer</dt>
           <dd className="text-ink">{formatNaira(refund.amount)}</dd>
         </div>
-        {Number(refund.store_debt) > 0 ? (
+        {Number(refund.fee) > 0 ? (
           <div className="flex justify-between">
-            <dt className="text-muted">From your next payouts</dt>
-            <dd className="text-ink">{formatNaira(refund.store_debt)}</dd>
+            <dt className="text-muted">Paystack's fee (kept by Paystack)</dt>
+            <dd className="text-ink">{formatNaira(refund.fee)}</dd>
           </div>
         ) : null}
       </dl>
@@ -96,7 +97,8 @@ function RefundForm({ tenantId, order }) {
       <div className="card p-4">
         <h2 className="text-sm font-semibold text-ink">Refund</h2>
         <p className="mt-1 text-xs text-muted">
-          Give the buyer their {formatNaira(order.amount)} back, for example if the item is no longer available.
+          Give the buyer their money back, for example if the item is no longer available. Possible until the payment
+          is released to you.
         </p>
         <button
           type="button"
@@ -123,13 +125,23 @@ function RefundForm({ tenantId, order }) {
         <p className="text-xs text-red">{p?.reason ?? "This order can't be refunded."}</p>
       ) : (
         <>
-          <p className="text-sm text-ink">
-            {formatNaira(p.amount)} goes back to the buyer's card or account.
-          </p>
-          <p className={`rounded-lg px-3 py-2 text-xs ${p.store_debt > 0 ? 'bg-amber-lt text-amber' : 'bg-green-lt text-green'}`}>
-            {p.store_debt > 0
-              ? `You've already been paid ${formatNaira(p.store_debt)} for this sale. It will come out of your next payouts.`
-              : "You haven't been paid for this sale yet, so nothing comes out of your payouts."}
+          <dl className="space-y-1 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-muted">Buyer paid</dt>
+              <dd className="text-ink">{formatNaira(p.paid)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted">Paystack's fee</dt>
+              <dd className="text-ink">{p.fee == null ? 'worked out on refund' : `−${formatNaira(p.fee)}`}</dd>
+            </div>
+            <div className="flex justify-between font-semibold">
+              <dt className="text-ink">Back to the buyer</dt>
+              <dd className="text-ink">{p.amount == null ? 'paid less the fee' : formatNaira(p.amount)}</dd>
+            </div>
+          </dl>
+          <p className="rounded-lg bg-green-lt px-3 py-2 text-xs text-green">
+            You haven't been paid for this sale yet, so nothing comes out of your payouts. Paystack keeps its fee on a
+            refund, so the buyer carries that.
           </p>
 
           <label className="block">
@@ -161,7 +173,7 @@ function RefundForm({ tenantId, order }) {
             onClick={() => send.mutate()}
             className="rounded-pill bg-red px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
           >
-            {send.isPending ? 'Refunding…' : `Refund ${formatNaira(p.amount)}`}
+            {send.isPending ? 'Refunding…' : p.amount == null ? 'Refund buyer' : `Refund ${formatNaira(p.amount)}`}
           </button>
         ) : null}
         <button type="button" onClick={() => setOpen(false)} className="px-2 text-xs text-muted hover:text-text">

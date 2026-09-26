@@ -13,7 +13,7 @@ import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js'
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
-import { refundOrder, retryRefund, RefundError } from '../lib/refunds.js';
+import { refundOrder, refundPreview, retryRefund, RefundError } from '../lib/refunds.js';
 
 // The platform-operator console's API.
 //
@@ -283,7 +283,7 @@ async function tenantView(cfg, tenantId) {
     ),
     db(cfg).select(
       'payouts',
-      `tenant_id=eq.${tenantId}&select=id,amount,commission,withheld,status,reference,failure_reason,attempts,sent_at,paid_at,created_at` +
+      `tenant_id=eq.${tenantId}&select=id,amount,commission,status,reference,failure_reason,attempts,sent_at,paid_at,created_at` +
         '&order=created_at.desc&limit=20'
     ),
     db(cfg).select(
@@ -731,17 +731,24 @@ async function resolveDispute(request, cfg, op, disputeId) {
     moved = released ? 'released' : null;
   }
 
-  // A refund goes back to the buyer's card through Paystack (lib/refunds.js).
-  // It moves money that cannot be pulled back, so it takes an owner, like
-  // everything else in the console that moves money out.
+  // A refund goes back to the buyer's card through Paystack (lib/refunds.js),
+  // and only while Vendwyze still holds the payment. Once it has been released
+  // to the store, deciding for the buyer records the decision and the store
+  // and buyer settle it between them. Moving money that cannot be pulled back
+  // takes an owner.
   if (outcome === 'refunded' && order && order.status !== 'refunded') {
-    if (op.level !== 'owner') return json({ error: 'A refund needs an owner on the admin team.' }, 403);
-    try {
-      const refund = await refundOrder(cfg, order, { reason: resolution ?? 'Dispute resolved for the buyer', via: 'dispute', by: op.userId });
-      moved = refund.status === 'failed' ? 'refund_failed' : 'refunded';
-    } catch (err) {
-      if (err instanceof RefundError) return json({ error: err.message }, err.status);
-      throw err;
+    const preview = await refundPreview(cfg, order);
+    if (!preview.refundable) {
+      moved = 'recorded';
+    } else {
+      if (op.level !== 'owner') return json({ error: 'A refund needs an owner on the admin team.' }, 403);
+      try {
+        const refund = await refundOrder(cfg, order, { reason: resolution ?? 'Dispute resolved for the buyer', via: 'dispute', by: op.userId });
+        moved = refund.status === 'failed' ? 'refund_failed' : 'refunded';
+      } catch (err) {
+        if (err instanceof RefundError) return json({ error: err.message }, err.status);
+        throw err;
+      }
     }
   }
 
@@ -774,7 +781,7 @@ async function resolveDispute(request, cfg, op, disputeId) {
 async function listRefunds(cfg) {
   const rows = await db(cfg).select(
     'refunds',
-    'select=id,tenant_id,order_id,amount,reason,status,failure_reason,store_debt,requested_via,created_at,processed_at,' +
+    'select=id,tenant_id,order_id,paid,fee,amount,reason,status,failure_reason,requested_via,created_at,processed_at,' +
       'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
   );
   const names = await tenantNames(cfg, rows.map((r) => r.tenant_id));
@@ -793,7 +800,8 @@ async function retryRefundRoute(cfg, op, refundId) {
 }
 
 // POST /api/admin/orders/:id/refund { reason, relist? }: from the release
-// queue, for a held payment that should go back rather than on.
+// queue, for a held payment that should go back to the buyer rather than on
+// to the store.
 async function refundFromConsole(request, cfg, op, orderId) {
   const body = await request.json().catch(() => ({}));
   const reason = String(body?.reason ?? '').trim();
@@ -810,9 +818,9 @@ async function refundFromConsole(request, cfg, op, orderId) {
     await audit(cfg, op.userId, 'refund.create', {
       tenantId: order.tenant_id,
       subject: order.order_code,
-      detail: { amount: refund.amount, store_debt: refund.store_debt, status: refund.status, reason },
+      detail: { paid: refund.paid, fee: refund.fee, amount: refund.amount, status: refund.status, reason },
     });
-    return json({ ok: true, status: refund.status, store_debt: refund.store_debt });
+    return json({ ok: true, status: refund.status, amount: refund.amount, fee: refund.fee });
   } catch (err) {
     if (err instanceof RefundError) return json({ error: err.message }, err.status);
     throw err;

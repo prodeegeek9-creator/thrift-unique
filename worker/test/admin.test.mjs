@@ -255,9 +255,12 @@ test('resolving for the seller releases the hold', async () => {
   } finally { restore(); }
 });
 
-test('resolving for the buyer refunds their card through Paystack and pays nobody', async () => {
+test('resolving for the buyer refunds their card, less Paystack’s fee, and pays nobody', async () => {
   const refunds = [];
   const { sb, restore } = ctx({
+    // What Paystack says the buyer paid, and its fee on it.
+    paystackAmountKobo: 3_500_000,
+    paystackFeesKobo: 62_500,
     paystack: async (url, init) => {
       if (url.endsWith('/refund')) {
         refunds.push(JSON.parse(init.body));
@@ -279,15 +282,15 @@ test('resolving for the buyer refunds their card through Paystack and pays nobod
     assert.equal(sb.tables.orders[0].status, 'refunded');
     assert.equal(sb.tables.payouts.length, 0, 'a refund paid the seller');
 
-    // The whole payment back to the card it came from.
+    // Back to the card it came from, less Paystack's fee, which Paystack keeps.
     assert.equal(refunds.length, 1);
     assert.equal(refunds[0].transaction, 'REF-9');
-    assert.equal(refunds[0].amount, undefined, 'a full refund names no amount');
+    assert.equal(refunds[0].amount, 3_437_500);
 
     const refund = sb.tables.refunds[0];
     assert.equal(refund.status, 'pending');
     assert.equal(refund.paystack_refund_id, '555');
-    assert.equal(refund.store_debt, 0, 'the store was never paid, so it owes nothing');
+    assert.equal(refund.fee, 625);
     assert.equal(refund.requested_via, 'dispute');
 
     const entry = sb.tables.operator_audit.at(-1);

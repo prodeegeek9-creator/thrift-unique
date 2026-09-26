@@ -7,9 +7,9 @@ import { fetchRefunds, retryRefund } from '../../lib/admin.js';
 import { formatNaira } from '../../lib/money.js';
 import { dateTime } from '../../lib/time.js';
 
-// Every refund on the platform: who asked for it, whether it reached the
-// buyer's card, and what the store owes back. A failed one (usually the
-// Paystack balance was short) is retried from here by an owner.
+// Every refund on the platform: who asked for it, what went back to the buyer
+// after Paystack's fee, and whether it reached their card. A failed one
+// (usually the Paystack balance was short) is retried from here by an owner.
 
 // Colours come from StatusPill's own map; only the words differ.
 const LABEL = {
@@ -58,8 +58,9 @@ export default function AdminRefunds({ operator }) {
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
                   <th className="px-4 py-2.5 font-medium">Order</th>
                   <th className="px-4 py-2.5 font-medium">Store</th>
-                  <th className="px-4 py-2.5 font-medium">Amount</th>
-                  <th className="px-4 py-2.5 font-medium">Store owes</th>
+                  <th className="px-4 py-2.5 font-medium">Paid</th>
+                  <th className="px-4 py-2.5 font-medium">Paystack fee</th>
+                  <th className="px-4 py-2.5 font-medium">Refunded</th>
                   <th className="px-4 py-2.5 font-medium">From</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
                   <th className="px-4 py-2.5 font-medium">When</th>
@@ -75,10 +76,11 @@ export default function AdminRefunds({ operator }) {
                         {r.reason ? <span className="block max-w-[220px] truncate text-[11px] font-normal text-muted">{r.reason}</span> : null}
                       </td>
                       <td className="px-4 py-3">{r.tenant_name ?? '—'}</td>
-                      <td className="whitespace-nowrap px-4 py-3 tabular-nums">{formatNaira(r.amount)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">{formatNaira(r.paid)}</td>
                       <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">
-                        {Number(r.store_debt) > 0 ? formatNaira(r.store_debt) : '—'}
+                        {Number(r.fee) > 0 ? `−${formatNaira(r.fee)}` : '—'}
                       </td>
+                      <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{formatNaira(r.amount)}</td>
                       <td className="px-4 py-3 text-muted">{VIA[r.requested_via] ?? r.requested_via}</td>
                       <td className="px-4 py-3">
                         <StatusPill status={r.status} label={LABEL[r.status] ?? r.status} />

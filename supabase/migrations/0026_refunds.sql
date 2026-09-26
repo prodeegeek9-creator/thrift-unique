@@ -1,24 +1,22 @@
 -- Refunds: money going back to a buyer's card through Paystack.
 --
--- Full refunds only, one per order: every order is one item, and a partial
--- refund of a single secondhand item is a conversation, not a feature.
+-- Only while Vendwyze still holds the payment: held in escrow, or (without
+-- escrow) before the store's payout has been sent. Once the payment has been
+-- released to the store there is no refund; the buyer opens a dispute. So a
+-- refund never takes money back from a store.
 --
--- Where the money comes from depends on where it is when the refund is made:
---
---   still with the platform   (held in escrow, or the store's payout not yet
---                              sent)  the payout is cancelled; the store was
---                              never paid, so it owes nothing
---   already paid to the store the store owes back what it received, and that
---                              is withheld from its next payouts
---
--- The platform waives its commission on a refunded sale and absorbs Paystack's
--- fee: the buyer gets back exactly what they paid.
+-- Full refunds only, one per order, less Paystack's processing fee: Paystack
+-- keeps its fee on a refund, and that cost is the buyer's, not the store's or
+-- the platform's. Vendwyze waives its commission on a refunded sale.
 
 create table public.refunds (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants(id) on delete cascade,
   -- One refund per order. A failed one is retried in place, not duplicated.
   order_id uuid not null unique references public.orders(id) on delete cascade,
+  -- What the buyer paid, Paystack's fee on it, and what goes back (paid - fee).
+  paid numeric(12, 2) not null check (paid > 0),
+  fee numeric(12, 2) not null default 0 check (fee >= 0),
   amount numeric(12, 2) not null check (amount > 0),
   reason text,
   -- pending/processing: Paystack has it. processed: back on the buyer's card.
@@ -27,8 +25,6 @@ create table public.refunds (
     check (status in ('pending', 'processing', 'processed', 'failed')),
   paystack_refund_id text,
   failure_reason text,
-  -- What the store had already been paid for this sale and now owes back.
-  store_debt numeric(12, 2) not null default 0 check (store_debt >= 0),
   requested_by uuid references auth.users(id) on delete set null,
   requested_via text not null check (requested_via in ('store', 'operator', 'dispute')),
   created_at timestamptz not null default now(),
@@ -46,17 +42,5 @@ create policy "managers read refunds" on public.refunds
     public.has_tenant_role(tenant_id, array['owner', 'manager']::staff_role[])
   );
 
--- What a store owes the platform from refunds of sales it had already been
--- paid for. Taken out of its next payouts. Not in the column grant from 0022,
--- so no store can write it.
-alter table public.tenants
-  add column if not exists owed_to_platform numeric(12, 2) not null default 0
-    check (owed_to_platform >= 0);
-
--- How much of a payout was kept back toward that debt. The store sees it, so a
--- smaller transfer than the sale explains itself.
-alter table public.payouts
-  add column if not exists withheld numeric(12, 2) not null default 0 check (withheld >= 0);
-
--- A payout for a sale that was refunded before the money left.
+-- A store's payout for a sale refunded before the payout was sent.
 alter type payout_status add value if not exists 'cancelled';

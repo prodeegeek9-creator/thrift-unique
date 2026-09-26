@@ -197,6 +197,7 @@ export function installFetch({
   supabase,
   paystackAmountKobo = null,
   paystackStatus = 'success',
+  paystackFeesKobo = 0,
   tokens = {},
   waha = null,
   // Any other Paystack call (initialize, transfers): (url, init) => Response.
@@ -234,7 +235,7 @@ export function installFetch({
     if (url.startsWith('https://api.paystack.co/transaction/verify/')) {
       if (paystackAmountKobo == null) return new Response('nope', { status: 404 });
       return new Response(
-        JSON.stringify({ status: true, data: { amount: paystackAmountKobo, status: paystackStatus } }),
+        JSON.stringify({ status: true, data: { amount: paystackAmountKobo, fees: paystackFeesKobo, status: paystackStatus } }),
         { status: 200 }
       );
     }

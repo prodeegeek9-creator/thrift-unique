@@ -154,7 +154,7 @@ function ActionDialog({ order, kind, pending, onCancel, onConfirm }) {
         <p className="mt-1 text-sm text-muted">
           {order.order_code} · {order.tenant_name}.{' '}
           {refund
-            ? 'The buyer gets it all back on their card through Paystack; the store gets nothing and owes nothing.'
+            ? "The buyer gets it back on their card through Paystack, less Paystack's processing fee, which Paystack keeps. The store gets nothing and owes nothing."
             : `The seller receives ${formatNaira(order.seller_receives)}.`}{' '}
           This cannot be undone.
         </p>

@@ -5,14 +5,15 @@ import worker from '../index.js';
 import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
 import { releaseEscrow } from '../lib/orders.js';
 
-// Refunds: the buyer gets back exactly what they paid, through Paystack. What
-// the store gives up depends on whether it had been paid for the sale yet.
+// Refunds: only while Vendwyze still holds the payment, and the buyer gets
+// back what they paid less Paystack's processing fee, which Paystack keeps.
+// A refund never takes money back from a store.
 
 const TENANT = 'aaaaaaaa-0000-0000-0000-00000000000a';
 const ORDER = 'cccccccc-0000-0000-0000-00000000000c';
-const OTHER = 'cccccccc-0000-0000-0000-00000000000d';
 const PAYOUT = 'bbbbbbbb-0000-0000-0000-00000000000b';
 const PRODUCT = 'dddddddd-0000-0000-0000-00000000000d';
+const DISPUTE = 'ffffffff-0000-0000-0000-00000000000f';
 
 const OWNER = { id: 'user-owner', email: 'owner@store.test' };
 const STAFF = { id: 'user-staff', email: 'staff@store.test' };
@@ -20,7 +21,15 @@ const OPERATOR = { id: 'user-op', email: 'op@platform.test' };
 const SUPPORT = { id: 'user-support', email: 'support@platform.test' };
 const TOKENS = { 'tok-owner': OWNER, 'tok-staff': STAFF, 'tok-op': OPERATOR, 'tok-support': SUPPORT };
 
+// ₦35,000 paid; Paystack's fee on it ₦625.
+const PAID_KOBO = 3_500_000;
+const FEE_KOBO = 62_500;
+
 const paidAt = new Date(Date.now() - 3 * 86_400_000).toISOString();
+const CFG = { supabaseUrl: 'https://test.supabase.co', serviceKey: 'service-key-for-tests' };
+
+const HELD = { status: 'escrow', escrow_status: 'held' };
+const RELEASED = { status: 'completed', escrow_status: 'released' };
 
 function order(extra = {}) {
   return {
@@ -30,11 +39,10 @@ function order(extra = {}) {
   };
 }
 
-// payout: null (none yet), or the status of the payout made for the order.
-function seed({ orderExtra = {}, payout = null, withheld = 0, owed = 0, product = 'sold' } = {}) {
+// payout: null (none), or the status of the payout made for the order.
+function seed({ orderExtra = {}, payout = null, product = 'sold' } = {}) {
   return {
-    tenants: [{ id: TENANT, slug: 'store', name: 'Store', status: 'active', commission_pct: 8,
-      whatsapp_number: '2348000000000', owed_to_platform: owed }],
+    tenants: [{ id: TENANT, slug: 'store', name: 'Store', status: 'active', commission_pct: 8, whatsapp_number: '2348000000000' }],
     tenant_members: [
       { tenant_id: TENANT, user_id: OWNER.id, role: 'owner' },
       { tenant_id: TENANT, user_id: STAFF.id, role: 'staff' },
@@ -43,10 +51,9 @@ function seed({ orderExtra = {}, payout = null, withheld = 0, owed = 0, product 
     orders: [order(orderExtra)],
     products: [{ id: PRODUCT, tenant_id: TENANT, title: 'Leather jacket', status: product, sold_at: paidAt }],
     buyers: [{ id: 'buyer-1', tenant_id: TENANT, name: 'Ada', phone: '2348011111111' }],
-    payouts: payout
-      ? [{ id: PAYOUT, tenant_id: TENANT, amount: 32200 - withheld, withheld, commission: 2800, status: payout, reference: 'PO-VW-ABC234' }]
-      : [],
+    payouts: payout ? [{ id: PAYOUT, tenant_id: TENANT, amount: 32200, commission: 2800, status: payout, reference: 'PO-VW-ABC234' }] : [],
     payout_items: payout ? [{ payout_id: PAYOUT, order_id: ORDER, amount: 32200 }] : [],
+    disputes: [{ id: DISPUTE, tenant_id: TENANT, order_id: ORDER, reason: 'Not as described', status: 'open' }],
     refunds: [],
     operator_audit: [],
   };
@@ -64,18 +71,21 @@ function fakePaystack({ fail = null } = {}) {
         if (fail) return new Response(JSON.stringify({ status: false, message: fail }), { status: 400 });
         return new Response(JSON.stringify({ status: true, data: { id: 9001, status: 'pending' } }), { status: 200 });
       }
-      if (path === '/transfer') {
-        return new Response(JSON.stringify({ status: true, data: { transfer_code: 'TRF', status: 'pending' } }), { status: 200 });
-      }
       throw new Error(`unexpected paystack ${path}`);
     },
   };
 }
 
-function setup(opts = {}, psOpts = {}) {
+function setup(opts = {}, { fail = null, fees = FEE_KOBO, verify = true } = {}) {
   const sb = makeFakeSupabase(seed(opts));
-  const ps = fakePaystack(psOpts);
-  const restore = installFetch({ supabase: sb, paystack: ps.paystack, tokens: TOKENS });
+  const ps = fakePaystack({ fail });
+  const restore = installFetch({
+    supabase: sb,
+    paystack: ps.paystack,
+    tokens: TOKENS,
+    paystackAmountKobo: verify ? PAID_KOBO : null,
+    paystackFeesKobo: fees,
+  });
   return { sb, ps, restore };
 }
 
@@ -100,7 +110,7 @@ async function signed(body, secret = 'sk_test_secret') {
 // ── who ──────────────────────────────────────────────────────────────────────
 
 test('staff and strangers cannot refund; nothing moves', async () => {
-  const { sb, ps, restore } = setup({ payout: 'paid' });
+  const { sb, ps, restore } = setup({ orderExtra: HELD });
   try {
     // null, not undefined: undefined would fall back to the owner's token.
     for (const token of [null, 'nonsense', 'tok-staff']) {
@@ -114,16 +124,22 @@ test('staff and strangers cannot refund; nothing moves', async () => {
   }
 });
 
-// ── where the money is ───────────────────────────────────────────────────────
+// ── while the money is held ──────────────────────────────────────────────────
 
-test('money held in escrow: the buyer is refunded and the store owes nothing', async () => {
-  const { sb, ps, restore } = setup({ orderExtra: { status: 'escrow', escrow_status: 'held' } });
+test('held in escrow: the buyer gets back what they paid less Paystack’s fee', async () => {
+  const { sb, ps, restore } = setup({ orderExtra: HELD });
   try {
+    const preview = await (await storeRefund({ preview: true })).json();
+    assert.deepEqual(preview, { refundable: true, paid: 35000, fee: 625, amount: 34375 });
+    assert.equal(sb.tables.refunds.length, 0, 'a preview changed something');
+
     const res = await storeRefund({ reason: 'Item was damaged' });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.refund.status, 'pending');
-    assert.equal(body.refund.store_debt, 0);
+    assert.deepEqual(
+      { status: body.refund.status, paid: body.refund.paid, fee: body.refund.fee, amount: body.refund.amount },
+      { status: 'pending', paid: 35000, fee: 625, amount: 34375 }
+    );
 
     const o = sb.tables.orders[0];
     assert.equal(o.status, 'refunded');
@@ -131,13 +147,16 @@ test('money held in escrow: the buyer is refunded and the store owes nothing', a
 
     assert.deepEqual(ps.calls.map((c) => c.path), ['/refund']);
     assert.equal(ps.calls[0].body.transaction, 'REF-1');
+    assert.equal(ps.calls[0].body.amount, 3_437_500, 'the refund is paid less the fee, in kobo');
     assert.equal(ps.calls[0].body.customer_note, 'Item was damaged');
-    assert.equal(sb.tables.refunds[0].paystack_refund_id, '9001');
-    assert.equal(sb.tables.refunds[0].requested_via, 'store');
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 0);
+
+    const row = sb.tables.refunds[0];
+    assert.equal(row.paystack_refund_id, '9001');
+    assert.equal(row.requested_via, 'store');
+    assert.equal(row.fee, 625);
 
     // Escrow can no longer release it to the store.
-    const { released } = await releaseEscrow({ supabaseUrl: 'https://test.supabase.co', serviceKey: 'service-key-for-tests' }, o, { reason: 'deadline' });
+    const { released } = await releaseEscrow(CFG, o, { reason: 'deadline' });
     assert.equal(released, false);
     assert.equal(sb.tables.payouts.length, 0);
   } finally {
@@ -145,76 +164,76 @@ test('money held in escrow: the buyer is refunded and the store owes nothing', a
   }
 });
 
-test("payout not sent yet: it is cancelled, and the store owes nothing", async () => {
+test('no escrow, payout not sent yet: it is cancelled and the buyer is refunded', async () => {
   const { sb, restore } = setup({ payout: 'pending' });
   try {
     const res = await storeRefund();
     assert.equal(res.status, 200);
     assert.equal(sb.tables.payouts[0].status, 'cancelled');
-    assert.equal(sb.tables.refunds[0].store_debt, 0);
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 0);
+    assert.equal(sb.tables.orders[0].status, 'refunded');
   } finally {
     restore();
   }
 });
 
-test('a cancelled payout that had repaid an older debt puts that debt back', async () => {
-  const { sb, restore } = setup({ payout: 'pending', withheld: 5000, owed: 1000 });
-  try {
-    await storeRefund();
-    assert.equal(sb.tables.payouts[0].status, 'cancelled');
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 6000);
-  } finally {
-    restore();
-  }
-});
+// ── after release: no refunds ────────────────────────────────────────────────
 
-test('already paid to the store: it owes back what it received, taken from its next payout', async () => {
-  const { sb, restore } = setup({ payout: 'paid' });
+test('once the payment is released to the store, there is no refund', async () => {
+  const { sb, ps, restore } = setup({ orderExtra: RELEASED, payout: 'paid' });
   try {
     const preview = await (await storeRefund({ preview: true })).json();
-    assert.deepEqual(preview, { refundable: true, amount: 35000, store_debt: 32200 });
-    assert.equal(sb.tables.refunds.length, 0, 'a preview changed something');
+    assert.equal(preview.refundable, false);
+    assert.match(preview.reason, /already been released/);
 
     const res = await storeRefund();
-    assert.equal(res.status, 200);
-    assert.equal(sb.tables.payouts[0].status, 'paid', 'a sent payout cannot be cancelled');
-    assert.equal(sb.tables.refunds[0].store_debt, 32200);
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 32200);
-
-    // The next sale: ₦23,000 net, all of it kept toward the ₦32,200.
-    sb.tables.orders.push({
-      id: OTHER, tenant_id: TENANT, order_code: 'VW-NEXT01', product_id: 'p2', buyer_id: 'b2',
-      amount: 25000, commission: 2000, status: 'escrow', escrow_status: 'held', payment_ref: 'REF-2', paid_at: paidAt,
-    });
-    const cfg = { supabaseUrl: 'https://test.supabase.co', serviceKey: 'service-key-for-tests', paystackKey: 'sk_test_secret' };
-    await releaseEscrow(cfg, sb.tables.orders.at(-1), { reason: 'buyer_confirmed' });
-    const next = sb.tables.payouts.find((p) => p.reference === 'PO-VW-NEXT01');
-    assert.equal(next.withheld, 23000);
-    assert.equal(next.amount, 0);
-    assert.equal(next.status, 'paid', 'nothing left to transfer');
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 9200);
+    assert.equal(res.status, 409);
+    assert.match((await res.json()).error, /open a dispute/);
+    assert.equal(sb.tables.refunds.length, 0);
+    assert.equal(sb.tables.orders[0].status, 'completed');
+    assert.equal(ps.calls.length, 0);
   } finally {
     restore();
   }
 });
 
-test('a later payout only has what is left of the debt taken from it', async () => {
-  const { sb, ps, restore } = setup({ owed: 5000 });
+test('no escrow and the store has been paid (or is being paid): no refund', async () => {
+  for (const status of ['paid', 'sending']) {
+    const { sb, restore } = setup({ payout: status });
+    try {
+      const res = await storeRefund();
+      assert.equal(res.status, 409, `payout ${status}`);
+      assert.match((await res.json()).error, /already been paid/);
+      assert.equal(sb.tables.payouts[0].status, status);
+      assert.equal(sb.tables.orders[0].status, 'paid');
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('a payout that goes out mid-refund puts the order back and refuses', async () => {
+  const { sb, restore } = setup({ payout: 'pending' });
   try {
-    sb.tables.orders = [{
-      id: OTHER, tenant_id: TENANT, order_code: 'VW-NEXT02', product_id: 'p2', buyer_id: 'b2',
-      amount: 25000, commission: 2000, status: 'escrow', escrow_status: 'held', payment_ref: 'REF-3', paid_at: paidAt,
-    }];
-    sb.tables.payout_accounts = [{ tenant_id: TENANT, recipient_code: 'RCP_1', bank_name: 'GTBank', account_last4: '1234' }];
-    const cfg = { supabaseUrl: 'https://test.supabase.co', serviceKey: 'service-key-for-tests', paystackKey: 'sk_test_secret' };
-    await releaseEscrow(cfg, sb.tables.orders[0], { reason: 'buyer_confirmed' });
-    const p = sb.tables.payouts[0];
-    assert.equal(p.withheld, 5000);
-    assert.equal(p.amount, 18000);
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 0);
-    const transfer = ps.calls.find((c) => c.path === '/transfer');
-    assert.equal(transfer.body.amount, 1_800_000, 'the transfer is the reduced amount, in kobo');
+    // The sweep claims the payout between the refund's checks and its cancel.
+    let flipped = false;
+    const real = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (!flipped && init?.method === 'PATCH' && url.includes('/rest/v1/orders?')) {
+        flipped = true;
+        sb.tables.payouts[0].status = 'sending';
+      }
+      return real(input, init);
+    };
+    try {
+      const res = await storeRefund();
+      assert.equal(res.status, 409);
+      assert.match((await res.json()).error, /just gone out/);
+      assert.equal(sb.tables.orders[0].status, 'paid', 'the order was left refunded');
+      assert.equal(sb.tables.refunds.length, 0);
+    } finally {
+      globalThis.fetch = real;
+    }
   } finally {
     restore();
   }
@@ -223,14 +242,13 @@ test('a later payout only has what is left of the debt taken from it', async () 
 // ── once, and only for paid orders ──────────────────────────────────────────
 
 test('an order is refunded once', async () => {
-  const { sb, ps, restore } = setup({ payout: 'paid' });
+  const { sb, ps, restore } = setup({ orderExtra: HELD });
   try {
     assert.equal((await storeRefund()).status, 200);
     const again = await storeRefund();
     assert.equal(again.status, 409);
     assert.equal(sb.tables.refunds.length, 1);
     assert.equal(ps.calls.length, 1);
-    assert.equal(sb.tables.tenants[0].owed_to_platform, 32200, 'the debt was counted twice');
   } finally {
     restore();
   }
@@ -249,7 +267,7 @@ test('an unpaid order cannot be refunded', async () => {
 });
 
 test('relist puts the item back on sale', async () => {
-  const { sb, restore } = setup({ payout: 'pending' });
+  const { sb, restore } = setup({ orderExtra: HELD });
   try {
     await storeRefund({ relist: true });
     assert.equal(sb.tables.products[0].status, 'active');
@@ -261,53 +279,58 @@ test('relist puts the item back on sale', async () => {
 
 // ── when Paystack says no ────────────────────────────────────────────────────
 
-test('a refund Paystack refuses stays decided, is marked failed, and an owner can retry it', async () => {
-  const { sb, ps, restore } = setup({ payout: 'pending' }, { fail: 'Insufficient balance' });
+test("if Paystack's fee can't be read, the refund waits for a retry rather than guessing", async () => {
+  const { sb, ps, restore } = setup({ orderExtra: HELD }, { verify: false });
   try {
-    const res = await storeRefund();
-    assert.equal(res.status, 200);
-    const body = await res.json();
+    const body = await (await storeRefund()).json();
+    assert.equal(body.refund.status, 'failed');
+    assert.match(body.refund.failure_reason, /fee/);
+    assert.equal(ps.calls.length, 0, 'refunded without knowing the fee');
+  } finally {
+    restore();
+  }
+});
+
+test('a refund Paystack refuses stays decided, is marked failed, and an owner can retry it', async () => {
+  const { sb, restore } = setup({ orderExtra: HELD }, { fail: 'Insufficient balance' });
+  const uuid = 'eeeeeeee-0000-0000-0000-00000000000e';
+  try {
+    const body = await (await storeRefund()).json();
     assert.equal(body.refund.status, 'failed');
     assert.match(body.refund.failure_reason, /Insufficient balance/);
     assert.equal(sb.tables.orders[0].status, 'refunded', 'the decision was undone');
-
-    const id = sb.tables.refunds[0].id;
-    // The id in the fake is not a uuid; give it one the route accepts.
-    const uuid = 'eeeeeeee-0000-0000-0000-00000000000e';
+    // The fake's ids are not uuids; give it one the route accepts.
     sb.tables.refunds[0].id = uuid;
 
     const support = await worker.fetch(post(`/api/admin/refunds/${uuid}/retry`, {}, 'tok-support'), env(), {});
     assert.equal(support.status, 403);
+  } finally {
+    restore();
+  }
 
-    // Balance topped up.
-    ps.calls.length = 0;
-    restore();
-    const ok = fakePaystack();
-    const restore2 = installFetch({ supabase: sb, paystack: ok.paystack, tokens: TOKENS });
-    try {
-      const retry = await worker.fetch(post(`/api/admin/refunds/${uuid}/retry`, {}, 'tok-op'), env(), {});
-      assert.equal(retry.status, 200);
-      assert.equal((await retry.json()).status, 'pending');
-      assert.equal(sb.tables.refunds[0].status, 'pending');
-      assert.equal(sb.tables.operator_audit.at(-1).action, 'refund.retry');
-      assert.ok(id);
-    } finally {
-      restore2();
-    }
-  } catch (err) {
-    restore();
-    throw err;
+  // Balance topped up.
+  const ok = fakePaystack();
+  const restore2 = installFetch({ supabase: sb, paystack: ok.paystack, tokens: TOKENS, paystackAmountKobo: PAID_KOBO, paystackFeesKobo: FEE_KOBO });
+  try {
+    const retry = await worker.fetch(post(`/api/admin/refunds/${uuid}/retry`, {}, 'tok-op'), env(), {});
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json()).status, 'pending');
+    assert.equal(sb.tables.refunds[0].status, 'pending');
+    assert.equal(ok.calls[0].body.amount, 3_437_500);
+    assert.equal(sb.tables.operator_audit.at(-1).action, 'refund.retry');
+  } finally {
+    restore2();
   }
 });
 
 // ── Paystack's word ──────────────────────────────────────────────────────────
 
-test('refund.processed marks it done; refund.failed marks it for a person', async () => {
-  const { sb, restore } = setup({ payout: 'pending' });
+test('refund.processed marks it done; a late refund.failed cannot undo that', async () => {
+  const { sb, restore } = setup({ orderExtra: HELD });
   try {
     await storeRefund();
     const res = await worker.fetch(
-      await signed({ event: 'refund.processed', data: { status: 'processed', transaction_reference: 'REF-1', amount: 3_500_000 } }),
+      await signed({ event: 'refund.processed', data: { status: 'processed', transaction_reference: 'REF-1', amount: 3_437_500 } }),
       env(),
       {}
     );
@@ -315,7 +338,6 @@ test('refund.processed marks it done; refund.failed marks it for a person', asyn
     assert.equal(sb.tables.refunds[0].status, 'processed');
     assert.ok(sb.tables.refunds[0].processed_at);
 
-    // A late failure cannot undo a processed refund.
     await worker.fetch(await signed({ event: 'refund.failed', data: { transaction_reference: 'REF-1' } }), env(), {});
     assert.equal(sb.tables.refunds[0].status, 'processed');
   } finally {
@@ -324,7 +346,7 @@ test('refund.processed marks it done; refund.failed marks it for a person', asyn
 });
 
 test('an unsigned refund event changes nothing', async () => {
-  const { sb, restore } = setup({ payout: 'pending' });
+  const { sb, restore } = setup({ orderExtra: HELD });
   try {
     await storeRefund();
     const res = await worker.fetch(
@@ -345,8 +367,8 @@ test('an unsigned refund event changes nothing', async () => {
 
 // ── from the console ─────────────────────────────────────────────────────────
 
-test('an owner-level operator can refund a held payment from the console, with a reason', async () => {
-  const { sb, restore } = setup({ orderExtra: { status: 'escrow', escrow_status: 'held' } });
+test('an owner-level operator can refund a held payment from the release queue, with a reason', async () => {
+  const { sb, restore } = setup({ orderExtra: HELD });
   try {
     const none = await worker.fetch(post(`/api/admin/orders/${ORDER}/refund`, {}, 'tok-op'), env(), {});
     assert.equal(none.status, 400);
@@ -355,6 +377,26 @@ test('an owner-level operator can refund a held payment from the console, with a
     assert.equal(res.status, 200);
     assert.equal(sb.tables.refunds[0].requested_via, 'operator');
     assert.equal(sb.tables.operator_audit.at(-1).action, 'refund.create');
+    assert.equal(sb.tables.operator_audit.at(-1).detail.fee, 625);
+  } finally {
+    restore();
+  }
+});
+
+test('a dispute on a released payment is resolved for the buyer without a refund', async () => {
+  const { sb, ps, restore } = setup({ orderExtra: RELEASED, payout: 'paid' });
+  try {
+    const res = await worker.fetch(
+      post(`/api/admin/disputes/${DISPUTE}/resolve`, { outcome: 'refunded', resolution: 'Store agreed to swap it' }, 'tok-op'),
+      env(),
+      {}
+    );
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).moved, 'recorded');
+    assert.equal(sb.tables.disputes[0].status, 'resolved');
+    assert.equal(sb.tables.refunds.length, 0);
+    assert.equal(sb.tables.orders[0].status, 'completed');
+    assert.equal(ps.calls.length, 0);
   } finally {
     restore();
   }

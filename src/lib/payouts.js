@@ -18,7 +18,7 @@ import { callWorker } from './api.js';
 // first time anyone notices is when a seller disputes a payout.
 
 const PAYOUT_COLUMNS =
-  'id, amount, commission, withheld, status, reference, failure_reason, sent_at, paid_at, created_at';
+  'id, amount, commission, status, reference, failure_reason, sent_at, paid_at, created_at';
 
 export async function fetchPayouts(tenantId, { limit = 50 } = {}) {
   if (!tenantId) return [];

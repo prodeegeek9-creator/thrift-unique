@@ -655,16 +655,17 @@ UPDATE and DELETE at the database — even under the service key. A record that
 can be tidied afterwards is not evidence of anything.
 
 **Refunds go back to the buyer's card through Paystack** (`worker/lib/refunds.js`,
-migration 0026). Full refunds only, one per order. They can come from the store
-(owner or manager, on the order page), from a dispute resolved for the buyer,
-or from the release queue; the last two need an owner on the admin team. The
-buyer gets back exactly what they paid: the platform waives its commission and
-absorbs Paystack's fee. What the store gives up depends on where the money is.
-If it was still held, or the store's payout had not been sent, the payout is
-cancelled and the store owes nothing. If the store had already been paid, it
-owes back what it received (`tenants.owed_to_platform`), and that is withheld
-from its next payouts (`payouts.withheld`). A refund Paystack refuses (usually
-a short balance) stays decided and is retried from the console's Refunds page.
+migration 0026), and only while Vendwyze still holds the payment: held in
+escrow, or (without escrow) before the store's payout has been sent. Once the
+payment has been released to the store there is no refund; the buyer opens a
+dispute, and deciding it for the buyer records the decision for the store and
+buyer to settle. So a refund never takes money back from a store. Refunds come
+from the store (owner or manager, on the order page), from a dispute, or from
+the release queue; the last two need an owner on the admin team. Full refunds
+only, one per order, less Paystack's processing fee: Paystack keeps its fee on
+a refund, and that is the buyer's cost, not the store's or the platform's.
+Vendwyze waives its commission. A refund Paystack refuses (usually a short
+balance) stays decided and is retried from the console's Refunds page.
 
 ## Status
 
@@ -704,8 +705,8 @@ without a network, WAHA or Paystack):
   in a table only the Worker can read). The operator can set a store's price
   (0 for free) and record a payment made outside Paystack.
 - **Refunds**: from the order page, a dispute or the release queue, back to the
-  buyer's card through Paystack; a store already paid for the sale has it
-  taken from its next payouts. Paystack's `refund.*` webhooks settle them.
+  buyer's card through Paystack less Paystack's fee, only while the payment is
+  still held. Paystack's `refund.*` webhooks settle them.
 - **The operator console** at `/admin`, with its own login at `/admin/login`
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,

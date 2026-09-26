@@ -7,9 +7,9 @@ import { refundOrder, refundPreview, RefundError } from '../lib/refunds.js';
 // POST /api/orders/refund { tenant, order, reason?, relist?, preview? }
 //
 // A store giving its buyer their money back: the item turned out to be sold
-// already, it was damaged, the buyer changed their mind and the store agreed.
-// Owners and managers only, the same people who can see payouts, because a
-// refund of a sale the store was already paid for comes out of its next ones.
+// already, or can't be delivered. Only while Vendwyze still holds the payment
+// (lib/refunds.js); after that the buyer opens a dispute. Owners and managers
+// only, the same people who can see payouts.
 //
 // With preview: true, says what the refund would do and changes nothing.
 
@@ -60,8 +60,9 @@ export function publicRefund(r) {
   return {
     id: r.id,
     status: r.status,
+    paid: Number(r.paid ?? r.amount),
+    fee: Number(r.fee ?? 0),
     amount: Number(r.amount),
-    store_debt: Number(r.store_debt ?? 0),
     failure_reason: r.failure_reason ?? null,
   };
 }
