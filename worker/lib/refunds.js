@@ -148,12 +148,19 @@ export async function settleRefundEvent(cfg, event) {
   const reference = data.transaction_reference ?? data.transaction?.reference ?? null;
   if (!reference) return { ignored: 'no reference' };
 
-  const order = await db(cfg).one(
-    'orders',
-    `payment_ref=eq.${encodeURIComponent(reference)}&select=id,order_code`
-  );
-  if (!order) return { ignored: 'no such order' };
-  const refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=*`);
+  // By Paystack's refund id first: a cart's payment can carry several
+  // refunds, one per item, all with the same transaction reference.
+  let refund = data.id != null
+    ? await db(cfg).one('refunds', `paystack_refund_id=eq.${encodeURIComponent(String(data.id))}&select=*`)
+    : null;
+  if (!refund) {
+    const order = await db(cfg).one(
+      'orders',
+      `payment_ref=eq.${encodeURIComponent(reference)}&select=id,order_code`
+    );
+    if (!order) return { ignored: 'no such order' };
+    refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=*`);
+  }
   if (!refund) return { ignored: 'no refund for order' };
 
   const kind = String(event.event).replace(/^refund\./, '');
@@ -223,15 +230,28 @@ async function cancelUnsentPayout(cfg, order) {
   return cancelled.length > 0;
 }
 
+// The Paystack transaction an order was paid in. A WhatsApp cart is one
+// payment for several orders (lib/cartCheckout.js): each order's reference is
+// the cart's plus a suffix, utc_…_2, and Paystack only knows utc_….
+export function paystackRefFor(orderRef) {
+  const m = /^(utc_[a-z0-9]{12,40})_\d+$/.exec(String(orderRef ?? ''));
+  return m ? m[1] : orderRef;
+}
+
 // What the buyer paid, Paystack's fee on it, and what that leaves to refund,
-// in naira. null when Paystack can't be asked.
+// in naira. null when Paystack can't be asked. For an order in a cart, its
+// share of the cart's payment and of the fee.
 async function feeSplit(cfg, order) {
   if (!cfg.paystackKey || !order.payment_ref) return null;
-  const tx = await fetchTransaction(cfg.paystackKey, order.payment_ref).catch(() => null);
+  const txRef = paystackRefFor(order.payment_ref);
+  const tx = await fetchTransaction(cfg.paystackKey, txRef).catch(() => null);
   if (!tx || !(Number(tx.amount) > 0)) return null;
-  const paidKobo = Number(tx.amount);
-  const feeKobo = Math.max(0, Math.min(paidKobo, Number(tx.fees) || 0));
+  const txKobo = Number(tx.amount);
+  const paidKobo = txRef === order.payment_ref ? txKobo : Math.min(txKobo, Math.round(Number(order.amount) * 100));
+  const share = paidKobo / txKobo;
+  const feeKobo = Math.max(0, Math.min(paidKobo, Math.round((Number(tx.fees) || 0) * share)));
   return {
+    txRef,
     paidKobo,
     feeKobo,
     refundKobo: paidKobo - feeKobo,
@@ -268,7 +288,7 @@ async function sendRefund(cfg, refund, order) {
     const data = await paystack(cfg, '/refund', {
       method: 'POST',
       body: {
-        transaction: order.payment_ref,
+        transaction: split.txRef,
         amount: split.refundKobo,
         currency: 'NGN',
         merchant_note: `Refund for order ${order.order_code}${refund.reason ? `: ${refund.reason}` : ''}`.slice(0, 250),

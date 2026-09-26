@@ -158,7 +158,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
         return new Response(minimal ? null : JSON.stringify([]), { status: 201 });
       }
 
-      const row = { id: `row-${nextId++}`, ...body };
+      // created_at defaults to now() on the real tables; queries filter on it.
+      const row = { id: `row-${nextId++}`, created_at: new Date().toISOString(), ...body };
       // products.public_code has a column default in the real schema; the
       // storefront link and the bot's confirmation both read it back.
       if (table === 'products' && !row.public_code) row.public_code = `PC${nextId}`;

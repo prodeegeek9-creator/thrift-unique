@@ -103,6 +103,14 @@ export default function Product() {
       )}`
     : null;
 
+  // Checkout inside WhatsApp (Growth and Business, store's WhatsApp linked):
+  // the store's chat with BUY and the code typed, which the bot there answers
+  // with a cart (worker/lib/cart.js).
+  const buyInChat =
+    product.whatsapp_checkout && product.tenant_whatsapp
+      ? `https://wa.me/${product.tenant_whatsapp}?text=${encodeURIComponent(`BUY ${product.public_code}`)}`
+      : null;
+
   return (
     <Frame wide>
       {firstImage(product) ? (
@@ -141,6 +149,14 @@ export default function Product() {
             >
               Buy now
             </button>
+            {buyInChat ? (
+              <a
+                href={buyInChat}
+                className="mt-2 block rounded-pill border border-green/40 py-3 text-center text-sm font-semibold text-green"
+              >
+                Buy on WhatsApp
+              </a>
+            ) : null}
             {askLink ? (
               <a
                 href={askLink}

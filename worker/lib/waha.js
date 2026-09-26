@@ -130,7 +130,10 @@ export async function createSession(cfg, tenant, { webhookUrl, secret }) {
         webhooks: [
           {
             url: webhookUrl,
-            events: ['message', 'session.status'],
+            // message.any rather than message: it also carries what the store
+            // sends, which is how the bot steps back when the owner answers a
+            // chat themselves.
+            events: ['message.any', 'session.status'],
             customHeaders: [{ name: 'X-Thrift-Secret', value: secret }],
           },
         ],
@@ -143,6 +146,32 @@ export async function createSession(cfg, tenant, { webhookUrl, secret }) {
       },
     },
   });
+}
+
+// A store linked before checkout-in-WhatsApp has the old event list. Brought
+// up to date the next time anybody looks at its WhatsApp (the Channels page),
+// once: WAHA restarts the session to apply it.
+export async function ensureStoreWebhook(cfg, tenant, { webhookUrl, secret }) {
+  const session = await getSession(cfg, sessionName(tenant));
+  const hooks = session?.config?.webhooks ?? [];
+  if (!session || hooks.some((h) => (h.events ?? []).includes('message.any'))) return false;
+  const call = client(cfg);
+  await call(`/api/sessions/${encodeURIComponent(sessionName(tenant))}`, {
+    method: 'PUT',
+    body: {
+      config: {
+        ...(session.config ?? {}),
+        webhooks: [
+          {
+            url: webhookUrl,
+            events: ['message.any', 'session.status'],
+            customHeaders: [{ name: 'X-Thrift-Secret', value: secret }],
+          },
+        ],
+      },
+    },
+  });
+  return true;
 }
 
 export async function getSession(cfg, session) {
@@ -243,16 +272,28 @@ export async function sendText(cfg, session, to, text) {
 // Always the tenant's own session, never the platform's — Status goes to the
 // seller's contacts, which is the whole point and is impossible from a number
 // those contacts have never saved.
+//
+// Returns the post's message ID, or null when it can't be had: WAHA hands out
+// an ID to post under (status/new-message-id), and failing that the post's
+// own answer may carry one. A reply to the post quotes this ID.
 export async function postImageStatus(cfg, session, { url, caption, mimetype = 'image/jpeg' }) {
   const call = client(cfg);
+  const base = `/api/${encodeURIComponent(session)}/status`;
 
-  return call(`/api/${encodeURIComponent(session)}/status/image`, {
+  const planned = await call(`${base}/new-message-id`)
+    .then((r) => r?.id ?? null)
+    .catch(() => null);
+
+  const sent = await call(`${base}/image`, {
     method: 'POST',
     body: {
+      ...(planned ? { id: planned } : {}),
       file: { url, mimetype, filename: 'listing.jpg' },
       caption,
     },
   });
+  const answered = [sent?.key?.id, sent?.id?.id, sent?.id?._serialized, sent?.id].find((v) => typeof v === 'string' && v);
+  return bareMessageId(planned ?? answered ?? null);
 }
 
 export async function postTextStatus(cfg, session, { text, backgroundColor = '#12301E' }) {
@@ -288,12 +329,27 @@ export function parseEvent(body) {
     };
   }
 
-  if (event !== 'message') return null;
+  // 'message' is what the platform session sends; a store's own session sends
+  // 'message.any', which also carries the messages the store sends.
+  if (event !== 'message' && event !== 'message.any') return null;
 
-  // WAHA marks the seller's own outgoing messages with fromMe. Acting on them
-  // would have the bot answering itself, which is a loop that costs real
-  // WhatsApp traffic before anybody notices.
-  if (p.fromMe === true) return null;
+  // WAHA marks the store's own outgoing messages with fromMe. Never answered
+  // (that would be the bot answering itself); on a store's number they are
+  // how the bot knows the owner has stepped into a chat (routes/waha.js).
+  if (p.fromMe === true) {
+    if (event !== 'message.any') return null;
+    const to = [p.to, p._data?.key?.remoteJid, p.chatId].find((x) => /@(c\.us|lid)$/.test(String(x ?? '')));
+    if (!to) return null;
+    return {
+      kind: 'outgoing',
+      session,
+      to: String(to),
+      body: typeof p.body === 'string' ? p.body : '',
+      // 'api' for what the bot sent through WAHA, 'app' for the owner's
+      // phone, where the engine says so.
+      source: p.source ?? null,
+    };
+  }
 
   // A person's chat is addressed by phone number (…@c.us) or, more and more,
   // by WhatsApp's privacy id (…@lid), which hides the number — see phoneFor().
@@ -314,5 +370,50 @@ export function parseEvent(body) {
     hasMedia: Boolean(p.hasMedia ?? p.media ?? false),
     mediaUrl: p.media?.url ?? p.mediaUrl ?? null,
     mimetype: p.media?.mimetype ?? p.mimetype ?? null,
+    // The message this one replies to, if any: for a reply to a Status post,
+    // the post's caption, which names the item (lib/cart.js).
+    quoted: quotedText(p),
+    // And that message's WhatsApp ID. A Status post Vendwyze made is saved
+    // under its ID (status_posts), which names the item even when the caption
+    // doesn't come through.
+    quotedId: quotedId(p),
   };
+}
+
+function quoteContext(p) {
+  return (
+    p._data?.message?.extendedTextMessage?.contextInfo ??
+    p._data?.message?.imageMessage?.contextInfo ??
+    p._data?.contextInfo ??
+    null
+  );
+}
+
+// WAHA gives the bare ID (BAE5…) on NOWEB and a serialised one
+// (false_status@broadcast_BAE5…_…@c.us) elsewhere; the bare part is what a
+// post is saved under.
+export function bareMessageId(id) {
+  if (id == null || id === '') return null;
+  const s = String(id);
+  if (!s.includes('_')) return s;
+  const parts = s.split('_');
+  // true_<chat>_<id> or true_<chat>_<id>_<participant>
+  return parts[2] || parts.at(-1) || null;
+}
+
+function quotedId(p) {
+  return bareMessageId(p.replyTo?.id ?? quoteContext(p)?.stanzaId ?? null);
+}
+
+function quotedText(p) {
+  if (typeof p.replyTo?.body === 'string' && p.replyTo.body) return p.replyTo.body;
+  const q = quoteContext(p)?.quotedMessage;
+  if (!q) return null;
+  return (
+    q.imageMessage?.caption ??
+    q.videoMessage?.caption ??
+    q.extendedTextMessage?.text ??
+    q.conversation ??
+    null
+  );
 }
