@@ -98,6 +98,13 @@ export const retryPayout = (payoutId) => call(`/payouts/${payoutId}/retry`, { me
 export const forceRelease = (orderId, reason) =>
   call(`/escrow/${orderId}/release`, { method: 'POST', body: { reason } });
 
+// Refunds: the list, retrying one Paystack refused, and refunding a held
+// payment from the release queue.
+export const fetchRefunds = () => call('/refunds');
+export const retryRefund = (id) => call(`/refunds/${id}/retry`, { method: 'POST', body: {} });
+export const refundFromConsole = (orderId, reason) =>
+  call(`/orders/${orderId}/refund`, { method: 'POST', body: { reason } });
+
 export const resolveDispute = (disputeId, outcome, resolution) =>
   call(`/disputes/${disputeId}/resolve`, { method: 'POST', body: { outcome, resolution } });
 
@@ -120,4 +127,6 @@ export const AUDIT_LABELS = {
   'team.level': 'Changed an admin’s level',
   'team.remove': 'Removed somebody from the admin team',
   'team.link': 'Made a new sign-in link for an admin',
+  'refund.create': 'Refunded a buyer',
+  'refund.retry': 'Retried a refund',
 };

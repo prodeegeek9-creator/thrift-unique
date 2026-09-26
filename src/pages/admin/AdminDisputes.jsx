@@ -20,7 +20,7 @@ const OUTCOMES = [
   {
     id: 'refunded',
     label: 'Buyer was right',
-    detail: 'Reverse the hold. Returning the money to their card is a separate step.',
+    detail: "Refund the buyer through Paystack, less Paystack's fee, if the payment is still held. Needs an owner.",
     tone: 'red',
   },
   {
@@ -44,7 +44,13 @@ export default function AdminDisputes() {
   const resolve = useMutation({
     mutationFn: ({ id, outcome, resolution }) => resolveDispute(id, outcome, resolution),
     onSuccess: (r) => {
-      toast(r.moved === 'refunded' ? 'Hold reversed' : r.moved === 'released' ? 'Funds released' : 'Closed', 'success');
+      const said = {
+        refunded: 'Refund sent to Paystack',
+        recorded: 'Decision recorded. The payment was already released, so no refund was made.',
+        refund_failed: 'Resolved, but Paystack refused the refund. Retry it under Refunds.',
+        released: 'Funds released',
+      };
+      toast(said[r.moved] ?? 'Closed', r.moved === 'refund_failed' ? 'error' : 'success');
       setWorking(null);
       qc.invalidateQueries({ queryKey: ['admin'] });
     },
@@ -153,7 +159,9 @@ function ResolveDialog({ dispute, pending, onCancel, onConfirm }) {
               <span className="block text-xs text-muted">{o.detail}</span>
               {!held && o.id !== 'no_action' ? (
                 <span className="mt-1 block text-[11px] text-amber">
-                  No funds are held — this records the decision only.
+                  {dispute.order?.escrow_status === 'released'
+                    ? 'The payment was already released to the store, so no money moves. This records the decision; the store and buyer settle it.'
+                    : 'No funds are held in escrow. A refund is only made if the store has not been paid yet.'}
                 </span>
               ) : null}
             </button>

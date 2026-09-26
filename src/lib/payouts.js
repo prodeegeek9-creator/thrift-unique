@@ -125,5 +125,6 @@ export function payoutStatusLabel(p) {
   if (p.status === 'paid') return 'Paid';
   if (p.status === 'sending') return 'Sending';
   if (p.status === 'failed') return 'Failed';
+  if (p.status === 'cancelled') return 'Cancelled · refunded';
   return p.failure_reason ? 'Waiting · retrying' : 'Waiting';
 }

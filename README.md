@@ -654,11 +654,18 @@ move money and change what a tenant pays. "Can read every customer's orders" and
 UPDATE and DELETE at the database — even under the service key. A record that
 can be tidied afterwards is not evidence of anything.
 
-**Refunds stop at the state change.** Resolving a dispute for the buyer reverses
-the hold and records the decision; returning money to their card is a separate
-deliberate step, because a refund is irreversible and should not fire from a
-console click. The payment reference is carried into the audit row so whoever
-does it has it to hand.
+**Refunds go back to the buyer's card through Paystack** (`worker/lib/refunds.js`,
+migration 0026), and only while Vendwyze still holds the payment: held in
+escrow, or (without escrow) before the store's payout has been sent. Once the
+payment has been released to the store there is no refund; the buyer opens a
+dispute, and deciding it for the buyer records the decision for the store and
+buyer to settle. So a refund never takes money back from a store. Refunds come
+from the store (owner or manager, on the order page), from a dispute, or from
+the release queue; the last two need an owner on the admin team. Full refunds
+only, one per order, less Paystack's processing fee: Paystack keeps its fee on
+a refund, and that is the buyer's cost, not the store's or the platform's.
+Vendwyze waives its commission. A refund Paystack refuses (usually a short
+balance) stays decided and is retried from the console's Refunds page.
 
 ## Status
 
@@ -697,6 +704,9 @@ without a network, WAHA or Paystack):
   "Renew automatically" is on (migration 0024; the card's authorization stays
   in a table only the Worker can read). The operator can set a store's price
   (0 for free) and record a payment made outside Paystack.
+- **Refunds**: from the order page, a dispute or the release queue, back to the
+  buyer's card through Paystack less Paystack's fee, only while the payment is
+  still held. Paystack's `refund.*` webhooks settle them.
 - **The operator console** at `/admin`, with its own login at `/admin/login`
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
@@ -714,15 +724,13 @@ From the spec, this README's earlier notes, and decisions made while building:
    with weeks of lead time, before it can be built against anything real.
 2. **Checkout inside WhatsApp** (Growth+): cart and payment in the chat.
    Payment links cover the common case today.
-3. **Refunds**: resolving a dispute for the buyer reverses the hold and records
-   it; returning money to the buyer's card is still a separate manual step.
-4. **Upgrade nudges** based on listing and sales volume ("You've listed 20
+3. **Upgrade nudges** based on listing and sales volume ("You've listed 20
    items this month — Growth adds…").
-5. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
+4. **Business extras**: WooCommerce catalogue sync, AI image match ("is this in
    stock?"), a dedicated support bot, a structured dispute workflow.
-6. **Custom domain and subdomains**: point a domain at the Worker, then offer
+5. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
-7. **Live payments**: switch Paystack from test to live once the business
+6. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers).
 
 ## Setup
@@ -738,7 +746,8 @@ Worker secrets (`npx wrangler versions secret put NAME`, then
 | `WAHA_URL`, `WAHA_API_KEY`, `WAHA_SESSION`, `WAHA_WEBHOOK_SECRET` | WhatsApp (see `deploy/waha/`) |
 
 In Paystack, point the webhook at `/api/paystack/webhook`: it carries both
-`charge.success` (orders and plan fees alike) and the `transfer.*` events. The
+`charge.success` (orders and plan fees alike), the `transfer.*` events and the
+`refund.*` events. Refunds, like transfers, are drawn from the Paystack balance. The
 hourly cron raises plan invoices, sends reminders, charges saved cards and
 pauses stores that stay unpaid; it needs nothing beyond the secrets above. For live transfers, enable
 Transfers, turn off OTP for API transfers, and keep enough balance to pay out,

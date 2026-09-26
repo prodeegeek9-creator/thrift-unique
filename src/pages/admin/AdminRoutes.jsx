@@ -12,6 +12,7 @@ import AdminEscrow from './AdminEscrow.jsx';
 import AdminDisputes from './AdminDisputes.jsx';
 import AdminAudit from './AdminAudit.jsx';
 import AdminTeam from './AdminTeam.jsx';
+import AdminRefunds from './AdminRefunds.jsx';
 
 // The platform side. A different room from the seller dashboard, reached by a
 // different door: its own login, its own session, and no way across to a
@@ -23,6 +24,7 @@ const NAV = [
   { to: '/admin/tenants', icon: 'team', label: 'Stores' },
   { to: '/admin/escrow', icon: 'payouts', label: 'Release queue' },
   { to: '/admin/disputes', icon: 'disputes', label: 'Disputes' },
+  { to: '/admin/refunds', icon: 'billing', label: 'Refunds' },
   { to: '/admin/audit', icon: 'listings', label: 'Audit log' },
   { to: '/admin/team', icon: 'contacts', label: 'Admin team' },
 ];
@@ -131,6 +133,7 @@ function Console({ operator }) {
             <Route path="tenants/:tenantId" element={<AdminTenantDetail operator={operator} />} />
             <Route path="escrow" element={<AdminEscrow operator={operator} />} />
             <Route path="disputes" element={<AdminDisputes operator={operator} />} />
+            <Route path="refunds" element={<AdminRefunds operator={operator} />} />
             <Route path="audit" element={<AdminAudit />} />
             <Route path="team" element={<AdminTeam operator={operator} />} />
           </Routes>

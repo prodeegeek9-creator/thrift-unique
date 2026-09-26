@@ -33,6 +33,8 @@ const TONES = {
   failed: { label: 'Failed', tone: 'red' },
   // Payouts: handed to Paystack, waiting for the bank.
   sending: { label: 'Sending', tone: 'amber' },
+  // Refunds: back on the buyer's card.
+  processed: { label: 'Refunded', tone: 'green' },
 };
 
 const CLASSES = {

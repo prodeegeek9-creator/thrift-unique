@@ -16,7 +16,7 @@ const API = 'https://api.paystack.co';
 // How many times a payout is handed to Paystack before it waits for a person.
 export const MAX_ATTEMPTS = 5;
 
-async function paystack(cfg, path, { method = 'GET', body } = {}) {
+export async function paystack(cfg, path, { method = 'GET', body } = {}) {
   const res = await fetch(`${API}${path}`, {
     method,
     headers: {

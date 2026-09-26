@@ -4,7 +4,7 @@ import PageHeader from '../../components/ui/PageHeader.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useToast } from '../../lib/ToastContext.jsx';
-import { fetchReleaseQueue, forceRelease } from '../../lib/admin.js';
+import { fetchReleaseQueue, forceRelease, refundFromConsole } from '../../lib/admin.js';
 import { formatNaira } from '../../lib/money.js';
 import { maskPhone } from '../../lib/privacy.js';
 import { dateTime } from '../../lib/time.js';
@@ -13,18 +13,24 @@ export default function AdminEscrow({ operator }) {
   const qc = useQueryClient();
   const toast = useToast();
   const isOwner = operator?.level === 'owner';
-  const [releasing, setReleasing] = useState(null);
+  // { order, kind: 'release' | 'refund' }
+  const [acting, setActing] = useState(null);
 
   const { data: queue, isLoading } = useQuery({
     queryKey: ['admin', 'escrow'],
     queryFn: fetchReleaseQueue,
   });
 
-  const release = useMutation({
-    mutationFn: ({ orderId, reason }) => forceRelease(orderId, reason),
-    onSuccess: () => {
-      toast('Funds released', 'success');
-      setReleasing(null);
+  const act = useMutation({
+    mutationFn: ({ kind, orderId, reason }) =>
+      kind === 'refund' ? refundFromConsole(orderId, reason) : forceRelease(orderId, reason),
+    onSuccess: (r, { kind }) => {
+      if (kind === 'refund') {
+        toast(r.status === 'failed' ? 'Recorded, but Paystack refused it. See Refunds to retry.' : 'Refund started', r.status === 'failed' ? 'error' : 'success');
+      } else {
+        toast('Funds released', 'success');
+      }
+      setActing(null);
       qc.invalidateQueries({ queryKey: ['admin'] });
     },
     onError: (e) => toast(e.message, 'error'),
@@ -90,13 +96,22 @@ export default function AdminEscrow({ operator }) {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {isOwner ? (
-                        <button
-                          type="button"
-                          onClick={() => setReleasing(o)}
-                          className="rounded-pill border border-line px-3 py-1 text-xs font-medium text-ink hover:bg-surface-2"
-                        >
-                          Release
-                        </button>
+                        <span className="inline-flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setActing({ order: o, kind: 'release' })}
+                            className="rounded-pill border border-line px-3 py-1 text-xs font-medium text-ink hover:bg-surface-2"
+                          >
+                            Release
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActing({ order: o, kind: 'refund' })}
+                            className="rounded-pill border border-red/30 px-3 py-1 text-xs font-medium text-red hover:bg-red-lt"
+                          >
+                            Refund
+                          </button>
+                        </span>
                       ) : null}
                     </td>
                   </tr>
@@ -111,42 +126,49 @@ export default function AdminEscrow({ operator }) {
           is exactly the action a log needs to explain six weeks later, and a
           blank field would make the audit row useless at the moment it
           mattered. */}
-      {releasing ? (
-        <ReleaseDialog
-          order={releasing}
-          pending={release.isPending}
-          onCancel={() => setReleasing(null)}
-          onConfirm={(reason) => release.mutate({ orderId: releasing.id, reason })}
+      {acting ? (
+        <ActionDialog
+          order={acting.order}
+          kind={acting.kind}
+          pending={act.isPending}
+          onCancel={() => setActing(null)}
+          onConfirm={(reason) => act.mutate({ kind: acting.kind, orderId: acting.order.id, reason })}
         />
       ) : null}
     </>
   );
 }
 
-function ReleaseDialog({ order, pending, onCancel, onConfirm }) {
+// Releasing to the store or refunding the buyer. Both move money that cannot
+// be pulled back, and both need a reason for the log.
+function ActionDialog({ order, kind, pending, onCancel, onConfirm }) {
   const [reason, setReason] = useState('');
+  const refund = kind === 'refund';
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4">
       <div className="card w-full max-w-sm p-5">
         <h2 className="font-display text-base font-semibold text-ink">
-          Release {formatNaira(order.amount)}?
+          {refund ? 'Refund' : 'Release'} {formatNaira(order.amount)}?
         </h2>
         <p className="mt-1 text-sm text-muted">
-          {order.order_code} · {order.tenant_name}. The seller receives{' '}
-          {formatNaira(order.seller_receives)}. This cannot be undone.
+          {order.order_code} · {order.tenant_name}.{' '}
+          {refund
+            ? "The buyer gets it back on their card through Paystack, less Paystack's processing fee, which Paystack keeps. The store gets nothing and owes nothing."
+            : `The seller receives ${formatNaira(order.seller_receives)}.`}{' '}
+          This cannot be undone.
         </p>
 
         <label className="mt-4 block">
           <span className="mb-1 block text-xs font-medium text-muted">
-            Why are you releasing this?
+            {refund ? 'Why are you refunding this? The buyer sees it.' : 'Why are you releasing this?'}
           </span>
           <input
             type="text"
             value={reason}
             autoFocus
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Buyer confirmed by phone"
+            placeholder={refund ? 'Store could not deliver' : 'Buyer confirmed by phone'}
             className="w-full rounded-lg border border-line px-3 py-2 text-sm outline-none focus:border-green/40"
           />
         </label>
@@ -163,9 +185,9 @@ function ReleaseDialog({ order, pending, onCancel, onConfirm }) {
             type="button"
             disabled={!reason.trim() || pending}
             onClick={() => onConfirm(reason.trim())}
-            className="flex-1 rounded-pill bg-green py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className={`flex-1 rounded-pill py-2 text-sm font-semibold text-white disabled:opacity-50 ${refund ? 'bg-red' : 'bg-green'}`}
           >
-            {pending ? 'Releasing…' : 'Release'}
+            {pending ? (refund ? 'Refunding…' : 'Releasing…') : refund ? 'Refund' : 'Release'}
           </button>
         </div>
       </div>

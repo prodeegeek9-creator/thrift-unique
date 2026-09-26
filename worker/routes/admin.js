@@ -13,6 +13,7 @@ import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js'
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
+import { refundOrder, refundPreview, retryRefund, RefundError } from '../lib/refunds.js';
 
 // The platform-operator console's API.
 //
@@ -87,6 +88,12 @@ export async function handleAdmin(request, env, path) {
 
   const release = rest.match(/^\/escrow\/([0-9a-f-]{36})\/release$/i);
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
+
+  if (rest === '/refunds' && method === 'GET') return listRefunds(cfg);
+  const refundRetry = rest.match(/^\/refunds\/([0-9a-f-]{36})\/retry$/i);
+  if (refundRetry && method === 'POST') return retryRefundRoute(cfg, op, refundRetry[1]);
+  const orderRefund = rest.match(/^\/orders\/([0-9a-f-]{36})\/refund$/i);
+  if (orderRefund && method === 'POST') return refundFromConsole(request, cfg, op, orderRefund[1]);
 
   const resolve = rest.match(/^\/disputes\/([0-9a-f-]{36})\/resolve$/i);
   if (resolve && method === 'POST') return resolveDispute(request, cfg, op, resolve[1]);
@@ -714,7 +721,7 @@ async function resolveDispute(request, cfg, op, disputeId) {
 
   const order = await db(cfg).one(
     'orders',
-    `id=eq.${dispute.order_id}&select=id,tenant_id,order_code,amount,commission,escrow_status,confirmed_at,payment_ref`
+    `id=eq.${dispute.order_id}&select=id,tenant_id,order_code,product_id,buyer_id,amount,commission,status,escrow_status,confirmed_at,payment_ref,paid_at`
   );
 
   let moved = null;
@@ -724,20 +731,25 @@ async function resolveDispute(request, cfg, op, disputeId) {
     moved = released ? 'released' : null;
   }
 
-  if (outcome === 'refunded' && order?.escrow_status === 'held') {
-    // Only the hold is reversed here. Returning the money to the buyer's card
-    // is a Paystack refund and deliberately NOT fired automatically from a
-    // console click — a refund is irreversible and belongs behind its own
-    // deliberate step. The state change records the decision; the transfer is
-    // made against payment_ref, which is carried in the audit row so whoever
-    // does it has the reference to hand.
-    await db(cfg).update(
-      'orders',
-      `id=eq.${order.id}&escrow_status=eq.held`,
-      { escrow_status: 'refunded', status: 'refunded' },
-      { returning: false }
-    );
-    moved = 'refunded';
+  // A refund goes back to the buyer's card through Paystack (lib/refunds.js),
+  // and only while Vendwyze still holds the payment. Once it has been released
+  // to the store, deciding for the buyer records the decision and the store
+  // and buyer settle it between them. Moving money that cannot be pulled back
+  // takes an owner.
+  if (outcome === 'refunded' && order && order.status !== 'refunded') {
+    const preview = await refundPreview(cfg, order);
+    if (!preview.refundable) {
+      moved = 'recorded';
+    } else {
+      if (op.level !== 'owner') return json({ error: 'A refund needs an owner on the admin team.' }, 403);
+      try {
+        const refund = await refundOrder(cfg, order, { reason: resolution ?? 'Dispute resolved for the buyer', via: 'dispute', by: op.userId });
+        moved = refund.status === 'failed' ? 'refund_failed' : 'refunded';
+      } catch (err) {
+        if (err instanceof RefundError) return json({ error: err.message }, err.status);
+        throw err;
+      }
+    }
   }
 
   await db(cfg).update(
@@ -763,6 +775,57 @@ async function resolveDispute(request, cfg, op, disputeId) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// ── REFUNDS ──────────────────────────────────────────────────────────────────
+
+async function listRefunds(cfg) {
+  const rows = await db(cfg).select(
+    'refunds',
+    'select=id,tenant_id,order_id,paid,fee,amount,reason,status,failure_reason,requested_via,created_at,processed_at,' +
+      'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
+  );
+  const names = await tenantNames(cfg, rows.map((r) => r.tenant_id));
+  return json(rows.map((r) => ({ ...r, tenant_name: names[r.tenant_id] ?? null })));
+}
+
+async function retryRefundRoute(cfg, op, refundId) {
+  try {
+    const refund = await retryRefund(cfg, refundId);
+    await audit(cfg, op.userId, 'refund.retry', { tenantId: refund.tenant_id, subject: refundId, detail: { status: refund.status } });
+    return json({ ok: true, status: refund.status, failure_reason: refund.failure_reason ?? null });
+  } catch (err) {
+    if (err instanceof RefundError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
+// POST /api/admin/orders/:id/refund { reason, relist? }: from the release
+// queue, for a held payment that should go back to the buyer rather than on
+// to the store.
+async function refundFromConsole(request, cfg, op, orderId) {
+  const body = await request.json().catch(() => ({}));
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return json({ error: 'Say why, for the audit log and the buyer.' }, 400);
+
+  const order = await db(cfg).one(
+    'orders',
+    `id=eq.${orderId}&select=id,tenant_id,order_code,product_id,buyer_id,amount,status,escrow_status,payment_ref,paid_at`
+  );
+  if (!order) return json({ error: 'No such order' }, 404);
+
+  try {
+    const refund = await refundOrder(cfg, order, { reason, via: 'operator', by: op.userId, relist: body?.relist === true });
+    await audit(cfg, op.userId, 'refund.create', {
+      tenantId: order.tenant_id,
+      subject: order.order_code,
+      detail: { paid: refund.paid, fee: refund.fee, amount: refund.amount, status: refund.status, reason },
+    });
+    return json({ ok: true, status: refund.status, amount: refund.amount, fee: refund.fee });
+  } catch (err) {
+    if (err instanceof RefundError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
 
 async function tenantNames(cfg, ids) {
   const unique = [...new Set(ids.filter(Boolean))];
