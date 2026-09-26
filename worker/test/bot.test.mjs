@@ -687,3 +687,13 @@ test('a greeting mid-listing is never taken as the item name or a price', async 
   r = step({ state: 'title', draft: { images: draft.images }, updated_at: new Date().toISOString() }, { body: 'Hi-top sneakers' }, ctx);
   assert.equal(r.draft.title, 'Hi-top sneakers');
 });
+
+test('SHARE asks for the share kit, with or without a code, and the menu and listed message offer it', async () => {
+  const { step, menuMessage, listedMessage } = await import('../lib/bot.js');
+  const ctx = { tenant: { name: 'Shop', status: 'active' } };
+  assert.deepEqual(step(null, { body: 'SHARE' }, ctx).action, { type: 'share_kit', code: null });
+  assert.deepEqual(step(null, { body: 'share jbu4pe' }, ctx).action, { type: 'share_kit', code: 'JBU4PE' });
+  assert.equal(step(null, { body: 'share my store with friends' }, ctx).action?.type === 'share_kit', false);
+  assert.match(menuMessage(ctx), /SHARE code/);
+  assert.match(listedMessage({ title: 'Boots', price: 1000, public_code: 'AB12' }, { origin: 'https://x.test' }), /Reply \*SHARE\*/);
+});

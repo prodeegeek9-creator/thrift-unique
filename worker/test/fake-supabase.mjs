@@ -74,17 +74,41 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     const filters = [];
     let select = null;
     let limit = null;
+    let order = null;
 
     for (const [k, v] of p) {
       if (k === 'select') select = v;
       else if (k === 'limit') limit = Number(v);
-      else if (k === 'order' || k === 'on_conflict') continue;
+      else if (k === 'order') order = v;
+      else if (k === 'on_conflict') continue;
       else {
         const m = /^(eq|neq|lt|gt|lte|gte|in|not\.is|is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
-    return { filters, select, limit };
+    return { filters, select, limit, order };
+  }
+
+  // order=col.desc,col2.asc.nullslast — nulls last unless nullsfirst, as a
+  // default PostgREST ascending sort would put them.
+  function sorted(rows, order) {
+    if (!order) return rows;
+    const keys = order.split(',').map((part) => {
+      const [col, ...mods] = part.split('.');
+      return { col, desc: mods.includes('desc'), nullsFirst: mods.includes('nullsfirst') };
+    });
+    return [...rows].sort((a, b) => {
+      for (const { col, desc, nullsFirst } of keys) {
+        const x = a[col];
+        const y = b[col];
+        if (x == null && y == null) continue;
+        if (x == null) return nullsFirst ? -1 : 1;
+        if (y == null) return nullsFirst ? 1 : -1;
+        const c = x < y ? -1 : x > y ? 1 : 0;
+        if (c) return desc ? -c : c;
+      }
+      return 0;
+    });
   }
 
   function matches(row, filters) {
@@ -107,7 +131,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     const u = new URL(url);
     const [, , , table] = u.pathname.split('/'); // /rest/v1/<table>
     const method = init.method ?? 'GET';
-    const { filters, limit } = parse(u.search.slice(1));
+    const { filters, limit, order } = parse(u.search.slice(1));
 
     calls.push({
       table,
@@ -127,7 +151,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     }
 
     if (method === 'GET') {
-      let rows = tables[table].filter((r) => matches(r, filters));
+      let rows = sorted(tables[table].filter((r) => matches(r, filters)), order);
       if (limit) rows = rows.slice(0, limit);
       return new Response(JSON.stringify(rows), { status: 200 });
     }

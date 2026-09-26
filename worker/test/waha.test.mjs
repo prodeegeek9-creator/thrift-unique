@@ -87,6 +87,12 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
       return new Response('{}', { status: 200 });
     }
 
+    if (path === '/api/sendImage') {
+      sent.push({ ...body, image: body.file?.url });
+      events.push({ sent: body.chatId });
+      return new Response(JSON.stringify({ id: { id: `out-${sent.length}` } }), { status: 200 });
+    }
+
     if (path === '/api/sendText') {
       sent.push(body);
       events.push({ sent: body.chatId });
@@ -1519,6 +1525,40 @@ test('every webhook that gets through records when WhatsApp last reached us', as
     // A refused webhook is not activity.
     await worker.fetch(hook(incoming('hi', { session: 'ut-nobody' }), { secret: 'wrong' }), wahaEnv(), {});
     assert.equal(supabase.tables.webhook_activity.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+// SHARE: the photos and a caption for Instagram, TikTok or Facebook, sent
+// back to the owner on the platform number.
+test('SHARE sends the latest item\'s photos and a caption with its link; SHARE <code> picks the item', async () => {
+  const supabase = makeFakeSupabase({
+    ...seed(),
+    products: [
+      { id: 'p-old', tenant_id: TENANT, public_code: 'OLD001', title: 'Denim jacket', price: 18000, condition: 'good', status: 'active', images: ['t/a.jpg', 't/b.jpg'], created_at: '2026-09-01T00:00:00Z' },
+      { id: 'p-new', tenant_id: TENANT, public_code: 'NEW002', title: 'Leather boots', price: 25000, condition: 'excellent', description: 'Size 42, barely worn.', status: 'active', images: ['t/c.jpg'], created_at: '2026-09-20T00:00:00Z' },
+      { id: 'p-sold', tenant_id: TENANT, public_code: 'SLD003', title: 'Sold bag', price: 5000, condition: 'good', status: 'sold', images: ['t/d.jpg'], created_at: '2026-09-25T00:00:00Z' },
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('share')], wahaEnv());
+    const [intro, photo, caption] = waha.sent;
+    assert.match(intro.text, /Leather boots\*, ready to post/);
+    assert.match(photo.image, /t\/c\.jpg$/);
+    assert.equal(caption.text, 'Leather boots\n₦25,000 · Excellent\n\nSize 42, barely worn.\n\nOrder here 👉 https://uniquethrift.ng/p/NEW002');
+
+    waha.sent.length = 0;
+    await converse([incoming('SHARE old001')], wahaEnv());
+    assert.equal(waha.sent.filter((m) => m.image).length, 2);
+    assert.match(waha.sent.at(-1).text, /Denim jacket[\s\S]*\/p\/OLD001/);
+
+    waha.sent.length = 0;
+    await converse([incoming('share SLD003')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.match(waha.sent[0].text, /can't find an item for sale with the code \*SLD003\*/);
   } finally {
     restore();
   }
