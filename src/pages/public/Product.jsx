@@ -6,6 +6,8 @@ import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
 import { firstImage, imageUrl } from '../../lib/images.js';
 import { fetchPublicStore } from '../../lib/tenants.js';
+import { checkoutEnabled } from '../../lib/checkout.js';
+import CheckoutForm from '../../components/CheckoutForm.jsx';
 
 // One item.
 //
@@ -37,6 +39,12 @@ export default function Product() {
   const [product, setProduct] = useState(null);
   const [state, setState] = useState('loading');
   const [more, setMore] = useState([]);
+  const [canPay, setCanPay] = useState(false);
+  const [buying, setBuying] = useState(false);
+
+  useEffect(() => {
+    checkoutEnabled().then(setCanPay);
+  }, []);
 
   // A few more of the store's items, once the item itself is on screen. Its
   // own failure is silent: this is a nicety under the thing the buyer came for.
@@ -87,9 +95,11 @@ export default function Product() {
     );
   }
 
-  const buyLink = product.tenant_whatsapp
+  const askLink = product.tenant_whatsapp
     ? `https://wa.me/${product.tenant_whatsapp}?text=${encodeURIComponent(
-        `Hi! I want to buy ${product.title} (${product.public_code}) — ${formatNaira(product.price)}`
+        canPay
+          ? `Hi! I have a question about ${product.title} (${product.public_code}).`
+          : `Hi! I want to buy ${product.title} (${product.public_code}) — ${formatNaira(product.price)}`
       )}`
     : null;
 
@@ -118,9 +128,31 @@ export default function Product() {
           </p>
         ) : null}
 
-        {buyLink ? (
+        {/* Buy now when online payment is set up; WhatsApp otherwise, and
+            always as the way to ask something first. */}
+        {canPay && buying ? (
+          <CheckoutForm code={product.public_code} price={product.price} onCancel={() => setBuying(false)} />
+        ) : canPay ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setBuying(true)}
+              className="mt-6 block w-full rounded-pill bg-green py-3 text-center text-sm font-semibold text-white"
+            >
+              Buy now
+            </button>
+            {askLink ? (
+              <a
+                href={askLink}
+                className="mt-2 block rounded-pill border border-line py-3 text-center text-sm font-semibold text-ink"
+              >
+                Ask on WhatsApp
+              </a>
+            ) : null}
+          </>
+        ) : askLink ? (
           <a
-            href={buyLink}
+            href={askLink}
             className="mt-6 block rounded-pill bg-green py-3 text-center text-sm font-semibold text-white"
           >
             Buy on WhatsApp

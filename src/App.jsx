@@ -13,6 +13,8 @@ import NotFound from './pages/NotFound.jsx';
 import Product from './pages/public/Product.jsx';
 import Store from './pages/public/Store.jsx';
 import Home from './pages/public/Home.jsx';
+import PayLink from './pages/public/PayLink.jsx';
+import OrderStatus from './pages/public/OrderStatus.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
@@ -54,6 +56,8 @@ export default function App() {
           store alone. See pages/public/Product.jsx and Store.jsx. */}
       <Route path="/p/:code" element={<Product />} />
       <Route path="/s/:slug" element={<Store />} />
+      <Route path="/pay/:token" element={<PayLink />} />
+      <Route path="/order/:reference" element={<OrderStatus />} />
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
 
       <Route path="/login" element={<Login />} />

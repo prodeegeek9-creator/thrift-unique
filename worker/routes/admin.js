@@ -3,6 +3,7 @@ import { approveStore } from '../lib/provision.js';
 import { approvedMessage } from '../lib/bot.js';
 import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
 import { TIERS, FLAG_MIN_TIER, planIncludes } from '../lib/plans.js';
+import { normalizeNumber } from '../lib/phone.js';
 import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
@@ -457,17 +458,6 @@ async function setDetails(request, cfg, op, tenantId) {
   await audit(cfg, op.userId, 'tenant.details', { tenantId, detail: { from, to: patch } });
 
   return json({ ok: true, ...patch });
-}
-
-// The same rules as the database trigger in migration 0016, applied here so a
-// bad number is a sentence back to the operator rather than a constraint error.
-// null clears the number; undefined means it is not a number at all.
-function normalizeNumber(raw) {
-  if (raw === null || String(raw).trim() === '') return null;
-  let digits = String(raw).replace(/\D/g, '');
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.length === 11 && digits.startsWith('0')) digits = `234${digits.slice(1)}`;
-  return /^[1-9][0-9]{9,14}$/.test(digits) ? digits : undefined;
 }
 
 async function setStatus(request, cfg, op, tenantId) {

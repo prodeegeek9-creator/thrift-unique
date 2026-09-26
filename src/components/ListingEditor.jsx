@@ -15,6 +15,7 @@ import { uploadListingPhoto } from '../lib/uploads.js';
 import { imageUrl } from '../lib/images.js';
 import { formatNaira, parseNaira } from '../lib/money.js';
 import { keys, tenantScope } from '../lib/queryKeys.js';
+import { createPaymentLink } from '../lib/checkout.js';
 
 // Adding or editing a listing from the dashboard.
 //
@@ -352,6 +353,10 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
               </button>
             ) : null}
 
+            {listingId && live && tenant?.status === 'active' ? (
+              <PaymentLink tenantId={tenantId} listingId={listingId} listedPrice={existing?.price} />
+            ) : null}
+
             {listingId && existing?.status !== 'archived' ? (
               <div className="mt-3 flex gap-2">
                 {live ? (
@@ -381,6 +386,91 @@ export default function ListingEditor({ tenantId, listingId = null, onClose }) {
           </>
         )}
       </form>
+    </div>
+  );
+}
+
+// A link to send a buyer in chat, at a price agreed there. The item comes off
+// sale when it is paid; the link lasts three days.
+function PaymentLink({ tenantId, listingId, listedPrice }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState(listedPrice != null ? String(Number(listedPrice)) : '');
+  const [made, setMade] = useState(null);
+
+  const create = useMutation({
+    mutationFn: () => createPaymentLink(tenantId, listingId, price),
+    onSuccess: (result) => setMade(result),
+    onError: (e) => toast(e.message, 'error'),
+  });
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-3 w-full rounded-pill border border-line py-2 text-sm font-semibold text-ink hover:bg-surface-2"
+      >
+        💳 Payment link for a buyer
+      </button>
+    );
+  }
+
+  const share = made
+    ? `https://wa.me/?text=${encodeURIComponent(`Here's the payment link (${formatNaira(made.price)}): ${made.url}`)}`
+    : null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-line p-3">
+      <p className="text-xs font-medium text-muted">Payment link for a buyer</p>
+      {made ? (
+        <>
+          <p className="mt-2 break-all rounded bg-surface-2 px-2 py-1.5 text-xs text-ink">{made.url}</p>
+          <p className="mt-1 text-[11px] text-muted">
+            {formatNaira(made.price)} · works for 3 days · the item comes off sale once it's paid
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                navigator.clipboard
+                  ?.writeText(made.url)
+                  .then(() => toast('Link copied', 'success'))
+                  .catch(() => toast('Could not copy that link', 'error'))
+              }
+              className="flex-1 rounded-pill bg-green py-2 text-xs font-semibold text-white"
+            >
+              Copy link
+            </button>
+            <a
+              href={share}
+              target="_blank"
+              rel="noreferrer"
+              className="flex-1 rounded-pill border border-line py-2 text-center text-xs font-semibold text-ink"
+            >
+              Send on WhatsApp
+            </a>
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 flex gap-2">
+          <input
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            aria-label="Agreed price"
+            className={`${INPUT} flex-1`}
+          />
+          <button
+            type="button"
+            disabled={create.isPending}
+            onClick={() => create.mutate()}
+            className="rounded-pill bg-green px-4 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {create.isPending ? 'Making…' : 'Make link'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

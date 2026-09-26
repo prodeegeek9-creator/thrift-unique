@@ -16,6 +16,7 @@ import { handleWaha } from './routes/waha.js';
 import { handleTeam } from './routes/team.js';
 import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
+import { handleCheckout } from './routes/checkout.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -112,6 +113,11 @@ async function api(request, env, path) {
   // both end in a WhatsApp message from the store's own session.
   if (path.startsWith('/api/submissions')) {
     return handleSubmissions(request, env, path);
+  }
+
+  // Buying: starting a Paystack payment, payment links, the return page.
+  if (path.startsWith('/api/checkout')) {
+    return handleCheckout(request, env, path);
   }
 
   // Posting a listing to the store's WhatsApp Status from the dashboard.
