@@ -6,6 +6,9 @@ import { useToast } from '../../lib/ToastContext.jsx';
 import { storeUrl, updateTenant } from '../../lib/tenants.js';
 import { InputError } from '../../lib/phone.js';
 import { tenantScope } from '../../lib/queryKeys.js';
+import { useAuth } from '../../lib/AuthContext.jsx';
+import { useMyProfile } from '../../lib/profile.js';
+import DetailsForm from '../../components/DetailsForm.jsx';
 
 export default function Settings() {
   const { tenant, role } = useTenant();
@@ -117,7 +120,33 @@ export default function Settings() {
           </p>
         )}
       </form>
+
+      <YourDetails />
     </>
+  );
+}
+
+// The signed-in person's own name, phone and address (migration 0037): their
+// account's, not the store's, so everybody on the team can change their own.
+function YourDetails() {
+  const { user } = useAuth();
+  const toast = useToast();
+  const { data: profile, isSuccess, isError } = useMyProfile(user);
+
+  return (
+    <section className="card mt-4 max-w-lg p-5">
+      <h2 className="text-sm font-semibold text-ink">Your details</h2>
+      <p className="mb-4 mt-0.5 text-sm text-muted">
+        Who you are and how to reach you. Only you and the platform team can see these.
+      </p>
+      {isSuccess ? (
+        <DetailsForm user={user} profile={profile} onSaved={() => toast('Saved', 'success')} />
+      ) : isError ? (
+        <p className="text-sm text-muted">Couldn't load your details. Refresh to try again.</p>
+      ) : (
+        <div className="h-40 animate-pulse rounded-lg bg-surface-2" />
+      )}
+    </section>
   );
 }
 
