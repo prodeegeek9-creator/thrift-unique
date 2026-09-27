@@ -5,7 +5,7 @@ import BottomTabBar from './BottomTabBar.jsx';
 
 export default function SellerShell() {
   return (
-    <div className="flex min-h-dvh bg-bg">
+    <div className="flex min-h-screen min-h-dvh bg-bg">
       <Sidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">

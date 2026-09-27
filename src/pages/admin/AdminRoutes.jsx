@@ -71,10 +71,10 @@ function Console({ operator }) {
   const signOut = useConsoleSignOut();
 
   return (
-    <div className="flex min-h-dvh bg-bg">
+    <div className="flex min-h-screen min-h-dvh bg-bg">
       {/* Pinned to the window, like the seller sidebar: the page scrolls,
           this stays. */}
-      <aside className="hidden w-[220px] shrink-0 flex-col bg-sidebar lg:sticky lg:top-0 lg:flex lg:h-dvh">
+      <aside className="pinned-sidebar hidden w-[220px] shrink-0 flex-col bg-sidebar lg:flex">
         <div className="px-5 py-5">
           <BrandLockup />
           <p className="mt-2 rounded-pill bg-gold/20 px-2 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-gold">
