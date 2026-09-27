@@ -85,12 +85,24 @@
  * <html>, and no component touched. Until then there is nothing to toggle. */
 
 @layer base {
+  /* No elastic overscroll. On an iPad, scrolling past the top or bottom
+     dragged the whole app, sidebar and top bar included, and sprang back:
+     the dashboard looked as if nothing was fixed. The page still scrolls;
+     it just stops at its ends. (iPadOS/Safari 16 and later; older ones
+     keep the bounce and nothing else changes.) */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
   }
 
   body {
     @apply bg-bg text-text font-sans antialiased;
+    /* 100vh first for browsers without dvh (iPadOS before 15.4). */
+    min-height: 100vh;
     min-height: 100dvh;
   }
 
@@ -122,5 +134,22 @@
      naming once rather than repeating four utilities everywhere. */
   .card {
     @apply bg-surface border border-line rounded-card shadow-card;
+  }
+
+  /* A sidebar that stays in the window while the page scrolls (the seller
+     dashboard's and the console's). Plain CSS rather than utilities so the
+     fallbacks are in a known order: 100vh where dvh isn't understood, which
+     would otherwise leave no height at all, and the sidebar would grow with
+     the page and scroll away with it. align-self keeps a flex row from
+     stretching it to the page's height either way. */
+  @media (min-width: 1024px) {
+    .pinned-sidebar {
+      position: -webkit-sticky;
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      height: 100vh;
+      height: 100dvh;
+    }
   }
 }
