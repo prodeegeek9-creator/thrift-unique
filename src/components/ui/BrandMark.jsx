@@ -1,42 +1,55 @@
-// The leaf mark, carried as literals rather than tokens.
-//
-// Same reasoning as Automate Naija's BrandMark: these are the logo's own
-// colours, not the theme's. They have to read the same against the cream page
-// and against the dark green sidebar, so they must not follow a token that
-// changes underneath them.
-//
-// Tenant branding replaces this component wherever a seller has uploaded a
-// logo — see TenantBrandMark. This is Vendwyze's own mark, for the
-// platform chrome and the login screen.
+// Vendwyze platform mark: a shopping cart carrying a stylised V.
+// The cart communicates commerce; the V makes the mark ownable to Vendwyze.
+// The lime/forest palette is fixed here because this is platform branding,
+// not tenant theming.
+
 export default function BrandMark({ className = 'h-8 w-8' }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="#12301E" />
+    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+      <defs>
+        <linearGradient id="vendwyzeMark" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#A8E600" />
+          <stop offset="0.55" stopColor="#63C51A" />
+          <stop offset="1" stopColor="#0B2E1F" />
+        </linearGradient>
+      </defs>
       <path
-        d="M16 7c-4.5 0-8 3.2-8 7.6 0 4 2.9 7.2 7 7.9V25h2v-2.5c4.1-.7 7-3.9 7-7.9C24 10.2 20.5 7 16 7Z"
-        fill="#C89A4A"
+        d="M9 10h4l2.8 18.1a4 4 0 0 0 4 3.4h14.8a4 4 0 0 0 3.8-2.7L42 16H17"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
       <path
-        d="M16 10.5c-2.6 0-4.6 1.9-4.6 4.3 0 2.1 1.4 3.8 3.4 4.2v-4.6h2.4v4.6c2-.4 3.4-2.1 3.4-4.2 0-2.4-2-4.3-4.6-4.3Z"
-        fill="#5C7A3E"
+        d="M15.8 18.1 22.2 29 28.3 18.1 34.4 29 40.7 18.1"
+        fill="none"
+        stroke="url(#vendwyzeMark)"
+        strokeWidth="4.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
+      <circle cx="21" cy="37.2" r="2.8" fill="#0B2E1F" />
+      <circle cx="35" cy="37.2" r="2.8" fill="#0B2E1F" />
+      <path d="M29 7v4.5M26.75 9.25h4.5" stroke="#A8E600" strokeWidth="2.2" strokeLinecap="round" />
     </svg>
   );
 }
 
-// The wordmark beside the mark: "VENDWYZE" over "Sell. Grow. Together."
 export function BrandLockup({ className = '', tone = 'light' }) {
   const primary = tone === 'light' ? 'text-white' : 'text-ink';
-  const secondary = tone === 'light' ? 'text-white/55' : 'text-muted';
+  const secondary = tone === 'light' ? 'text-white/60' : 'text-muted';
 
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
       <BrandMark className="h-8 w-8 shrink-0" />
       <div className="leading-tight">
-        <div className={`font-display text-sm font-bold tracking-wide ${primary}`}>
+        <div className={`font-sans text-sm font-extrabold tracking-[0.12em] ${primary}`}>
           VENDWYZE
         </div>
-        <div className={`text-[10px] italic ${secondary}`}>Sell. Grow. Together.</div>
+        <div className={`text-[10px] font-medium tracking-wide ${secondary}`}>
+          Sell smarter. Grow easier.
+        </div>
       </div>
     </div>
   );
