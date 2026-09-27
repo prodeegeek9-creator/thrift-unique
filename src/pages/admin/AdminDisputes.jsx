@@ -71,7 +71,7 @@ export default function AdminDisputes() {
       ) : !disputes?.length ? (
         <EmptyState icon="disputes" title="No disputes" body="Nothing has gone wrong yet." />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {disputes.map((d) => (
             <article key={d.id} className="card p-4">
               <div className="flex items-start justify-between gap-3">

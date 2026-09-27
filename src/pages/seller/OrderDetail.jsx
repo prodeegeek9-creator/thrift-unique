@@ -68,7 +68,7 @@ export default function OrderDetail() {
         <StatusPill status={order.status} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
         <div className="space-y-4 md:col-span-3">
           <div className="card p-4">
             <div className="flex items-center gap-3">

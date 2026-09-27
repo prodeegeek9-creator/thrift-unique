@@ -90,7 +90,7 @@ export default function PlanPicker({ tenantId }) {
 
       {blocked ? <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-text">{blocked}</p> : null}
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {data.plans.map((p) => {
           const current = p.tier === tenant?.tier;
           const highlight = wanted === p.tier && !current;

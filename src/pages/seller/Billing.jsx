@@ -26,7 +26,7 @@ export default function Billing() {
     <>
       <PageHeader title="Billing & Plan" subtitle="Your plan, your usage, and what else is available." />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <div className="rounded-card bg-sidebar p-5 text-white">
             <p className="text-[11px] uppercase tracking-wider text-white/50">Your plan</p>

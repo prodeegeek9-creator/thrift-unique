@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Icon from '../../components/ui/Icon.jsx';
 import StatTile from '../../components/ui/StatTile.jsx';
 import StatusPill from '../../components/ui/StatusPill.jsx';
+import OrderRows from '../../components/OrderRows.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
@@ -50,8 +51,11 @@ export default function Overview() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+      {/* grid-cols-1 and min-w-0: a grid column otherwise grows to its
+          widest child, and the orders table made a phone's page 720px wide.
+          With them the table scrolls inside its card instead. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="min-w-0 space-y-4 lg:col-span-2">
           <StoreCard tenant={tenant} />
 
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -89,7 +93,7 @@ export default function Overview() {
           <RecentOrders orders={data?.recentOrders} loading={isLoading} />
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <QuickActions tenant={tenant} />
           {nudge ? (
             <UpgradeNudge
@@ -243,7 +247,9 @@ function RecentOrders({ orders, loading }) {
           No orders yet. They'll appear here as buyers pay.
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <OrderRows orders={orders} nameLength={14} />
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
@@ -278,6 +284,7 @@ function RecentOrders({ orders, loading }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

@@ -12,6 +12,7 @@ import { maskPhone, shortName } from '../../lib/privacy.js';
 import { dateTime } from '../../lib/time.js';
 import { keys } from '../../lib/queryKeys.js';
 import { firstImage } from '../../lib/images.js';
+import OrderRows from '../../components/OrderRows.jsx';
 
 const CHIPS = [
   { id: 'all', label: 'All' },
@@ -67,7 +68,9 @@ export default function Orders() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <OrderRows orders={orders} />
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
@@ -110,6 +113,7 @@ export default function Orders() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </>

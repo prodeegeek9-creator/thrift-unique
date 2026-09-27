@@ -64,7 +64,7 @@ export default function Analytics() {
             <StatTile label="Average order" value={formatNaira(data.averageOrder)} />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
             <SalesTrend points={data.trend} />
             <ChannelShare rows={data.byChannel} total={data.totalSales} />
           </div>
