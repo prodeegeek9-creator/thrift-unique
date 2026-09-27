@@ -72,7 +72,9 @@ function Console({ operator }) {
 
   return (
     <div className="flex min-h-dvh bg-bg">
-      <aside className="hidden w-[220px] shrink-0 flex-col bg-sidebar lg:flex">
+      {/* Pinned to the window, like the seller sidebar: the page scrolls,
+          this stays. */}
+      <aside className="hidden w-[220px] shrink-0 flex-col bg-sidebar lg:sticky lg:top-0 lg:flex lg:h-dvh">
         <div className="px-5 py-5">
           <BrandLockup />
           <p className="mt-2 rounded-pill bg-gold/20 px-2 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-gold">
@@ -80,7 +82,7 @@ function Console({ operator }) {
           </p>
         </div>
 
-        <nav className="flex-1 space-y-1 px-3">
+        <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3">
           {NAV.map((item) => (
             <NavLink
               key={item.to}

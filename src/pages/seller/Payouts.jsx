@@ -52,7 +52,7 @@ export default function Payouts() {
     <>
       <PageHeader title="Payouts" subtitle="What you have been paid, and what is pending." />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <div className="grid gap-3 sm:grid-cols-2">
             <StatTile
@@ -88,7 +88,24 @@ export default function Payouts() {
                 }
               />
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* Phones: a row each, with the reason a payout is waiting on
+                  its own line rather than squeezed beside the status. */}
+              <ul className="divide-y divide-line/60 md:hidden">
+                {payouts.map((p) => (
+                  <li key={p.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold tabular-nums text-ink">{formatNaira(p.amount)}</span>
+                      <StatusPill status={p.status} label={payoutStatusLabel(p)} />
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      {p.reference ?? '—'} · {dateOnly(p.paid_at ?? p.created_at)}
+                    </p>
+                    {p.failure_reason ? <p className="mt-1 text-xs text-red">{p.failure_reason}</p> : null}
+                  </li>
+                ))}
+              </ul>
+              <div className="hidden overflow-x-auto md:block">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
@@ -119,6 +136,7 @@ export default function Payouts() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         </div>

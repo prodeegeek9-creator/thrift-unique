@@ -12,7 +12,7 @@ const ROLE_LABEL = {
 
 export default function TopBar() {
   const { user } = useAuth();
-  const { role } = useTenant();
+  const { role, tenant } = useTenant();
   const name = user?.user_metadata?.name || user?.email?.split('@')[0] || 'there';
 
   return (
@@ -30,7 +30,14 @@ export default function TopBar() {
         />
       </label>
 
-      <div className="flex-1 md:hidden" />
+      {/* Phones have no sidebar, so the store's name goes here. */}
+      <span className="min-w-0 truncate font-display text-base font-semibold text-ink md:hidden">
+        {tenant?.name}
+      </span>
+
+      {/* Pushes the bell and the account to the right edge at every width;
+          the search box stops growing at max-w-md. */}
+      <div className="flex-1" />
 
       <NotificationBell />
 

@@ -41,7 +41,7 @@ export default function Disputes() {
           body="When a buyer says an item never arrived or isn't what they expected, it lands here and our team handles the back-and-forth."
         />
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {disputes.map((d) => (
             <article key={d.id} className="card p-4">
               <div className="flex items-start justify-between gap-3">

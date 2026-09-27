@@ -67,7 +67,35 @@ export default function Contacts() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Phones: who, and what they're worth to the store, in one row. */}
+          <ul className="divide-y divide-line/60 md:hidden">
+            {contacts.map((c) => (
+              <li key={c.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-green-lt text-[11px] font-semibold text-green">
+                  {initialsOf(c.name)}
+                </span>
+                <span className="min-w-0 flex-1 leading-tight">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-ink">{c.name || 'Unnamed buyer'}</span>
+                    {c.is_repeat ? (
+                      <span className="shrink-0 rounded-pill bg-green-lt px-1.5 py-0.5 text-[10px] font-semibold text-green">
+                        Repeat
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="block text-[11px] text-muted">{maskPhone(c.phone)}</span>
+                </span>
+                <span className="shrink-0 text-right leading-tight">
+                  <span className="block text-sm font-semibold tabular-nums text-ink">{formatNaira(c.total_spent)}</span>
+                  <span className="block text-[11px] text-muted">
+                    {c.order_count} order{Number(c.order_count) === 1 ? '' : 's'} · {relative(c.last_purchase_at)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
@@ -114,6 +142,7 @@ export default function Contacts() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </>
