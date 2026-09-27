@@ -76,7 +76,7 @@ export default function AdminTenantDetail({ operator }) {
     return <p className="card p-8 text-center text-sm text-muted">No such store.</p>;
   }
 
-  const { tenant, signup, flags, members, stats, listings, submissions, payoutAccount, payouts, billing } = data;
+  const { tenant, signup, owner, flags, members, stats, listings, submissions, payoutAccount, payouts, billing } = data;
   const pending = tenant.status === 'onboarding';
 
   return (
@@ -164,6 +164,8 @@ export default function AdminTenantDetail({ operator }) {
           </p>
         </section>
       ) : null}
+
+      {owner ? <OwnerCard owner={owner} /> : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile label="Orders" value={stats.orders} />
@@ -807,4 +809,35 @@ function Row({ label, value, plain = false }) {
       <dd className={`min-w-0 truncate text-right font-medium text-ink ${plain ? '' : 'capitalize'}`}>{value}</dd>
     </div>
   );
+}
+
+// Who owns the store: the name, phone and address their account was made
+// with (migration 0037). Anything they haven't given yet says so.
+function OwnerCard({ owner }) {
+  const place = [owner.address, owner.city, owner.state].filter(Boolean).join(', ');
+  return (
+    <section className="card mb-4 p-4">
+      <h2 className="text-sm font-semibold text-ink">Owner</h2>
+      <dl className="mt-2 grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-[auto_1fr]">
+        <dt className="text-xs text-muted sm:text-sm">Name</dt>
+        <dd className="min-w-0 break-words text-ink">{owner.full_name ?? <Missing />}</dd>
+        <dt className="text-xs text-muted sm:text-sm">Phone</dt>
+        <dd className="min-w-0 break-words">
+          {owner.phone ? (
+            <a href={`https://wa.me/${owner.phone}`} target="_blank" rel="noreferrer" className="text-green hover:underline">
+              +{owner.phone}
+            </a>
+          ) : (
+            <Missing />
+          )}
+        </dd>
+        <dt className="text-xs text-muted sm:text-sm">Address</dt>
+        <dd className="min-w-0 break-words text-ink">{place || <Missing />}</dd>
+      </dl>
+    </section>
+  );
+}
+
+function Missing() {
+  return <span className="text-muted">Not given yet</span>;
 }

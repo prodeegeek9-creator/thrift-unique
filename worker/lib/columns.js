@@ -9,6 +9,9 @@
 const cols = (...names) => names.join(',');
 
 export const COLUMNS = {
+  // Who is behind an account, for the operator's console (migration 0037).
+  account_profile: cols('user_id', 'full_name', 'phone', 'address', 'city', 'state', 'updated_at'),
+
   // Includes the card's Paystack authorization: what an automatic renewal is
   // charged with (lib/billing.js). Only ever read to charge it.
   billing_card: cols('tenant_id', 'authorization_code', 'email', 'card_brand', 'card_last4', 'exp_month', 'exp_year', 'updated_at'),

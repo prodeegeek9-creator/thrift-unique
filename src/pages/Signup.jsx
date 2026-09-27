@@ -5,12 +5,19 @@ import { signUpWithEmail } from '../lib/signup.js';
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import LogoLoader from '../components/ui/LogoLoader.jsx';
 import GoogleButton from '../components/GoogleButton.jsx';
+import ProfileFields, { INPUT } from '../components/ProfileFields.jsx';
+import { EMPTY_PROFILE, checkedProfile } from '../lib/profile.js';
 
 // Making an account on the web. It's a login, not a store: the store is
 // opened on WhatsApp next, from the number it will run on (Onboarding.jsx),
 // and the account is where its dashboard shows up once it's approved.
+//
+// It asks who the person is, too: name, phone and address, which the operator
+// sees when approving the store (migration 0037). Somebody who signs up with
+// Google is asked for them on the onboarding page instead.
 export default function Signup() {
   const { user, loading } = useAuth();
+  const [details, setDetails] = useState(EMPTY_PROFILE);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -22,6 +29,11 @@ export default function Signup() {
 
   async function submit(e) {
     e.preventDefault();
+    const { profile, error: detailsError } = checkedProfile(details);
+    if (detailsError) {
+      setError(detailsError);
+      return;
+    }
     if (password.length < 8) {
       setError('Choose a password of at least 8 characters.');
       return;
@@ -29,7 +41,7 @@ export default function Signup() {
     setBusy(true);
     setError(null);
     try {
-      const { confirm } = await signUpWithEmail(email.trim().toLowerCase(), password);
+      const { confirm } = await signUpWithEmail(email.trim().toLowerCase(), password, profile);
       // Signed in straight away when confirmation is off; the guard on
       // /dashboard then takes it to onboarding.
       if (confirm) setSentTo(email.trim());
@@ -65,6 +77,8 @@ export default function Signup() {
             </div>
 
             <GoogleButton />
+
+            <ProfileFields value={details} onChange={setDetails} />
 
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-muted">Email</span>
@@ -118,6 +132,3 @@ export default function Signup() {
     </div>
   );
 }
-
-const INPUT =
-  'w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-green/40';
