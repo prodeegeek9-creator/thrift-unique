@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 96" role="img" aria-labelledby="title desc">
+<title>Vendwyze</title><desc>Vendwyze shopping cart and V logo with the tagline Sell smarter. Grow easier.</desc>
+<defs><linearGradient id="v" x1="34" y1="12" x2="74" y2="78" gradientUnits="userSpaceOnUse"><stop stop-color="#A8E600"/><stop offset=".55" stop-color="#63C51A"/><stop offset="1" stop-color="#0B2E1F"/></linearGradient></defs>
+<g transform="translate(8 8)">
+<path d="M9 10h7l3 34a7 7 0 0 0 7 6h22a7 7 0 0 0 6.6-4.7L61 21H21" fill="none" stroke="#0B2E1F" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M22 23l10 18 10-18 10 18 10-18" fill="none" stroke="url(#v)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="29" cy="59" r="4.2" fill="#0B2E1F"/><circle cx="52" cy="59" r="4.2" fill="#0B2E1F"/>
+<path d="M43 5v7M39.5 8.5h7" stroke="#A8E600" stroke-width="3" stroke-linecap="round"/>
+</g>
+<text x="92" y="51" font-family="Inter,Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="4" fill="#0B2E1F">VENDWYZE</text>
+<text x="94" y="77" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="600" letter-spacing="2.4" fill="#52625A">SELL SMARTER. GROW EASIER.</text>
+</svg>
