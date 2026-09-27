@@ -136,20 +136,24 @@
     @apply bg-surface border border-line rounded-card shadow-card;
   }
 
-  /* A sidebar that stays in the window while the page scrolls (the seller
-     dashboard's and the console's). Plain CSS rather than utilities so the
-     fallbacks are in a known order: 100vh where dvh isn't understood, which
-     would otherwise leave no height at all, and the sidebar would grow with
-     the page and scroll away with it. align-self keeps a flex row from
-     stretching it to the page's height either way. */
-  @media (min-width: 1024px) {
-    .pinned-sidebar {
-      position: -webkit-sticky;
-      position: sticky;
-      top: 0;
-      align-self: flex-start;
-      height: 100vh;
-      height: 100dvh;
-    }
+  /* The dashboard's and the console's frame: fixed to the window, which
+     itself never scrolls. Only .app-scroll, the content area, does. On an
+     iPad the page's elastic bounce otherwise dragged the whole app, sidebar
+     and top bar included, whatever the sidebar's own positioning; with no
+     page scroll there is nothing for it to drag, and the content area's own
+     bounce stays inside it (overscroll-behavior: contain). */
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .app-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 }

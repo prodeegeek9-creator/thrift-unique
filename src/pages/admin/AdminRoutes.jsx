@@ -1,4 +1,5 @@
-import { NavLink, Route, Routes, useNavigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import Icon from '../../components/ui/Icon.jsx';
 import { BrandLockup } from '../../components/ui/BrandMark.jsx';
 import { ConsoleAuthProvider, useConsoleAuth, useConsoleSignOut } from '../../lib/adminAuth.jsx';
@@ -69,12 +70,20 @@ function ConsoleWelcome() {
 
 function Console({ operator }) {
   const signOut = useConsoleSignOut();
+  const main = useRef(null);
+  const { pathname } = useLocation();
+
+  // A new page opens at the top of the content area, not where the last one
+  // was scrolled to.
+  useEffect(() => {
+    main.current?.scrollTo(0, 0);
+  }, [pathname]);
 
   return (
-    <div className="flex min-h-screen min-h-dvh bg-bg">
-      {/* Pinned to the window, like the seller sidebar: the page scrolls,
-          this stays. */}
-      <aside className="pinned-sidebar hidden w-[220px] shrink-0 flex-col bg-sidebar lg:flex">
+    // A frame fixed to the window, like the seller dashboard's: only the
+    // content area scrolls (.app-shell / .app-scroll in index.css).
+    <div className="app-shell bg-bg">
+      <aside className="hidden h-full w-[220px] shrink-0 flex-col bg-sidebar lg:flex">
         <div className="px-5 py-5">
           <BrandLockup />
           <p className="mt-2 rounded-pill bg-gold/20 px-2 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-gold">
@@ -113,7 +122,7 @@ function Console({ operator }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Phones: the same sections as a scrolling row, and sign-out in reach. */}
         <header className="bg-sidebar lg:hidden">
           <div className="flex items-center justify-between px-4 pb-2 pt-3">
@@ -152,7 +161,7 @@ function Console({ operator }) {
           Platform console — this shows every store on the platform.
         </div>
 
-        <main className="flex-1 px-4 py-5 md:px-6">
+        <main ref={main} className="app-scroll px-4 py-5 md:px-6">
           <Routes>
             <Route index element={<AdminOverview />} />
             <Route path="tenants" element={<AdminTenants />} />
