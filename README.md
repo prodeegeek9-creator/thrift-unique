@@ -561,6 +561,12 @@ change only their own row; the Worker reads them for the console, where a
 store's page shows its owner's name, phone and address (for a pending store,
 the account its sign-up email belongs to).
 
+Owners who never saw that form, because their store was opened on WhatsApp
+and its login made at approval, or their account is older than it, are asked
+at the top of the dashboard ("Add your details") until they've given them.
+"Later" puts the prompt away for a week on that device. Everybody can change
+their own details in Settings, under "Your details".
+
 1. Signed in with no store, they land on `/onboarding`. Anybody without a
    name, phone and address on file is asked for them first, "A little about
    you": that's everybody who came in with Google, which brings only a name

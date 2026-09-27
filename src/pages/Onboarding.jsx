@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import Icon from '../components/ui/Icon.jsx';
 import LogoLoader from '../components/ui/LogoLoader.jsx';
@@ -8,8 +8,8 @@ import { setupDeepLink, botNumberDisplay } from '../lib/whatsapp.js';
 import { useAuth, signOut } from '../lib/AuthContext.jsx';
 import { useTenant } from '../lib/TenantContext.jsx';
 import { fetchSignupStatus } from '../lib/signup.js';
-import ProfileFields from '../components/ProfileFields.jsx';
-import { EMPTY_PROFILE, checkedProfile, fetchMyProfile, missingDetails, nameFromAccount, saveMyProfile } from '../lib/profile.js';
+import DetailsForm from '../components/DetailsForm.jsx';
+import { missingDetails, useMyProfile } from '../lib/profile.js';
 
 // Where somebody lands with an account but no store: made on the web
 // (Signup.jsx), or a store that hasn't been approved yet.
@@ -35,11 +35,7 @@ export default function Onboarding() {
     enabled: Boolean(signedInWithoutStore),
     refetchInterval: 20_000,
   });
-  const { data: profile, isError: profileError } = useQuery({
-    queryKey: ['profile', 'me', user?.id],
-    queryFn: () => fetchMyProfile(user.id),
-    enabled: Boolean(signedInWithoutStore),
-  });
+  const { data: profile, isError: profileError } = useMyProfile(user, { enabled: Boolean(signedInWithoutStore) });
 
   // Approved while the page was open: a full load, so the dashboard reads
   // the new membership.
@@ -144,38 +140,12 @@ export default function Onboarding() {
   );
 }
 
-// Name, phone and address, for an account that doesn't have them yet.
+// Name, phone and address, for an account that doesn't have them yet. Saving
+// updates the profile the page reads, which moves it on to the WhatsApp step.
 function DetailsStep({ user, profile }) {
-  const queryClient = useQueryClient();
-  const [details, setDetails] = useState(() => ({
-    ...EMPTY_PROFILE,
-    ...Object.fromEntries(Object.entries(profile ?? {}).filter(([k, v]) => k in EMPTY_PROFILE && v)),
-    full_name: profile?.full_name || nameFromAccount(user),
-  }));
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e) {
-    e.preventDefault();
-    const { profile: checked, error: detailsError } = checkedProfile(details);
-    if (detailsError) {
-      setError(detailsError);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const saved = await saveMyProfile(user.id, checked);
-      queryClient.setQueryData(['profile', 'me', user.id], saved);
-    } catch {
-      setError("Couldn't save your details. Try again in a minute.");
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="flex min-h-dvh items-center justify-center bg-bg px-4 py-8">
-      <form onSubmit={submit} className="card w-full max-w-sm space-y-4 p-6">
+      <div className="card w-full max-w-sm space-y-4 p-6">
         <div className="flex justify-center">
           <BrandLockup tone="dark" />
         </div>
@@ -186,21 +156,7 @@ function DetailsStep({ user, profile }) {
           </p>
         </div>
 
-        <ProfileFields value={details} onChange={setDetails} />
-
-        {error ? (
-          <p role="alert" className="rounded-lg bg-red-lt px-3 py-2 text-xs text-red">
-            {error}
-          </p>
-        ) : null}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-pill bg-green py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-        >
-          {busy ? 'Saving…' : 'Continue'}
-        </button>
+        <DetailsForm user={user} profile={profile} submitLabel="Continue" />
 
         <p className="text-center text-[11px] text-muted">
           Signed in as {user.email}.{' '}
@@ -208,7 +164,7 @@ function DetailsStep({ user, profile }) {
             Sign out
           </button>
         </p>
-      </form>
+      </div>
     </div>
   );
 }

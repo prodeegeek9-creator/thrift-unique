@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar.jsx';
 import TopBar from './TopBar.jsx';
 import BottomTabBar from './BottomTabBar.jsx';
+import DetailsPrompt from '../DetailsPrompt.jsx';
 
 // The dashboard's frame. The window never scrolls; the content area does
 // (.app-shell / .app-scroll in index.css), so the sidebar and top bar stay put
@@ -26,6 +27,7 @@ export default function SellerShell() {
         {/* The bottom padding clears the tab bar on phones, where it is fixed
             over the content. */}
         <main ref={main} className="app-scroll px-4 pb-24 pt-5 md:px-6 lg:pb-8">
+          <DetailsPrompt />
           <Outlet />
         </main>
       </div>
