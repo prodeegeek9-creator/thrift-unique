@@ -492,7 +492,8 @@ current findings are the intended design and should not be "fixed":
 
 - **`rls_enabled_no_policy`** on `bot_conversations`, `bot_messages`,
   `whatsapp_secrets`, `channel_connections`, `platform_admins`,
-  `operator_audit`, `payment_problems` and `reconciliation_runs`, among
+  `operator_audit`, `payment_problems`, `reconciliation_runs` and
+  `web_signup_codes`, among
   others the Worker alone uses. That is the pattern, not an oversight — RLS on, no policy, no grant,
   reachable only under the service key.
 - **`public_product()` executable by `anon`.** It is the storefront's one
@@ -543,6 +544,41 @@ should run exactly once.
 An invite or reset link signs the person in with no password yet, so
 `RequireAuth` holds them on `SetPassword` until they choose one. Team
 invitations go through the same screen.
+
+### Or: an account on the web first, the store on WhatsApp
+
+Somebody can also make an account at `/signup`, with an email and password or
+"Continue with Google". An account is a login, not a store. The store is still
+opened on WhatsApp, from the number it will run on, because messaging the bot
+from that number is what proves the seller has it.
+
+1. Signed in with no store, they land on `/onboarding`: "Set up your store on
+   WhatsApp". Its button opens WhatsApp with a message already typed that
+   carries the account's code, `VW-` and six characters (`GET /api/signup/me`,
+   `worker/routes/signup.js`, migration 0036).
+2. The bot reads the code, stores the account's email on the sign-up, and
+   skips the email question (`signupStep` in `worker/lib/bot.js`). A code
+   sent part way through a sign-up links it and asks the same question again.
+   A code is used by the first number that sends it, and ignored from any
+   other, so a forwarded code can't add a store to somebody's account.
+3. Approval works as above, and finds the account already there: the store is
+   added to it, with no new login or password link. The onboarding page
+   checks back every 20 seconds, says when the store is waiting for approval,
+   and opens the dashboard once it's approved.
+
+The Google button appears only once Google is switched on for the Supabase
+project: the page asks Supabase's own settings (`/auth/v1/settings`). To
+switch it on:
+
+1. In Google Cloud, create an OAuth client (APIs & Services → Credentials →
+   Create credentials → OAuth client ID, type "Web application"). Its
+   authorised redirect URI is the Supabase project's callback,
+   `https://vhmyzawgtstjtavwzpzn.supabase.co/auth/v1/callback`.
+2. In Supabase, Authentication → Sign In / Providers → Google: turn it on and
+   paste the client ID and secret.
+3. In Supabase, Authentication → URL Configuration: the site's address as the
+   Site URL, and `https://<site>/dashboard` under Redirect URLs, which is where
+   both Google and the confirmation email return people to.
 
 ### Advisor findings that are meant to stay
 

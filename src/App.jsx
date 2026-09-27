@@ -6,6 +6,7 @@ import RequireStaffRole from './components/RequireStaffRole.jsx';
 import SellerShell from './components/layout/SellerShell.jsx';
 
 import Login from './pages/Login.jsx';
+import Signup from './pages/Signup.jsx';
 import Welcome from './pages/Welcome.jsx';
 import Onboarding from './pages/Onboarding.jsx';
 import ConnectChannels from './pages/ConnectChannels.jsx';
@@ -62,6 +63,7 @@ export default function App() {
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
 
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
       <Route path="/welcome" element={<Welcome />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/connect" element={<ConnectChannels />} />

@@ -30,9 +30,12 @@ export function botNumberDisplay() {
   return m ? `+${m[1]} ${m[2]} ${m[3]} ${m[4]}` : `+${n}`;
 }
 
-export function setupDeepLink() {
+// With a web account's code (VW-…), the bot opens the store for that account
+// and doesn't ask for an email (worker/routes/signup.js).
+export function setupDeepLink(code = null) {
   if (!BOT_NUMBER) return null;
-  return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent('Hi! I want to set up my store.')}`;
+  const text = code ? `Hi! I want to set up my store. My Vendwyze code is ${code}` : 'Hi! I want to set up my store.';
+  return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent(text)}`;
 }
 
 // The bot answers one number for every tenant, so the opening message has to
