@@ -11,6 +11,7 @@ import {
   formatNaira,
   conditionLabel,
   signupStep,
+  webCodeIn,
   submittedMessage,
   savedMessage,
   paymentLinkMessage,
@@ -22,6 +23,7 @@ import { makePaymentLink } from '../lib/paylinks.js';
 import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
+import { accountForCode } from './signup.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
@@ -1219,7 +1221,9 @@ async function signup(cfg, event, phone) {
     return json({ ok: true, replayed: true });
   }
 
-  const result = signupStep(current, event);
+  // A web account's code (routes/signup.js): the store is for that account.
+  const webEmail = await accountForCode(cfg, webCodeIn(event.body), phone).catch(() => null);
+  const result = signupStep(current, event, { webEmail });
 
   if (result.state === null) {
     await db(cfg).del('signups', `phone=eq.${phone}`);

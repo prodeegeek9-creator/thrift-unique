@@ -39,6 +39,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     operator_audit: [],
     payment_problems: [],
     reconciliation_runs: [],
+    web_signup_codes: [],
     ...structuredClone(seed),
   };
 
@@ -61,6 +62,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     bot_conversations: ['tenant_id', 'chat_id'],
     consignor_accounts: ['tenant_id', 'seller_chat_id'],
     payment_problems: ['kind', 'key'],
+    web_signup_codes: 'code',
   };
 
   // Column defaults the real tables have, which the code reads back.

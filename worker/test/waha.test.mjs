@@ -1596,3 +1596,121 @@ test('every listing reminds a store with no payout account to add one, and stops
     restore();
   }
 });
+
+// ── SIGNING UP ON THE WEB, OPENING THE STORE ON WHATSAPP ────────────────────
+
+const WEB_USER = { id: 'web-user-1', email: 'Ada@Web.ng' };
+
+function webSeed(code = {}) {
+  const s = seed();
+  s.web_signup_codes = [{ user_id: WEB_USER.id, code: '7K3P9Q', email: 'ada@web.ng', ...code }];
+  return s;
+}
+
+test('a web account’s code opens the store for that account, without asking for an email', async () => {
+  const supabase = makeFakeSupabase(webSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('Hi! I want to set up my store. My Vendwyze code is VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('2', { from: NEWCOMER_CHAT }), // brand
+        incoming('1', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }), // starter
+        incoming('yes', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    const said = waha.sent.map((m) => m.text);
+    assert.match(said[0], /Linked to your Vendwyze account \(\*ada@web\.ng\*\)/);
+    assert.ok(!said.some((t) => /What email should/.test(t)), 'never asked for an email');
+
+    const signup = supabase.tables.signups.find((s) => s.phone === NEWCOMER);
+    assert.equal(signup.state, 'pending');
+    assert.equal(signup.email, 'ada@web.ng');
+    assert.ok(supabase.tables.tenants.find((t) => t.whatsapp_number === NEWCOMER));
+
+    const code = supabase.tables.web_signup_codes[0];
+    assert.equal(code.used_phone, NEWCOMER);
+    assert.ok(code.used_at);
+  } finally { restore(); }
+});
+
+test('a code sent part way through a sign-up links the account and asks the same question again', async () => {
+  const supabase = makeFakeSupabase(webSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('hello', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    const last = waha.sent.at(-1).text;
+    assert.match(last, /Linked to your Vendwyze account/);
+    assert.match(last, /What kind of store is it/, 'still on the store type question');
+    const signup = supabase.tables.signups.find((s) => s.phone === NEWCOMER);
+    assert.equal(signup.state, 'type');
+    assert.equal(signup.email, 'ada@web.ng');
+    assert.equal(signup.business_name, "Ada's Shop", 'the code was not taken as the business name');
+  } finally { restore(); }
+});
+
+test('a code another number has used is ignored: the email is asked for as usual', async () => {
+  const supabase = makeFakeSupabase(webSeed({ used_phone: '2348000000001', used_at: new Date().toISOString() }));
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('Hi! My Vendwyze code is VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('2', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    assert.match(waha.sent[0].text, /isn't linked to a store/);
+    assert.match(waha.sent.at(-1).text, /What email should/);
+    assert.equal(supabase.tables.signups.find((s) => s.phone === NEWCOMER).email, null);
+    assert.equal(supabase.tables.web_signup_codes[0].used_phone, '2348000000001');
+  } finally { restore(); }
+});
+
+test('a web account gets one code, and sees its store waiting for approval once opened', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const restore = installFetch({ supabase, tokens: { ...TOKENS, 'tok-web': WEB_USER } });
+  const me = async (token) => {
+    const res = await worker.fetch(
+      new Request('https://vendwyze.test/api/signup/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+      wahaEnv(),
+      {}
+    );
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    assert.equal((await me(null)).status, 401);
+
+    const first = await me('tok-web');
+    assert.equal(first.status, 200);
+    assert.match(first.body.code, /^VW-[A-HJ-NP-Z2-9]{6}$/);
+    assert.equal(first.body.hasStore, false);
+    assert.equal(first.body.signup, null);
+    assert.equal(supabase.tables.web_signup_codes[0].email, 'ada@web.ng', 'kept lower-case');
+
+    assert.equal((await me('tok-web')).body.code, first.body.code, 'the same code every time');
+    assert.equal(supabase.tables.web_signup_codes.length, 1);
+
+    supabase.tables.signups.push({ phone: NEWCOMER, state: 'pending', business_name: "Ada's Shop", email: 'ada@web.ng', updated_at: new Date().toISOString() });
+    assert.deepEqual((await me('tok-web')).body.signup, { state: 'waiting_approval', business_name: "Ada's Shop" });
+
+    supabase.tables.tenant_members.push({ tenant_id: 'x', user_id: WEB_USER.id, role: 'owner' });
+    assert.equal((await me('tok-web')).body.hasStore, true);
+  } finally { restore(); }
+});

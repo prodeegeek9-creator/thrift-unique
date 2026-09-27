@@ -201,6 +201,11 @@ const SIGNUP = {
     "Hi 👋 This number isn't linked to a store on Vendwyze yet.\n\n" +
     'Want to open one? Reply with your *business name*.\n\n' +
     '(Reply *cancel* any time.)',
+  // Sent with a web account's code: the account is already there.
+  welcomeWeb: (email) =>
+    `Hi 👋 Let's open your store on Vendwyze.\n\n${linkedNote(email)}\n\n` +
+    'Reply with your *business name*.\n\n' +
+    '(Reply *cancel* any time.)',
   badName: `Reply with your business name — 2 to ${MAX_BUSINESS_NAME} characters.`,
   askType: (name) =>
     `*${name}* — nice. What kind of store is it?\n\n` +
@@ -292,6 +297,34 @@ export function approvedMessage({ name, link, email, origin, slug }) {
 
 const SIGNUP_STATES = ['name', 'type', 'category', 'plan', 'email', 'terms'];
 
+// The code a web account's "Set up your store on WhatsApp" button types into
+// the chat (routes/signup.js): VW- and six characters. The Worker looks it up
+// and hands signupStep the account's email as ctx.webEmail, so the store is
+// opened for that account and the bot doesn't ask for an email at all.
+export const WEB_CODE = /\bVW-([A-HJ-NP-Z2-9]{6})\b/i;
+export function webCodeIn(text) {
+  return WEB_CODE.exec(String(text ?? ''))?.[1]?.toUpperCase() ?? null;
+}
+
+const linkedNote = (email) => `✅ Linked to your Vendwyze account (*${email}*). That's your dashboard login.`;
+
+// The question a sign-up is waiting on, asked again after a web code arrives
+// mid-conversation.
+function questionFor(signup) {
+  switch (signup.state) {
+    case 'type':
+      return SIGNUP.askType(signup.business_name ?? 'Your store');
+    case 'category':
+      return SIGNUP.askCategory;
+    case 'plan':
+      return SIGNUP.askPlan;
+    case 'terms':
+      return termsMessage(signup.tier);
+    default:
+      return 'Reply with your *business name*.';
+  }
+}
+
 // signupStep(signup, message, ctx) → { state, patch, replies, action }
 //
 //   signup   { state, business_name, store_type, category, tier, email,
@@ -300,6 +333,8 @@ const SIGNUP_STATES = ['name', 'type', 'category', 'plan', 'email', 'terms'];
 //   patch    columns to store alongside it
 //   action   { type: 'provision', name, email, storeType, category, tier }
 //            once the terms are accepted
+//   ctx.webEmail  the email of the web account whose code this message
+//            carried (WEB_CODE): stored, and the email question skipped
 //
 // Only reached for a number with no store, so a 'pending' row here means the
 // store it was waiting on has gone — rejected and deleted — and the sign-up
@@ -312,6 +347,14 @@ export function signupStep(signup, message, ctx = {}) {
 
   if (live && CANCEL.test(text)) {
     return { state: null, patch: {}, replies: [SIGNUP.cancelled], action: null };
+  }
+
+  // A web account's code, part way through: the message is the code, not an
+  // answer. Link the account and carry on where the sign-up was.
+  if (live && ctx.webEmail) {
+    const email = ctx.webEmail;
+    if (live.state === 'email') return ask('terms', `${linkedNote(email)}\n\n${termsMessage(live.tier)}`, { email });
+    return ask(live.state, `${linkedNote(email)}\n\n${questionFor(live)}`, { email });
   }
 
   switch (live?.state) {
@@ -338,6 +381,8 @@ export function signupStep(signup, message, ctx = {}) {
     case 'plan': {
       const tier = parsePlan(text);
       if (!tier) return ask('plan', SIGNUP.badPlan);
+      // Linked to a web account already: its email is the login.
+      if (live.email) return ask('terms', termsMessage(tier), { tier });
       return ask('email', SIGNUP.askEmail, { tier });
     }
 
@@ -368,12 +413,12 @@ export function signupStep(signup, message, ctx = {}) {
     }
 
     default:
-      return ask('name', SIGNUP.welcome, {
+      return ask('name', ctx.webEmail ? SIGNUP.welcomeWeb(ctx.webEmail) : SIGNUP.welcome, {
         business_name: null,
         store_type: null,
         category: null,
         tier: null,
-        email: null,
+        email: ctx.webEmail ?? null,
       });
   }
 }

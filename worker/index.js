@@ -17,6 +17,7 @@ import { handleBilling } from './routes/billing.js';
 import { handleWaha, consignorBankSweep } from './routes/waha.js';
 import { reconcileSweep } from './lib/reconcile.js';
 import { handleTeam } from './routes/team.js';
+import { handleSignup } from './routes/signup.js';
 import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
 import { handleCheckout } from './routes/checkout.js';
@@ -121,6 +122,11 @@ async function api(request, env, path) {
 
   // Adding a colleague. Here rather than in the browser because a membership
   // needs a user_id, and resolving an email to one means reading auth.users.
+  // A web account with no store yet: its WhatsApp code and progress.
+  if (path.startsWith('/api/signup')) {
+    return handleSignup(request, env, path);
+  }
+
   if (path.startsWith('/api/team')) {
     return handleTeam(request, env, path);
   }
