@@ -1,6 +1,10 @@
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import Icon from '../components/ui/Icon.jsx';
 import { setupDeepLink } from '../lib/whatsapp.js';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '../lib/AuthContext.jsx';
+import { useTenant } from '../lib/TenantContext.jsx';
+import LogoLoader from '../components/ui/LogoLoader.jsx';
 
 // Where somebody lands with an account but no store.
 //
@@ -10,6 +14,15 @@ import { setupDeepLink } from '../lib/whatsapp.js';
 // or whose bot session did not finish. Phase 4, with the WAHA layer.
 export default function Onboarding() {
   const link = setupDeepLink();
+  const { user, loading: authLoading } = useAuth();
+  const { memberships, loading } = useTenant();
+
+  // Only for somebody signed in with no store. Anybody who does have one, or
+  // whose stores are still loading, is somewhere else: a sign-in that raced
+  // here must not leave a store owner told they have no store.
+  if (authLoading || loading) return <LogoLoader fullScreen label="Opening your store" />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (memberships.length) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-bg px-4">

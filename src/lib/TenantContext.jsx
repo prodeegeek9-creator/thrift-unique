@@ -33,13 +33,17 @@ export function TenantProvider({ children }) {
       return null;
     }
   });
-  const [loading, setLoading] = useState(true);
+  // Whose memberships these are. Loading is "not yet fetched for the person
+  // signed in", derived rather than set: a flag flipped inside the effect
+  // lagged a render behind a sign-in, and for that render the dashboard saw a
+  // signed-in user with no stores and sent them to onboarding for good.
+  const [loadedFor, setLoadedFor] = useState(undefined);
 
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
       setMemberships([]);
-      setLoading(false);
+      setLoadedFor(null);
       return;
     }
 
@@ -65,7 +69,7 @@ export function TenantProvider({ children }) {
       if (!active) return;
       if (error) {
         setMemberships([]);
-        setLoading(false);
+        setLoadedFor(user.id);
         return;
       }
 
@@ -94,7 +98,7 @@ export function TenantProvider({ children }) {
           features: byTenant[m.tenant.id] ?? {},
         }))
       );
-      setLoading(false);
+      setLoadedFor(user.id);
     })();
 
     return () => {
@@ -120,12 +124,12 @@ export function TenantProvider({ children }) {
     () => ({
       tenant,
       memberships,
-      loading: authLoading || loading,
+      loading: authLoading || loadedFor !== (user ? user.id : null),
       selectTenant,
       role: tenant?.role ?? null,
       can: (flag) => hasFeature(tenant, flag),
     }),
-    [tenant, memberships, authLoading, loading, selectTenant]
+    [tenant, memberships, authLoading, loadedFor, user, selectTenant]
   );
 
   return <TenantContext.Provider value={value}>{children}</TenantContext.Provider>;
