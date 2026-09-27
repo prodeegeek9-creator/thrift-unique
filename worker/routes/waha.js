@@ -1,4 +1,5 @@
 import { require_, originOf, config } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
@@ -22,8 +23,9 @@ import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
-import { cartStep, codesIn, isBuy, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
-import { createCartCheckout, abandonCart } from '../lib/cartCheckout.js';
+import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
+import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
+import { reservedMinutes } from '../lib/reservations.js';
 import {
   BANK,
   INTAKE_BUSY,
@@ -386,9 +388,9 @@ async function sendPasswordLink(cfg, tenant, chat) {
   );
 }
 
-// "LINK JBU4PE 30k" from a store owner: a checkout link for one of their
-// items, at the agreed price or the listed one.
-async function sendPaymentLink(cfg, tenant, chat, { code, price }) {
+// "LINK JBU4PE 30k 08031234567" from a store owner: a checkout link for one
+// of their items, at the agreed price or the listed one, for that buyer.
+async function sendPaymentLink(cfg, tenant, chat, { code, price, phone }) {
   if (!cfg.tokenSecret || !cfg.paystackKey) {
     await say(cfg, tenant, chat, "Online payment isn't set up yet, so I can't make payment links. We'll let you know when it is.");
     return;
@@ -410,8 +412,8 @@ async function sendPaymentLink(cfg, tenant, chat, { code, price }) {
     return;
   }
   const amount = price ?? Number(product.price);
-  const url = await makePaymentLink(cfg, product, amount);
-  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url }));
+  const url = await makePaymentLink(cfg, product, amount, { phone });
+  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url, phone }));
 }
 
 // What the product actually becomes.
@@ -550,7 +552,7 @@ async function productForPost(cfg, tenant, messageId) {
     `tenant_id=eq.${tenant.id}&message_id=eq.${encodeURIComponent(messageId)}&select=product_id`
   );
   if (!post) return null;
-  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status`);
+  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status,held_by_ref,held_until`);
 }
 
 // One row per listing and channel (the table's unique key), updated in place
@@ -865,15 +867,34 @@ async function checkout(cfg, event, tenant, conversation) {
     if (code in products) continue;
     products[code] = await db(cfg).one(
       'products',
-      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status`
+      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status,held_by_ref,held_until`
     );
+  }
+  // Minutes somebody else is paying for each, if they are: not this chat's
+  // own cart, whose link a new BUY replaces (lib/reservations.js).
+  for (const p of Object.values(products)) {
+    if (p) p.busy_minutes = p.held_by_ref && p.held_by_ref === conversation?.draft?.cart_ref ? null : reservedMinutes(p);
   }
   const known = await db(cfg).one(
     'carts',
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`
   );
 
-  const result = cartStep(conversation, event, { store: tenant.name, products, quotedCode: quoted, knownName: known?.buyer_name ?? null });
+  // A real code to show somebody who sent "buy" alone: the store's newest.
+  const example = BARE_BUY.test(String(event.body ?? ''))
+    ? await db(cfg)
+        .one('products', `tenant_id=eq.${tenant.id}&status=eq.active&select=public_code&order=created_at.desc`)
+        .catch(() => null)
+    : null;
+
+  const result = cartStep(conversation, event, {
+    store: tenant.name,
+    exampleCode: example?.public_code ?? null,
+    storeUrl: cfg.publicOrigin && tenant.slug ? `${cfg.publicOrigin}/s/${tenant.slug}` : null,
+    products,
+    quotedCode: quoted,
+    knownName: known?.buyer_name ?? null,
+  });
   if (!result) return null;
 
   // The same replay guard as everywhere else, now that this is ours.
@@ -900,7 +921,24 @@ async function checkout(cfg, event, tenant, conversation) {
 
   if (result.action?.type === 'resend') {
     const url = conversation?.draft?.pay_url;
-    next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+    // Only while the link still has everything in it: an item that sold, or
+    // that somebody else took over once this link's hold ran out, means a new
+    // link for the rest.
+    const lost = url ? await cartLost(cfg, tenant.id, conversation?.draft?.cart_ref) : [];
+    if (lost.length) {
+      await abandonCart(cfg, tenant.id, conversation.draft.cart_ref).catch(() => {});
+      const { cart_ref: _r, pay_url: _u, ...draft } = result.draft;
+      next = {
+        state: 'cart_confirm',
+        draft,
+        replies: [
+          `Sorry, ${lost.join(', ')} ${lost.length === 1 ? 'is' : 'are'} no longer available on that link. Reply *PAY* for a new link for the rest.`,
+        ],
+        action: null,
+      };
+    } else {
+      next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+    }
   }
 
   if (result.action?.type === 'checkout') {
@@ -925,6 +963,7 @@ async function checkout(cfg, event, tenant, conversation) {
     } else {
       const replies = [];
       if (made.dropped?.length) replies.push(`Sorry, ${made.dropped.join(', ')} sold in the meantime, so I've left ${made.dropped.length === 1 ? 'it' : 'them'} out.`);
+      if (made.busy?.length) replies.push(busyLine(made.busy));
       replies.push(cartPayMessage({ url: made.url, total: made.total, count: made.count, escrow: made.escrow }));
       next = { state: 'cart_pay', draft: { ...result.draft, phone, cart_ref: made.ref, pay_url: made.url }, replies, action: null };
     }
@@ -1110,7 +1149,7 @@ export async function consignorBankSweep(env, { now = new Date() } = {}) {
 
   const toVerify = await db(cfg).select(
     'consignor_account_changes',
-    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=*&order=requested_at.asc&limit=50`
+    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=${COLUMNS.consignor_account_change}&order=requested_at.asc&limit=50`
   );
   for (const change of toVerify) {
     const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status,whatsapp_number`);
@@ -1133,7 +1172,7 @@ export async function consignorBankSweep(env, { now = new Date() } = {}) {
 
   const stale = await db(cfg).select(
     'consignor_account_changes',
-    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=*&limit=50`
+    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=${COLUMNS.consignor_account_change}&limit=50`
   );
   for (const change of stale) {
     const hit = await db(cfg).update(

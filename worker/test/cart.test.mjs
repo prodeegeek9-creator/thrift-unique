@@ -432,3 +432,147 @@ test('the dashboard lists the chats on hold, and Resume bot hands one or all bac
     assert.deepEqual(holds, []);
   } finally { restore(); }
 });
+
+// ── one buyer at a time (lib/reservations.js) ───────────────────────────────────────
+
+const OTHER = '2348033333333@c.us';
+
+test('a payment link holds its items, and another buyer is told a payment is in progress', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    await say(msg('BUY JKT001'), msg('checkout'), msg('Ada Obi'), msg('12 Allen Avenue, Ikeja'), msg('pay'));
+    const cart = sb.tables.carts[0];
+    const jacket = sb.tables.products.find((p) => p.id === P1);
+    assert.equal(jacket.held_by_ref, cart.payment_ref);
+
+    await say(msg('BUY JKT001', { from: OTHER }));
+    const told = sent.filter((m) => m.chatId === OTHER).at(-1).text;
+    assert.match(told, /Someone else is paying for \*Leather jacket\* right now/);
+    assert.match(told, /about 15 minutes\. Send \*BUY JKT001\* then/);
+
+    // Paid: sold to the cart that held it.
+    await worker.fetch(await signed({ event: 'charge.success', data: { reference: cart.payment_ref, amount: 2_000_000 } }), E(), {});
+    assert.equal(jacket.status, 'sold');
+    assert.equal(jacket.held_until, null);
+  } finally { restore(); }
+});
+
+test('a cart leaves out an item somebody else is paying for, and says so', async () => {
+  const { sb, sent, ps, restore } = setup();
+  try {
+    // Bola puts both in a cart while nobody is paying for either.
+    await say(msg('BUY JKT001', { from: OTHER }), msg('BUY BAG002', { from: OTHER }), msg('checkout', { from: OTHER }),
+      msg('Bola Ade', { from: OTHER }), msg('4 Awolowo Road, Ikoyi', { from: OTHER }));
+    // Ada gets to Pay on the jacket first.
+    await say(msg('BUY JKT001'), msg('checkout'), msg('Ada Obi'), msg('12 Allen Avenue, Ikeja'), msg('pay'));
+
+    await say(msg('pay', { from: OTHER }));
+    const texts = sent.filter((m) => m.chatId === OTHER).map((m) => m.text).join('\n');
+    assert.match(texts, /Someone else is paying for \*Leather jacket\* right now, so I've left it out/);
+
+    const inits = ps.calls.filter((c) => c.path === '/transaction/initialize');
+    assert.equal(inits.length, 2);
+    assert.equal(inits[1].body.amount, 1_500_000, 'the bag alone');
+  } finally { restore(); }
+});
+
+test('CANCEL puts a cart’s items straight back on sale', async () => {
+  const { sb, restore } = setup();
+  try {
+    await say(msg('BUY JKT001'), msg('checkout'), msg('Ada Obi'), msg('12 Allen Avenue, Ikeja'), msg('pay'));
+    await say(msg('cancel'));
+    const jacket = sb.tables.products.find((p) => p.id === P1);
+    assert.equal(jacket.held_by_ref, null);
+    assert.equal(jacket.held_until, null);
+  } finally { restore(); }
+});
+
+test('asking for the link again after the item was taken over gives a new link for the rest', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    await say(msg('BUY JKT001'), msg('BUY BAG002'), msg('checkout'), msg('Ada Obi'), msg('12 Allen Avenue, Ikeja'), msg('pay'));
+    const cart = sb.tables.carts[0];
+    // Ada's hold ran out and somebody else is now paying for the jacket.
+    const jacket = sb.tables.products.find((p) => p.id === P1);
+    Object.assign(jacket, { held_by_ref: 'utp_someoneelse0000001', held_by_buyer: 'buyer-bola', held_until: new Date(Date.now() + 600_000).toISOString() });
+
+    await say(msg('pay'));
+    assert.match(last(sent), /Leather jacket is no longer available on that link\. Reply \*PAY\* for a new link for the rest/);
+    assert.equal(cart.status, 'cancelled');
+    assert.equal(sb.tables.products.find((p) => p.id === P2).held_by_ref, null, 'the bag is free until the new link');
+
+    await say(msg('pay'));
+    assert.match(last(sent), /checkout\.paystack\.test/);
+    assert.equal(sb.tables.carts[1].amount, 15000, 'the new link is for the bag alone');
+  } finally { restore(); }
+});
+
+test('asking for the link again while the cart still has everything sends the same link', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    await say(msg('BUY JKT001'), msg('checkout'), msg('Ada Obi'), msg('12 Allen Avenue, Ikeja'), msg('pay'));
+    const url = /https:\/\/checkout\.paystack\.test\/\S+/.exec(last(sent))[0];
+    await say(msg('pay'));
+    assert.match(last(sent), /Here's your payment link again/);
+    assert.ok(last(sent).includes(url));
+    assert.equal(sb.tables.carts.length, 1);
+  } finally { restore(); }
+});
+
+test('a reply to a Status post about an item somebody is paying for says so, not "available"', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    const tenant = sb.tables.tenants[0];
+    await postToStatus(config(E()), tenant, sb.tables.products[0]);
+    Object.assign(sb.tables.products[0], {
+      held_by_ref: 'utp_someoneelse0000001', held_by_buyer: 'buyer-bola',
+      held_until: new Date(Date.now() + 300_000).toISOString(),
+    });
+
+    await say(msg('is it available?', { quoted: '', quotedId: 'BAE5STATUS1' }));
+    assert.match(last(sent), /Someone else is paying for \*Leather jacket\* right now/);
+    await say(msg('I want this', { quoted: '', quotedId: 'BAE5STATUS1' }));
+    assert.match(last(sent), /Someone else is paying for \*Leather jacket\*/);
+    assert.equal(sb.tables.bot_conversations[0]?.draft?.items?.length ?? 0, 0, 'not added to a cart');
+  } finally { restore(); }
+});
+
+test('"buy" on its own is told how to buy, with a real code and the store page', async () => {
+  const { sb, sent, restore } = setup();
+  try {
+    await say(msg('Buy'));
+    const text = last(sent);
+    assert.match(text, /Which item would you like\? Send \*BUY\* and the item's code, e\.g\. \*BUY (JKT001|BAG002)\*/);
+    assert.match(text, /Everything at Ada Shop: https:\/\/vendwyze\.test\/s\/shop/);
+    assert.equal(toBuyer(sent).at(-1).session, SESSION, 'from the store’s own number');
+
+    // More words than "buy" is a conversation, and stays the owner's.
+    const before = sent.length;
+    await say(msg('I want to buy something for my sister'));
+    assert.equal(sent.length, before);
+
+    // With a cart open, the cart is kept.
+    await say(msg('BUY JKT001'), msg('buy'));
+    assert.match(last(sent), /Which item would you like/);
+    await say(msg('cart'));
+    assert.match(last(sent), /Leather jacket \(JKT001\)/);
+    assert.equal(sb.tables.bot_conversations[0].state, 'cart');
+  } finally { restore(); }
+});
+
+test('"cart" with nothing in it says so, instead of nothing', async () => {
+  const { sent, restore } = setup();
+  try {
+    await say(msg('cart'));
+    assert.match(last(sent), /Your cart is empty\. Send \*BUY\* and an item's code/);
+    assert.match(last(sent), /See what's for sale: https:\/\/vendwyze\.test\/s\/shop/);
+  } finally { restore(); }
+});
+
+test('a Starter store: "buy" alone is still left for the owner', async () => {
+  const { sent, restore } = setup({ tier: 'starter', checkout: false });
+  try {
+    await say(msg('buy'), msg('cart'));
+    assert.equal(toBuyer(sent).length, 0);
+  } finally { restore(); }
+});

@@ -1,4 +1,5 @@
 import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, TIERS } from './plans.js';
+import { COLUMNS } from './columns.js';
 import { applyTier } from './planChange.js';
 import { db } from './supabase.js';
 import { nairaToKobo } from './money.js';
@@ -73,7 +74,7 @@ export async function ensureInvoice(cfg, tenant, { now = new Date(), force = fal
   const price = priceFor(tenant);
   if (!price || !tenant.paid_until) return null;
 
-  const open = await db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=*`);
+  const open = await db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=${COLUMNS.plan_invoice}`);
   if (open) return open;
 
   const due = new Date(tenant.paid_until);
@@ -98,7 +99,7 @@ export async function ensureInvoice(cfg, tenant, { now = new Date(), force = fal
     payment_ref: `utb_${random(20)}`,
   };
   const created = await db(cfg).insert('plan_invoices', row, { onConflict: 'tenant_id,period_start' });
-  return created ?? db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=*`);
+  return created ?? db(cfg).one('plan_invoices', `tenant_id=eq.${tenant.id}&kind=eq.period&status=eq.open&select=${COLUMNS.plan_invoice}`);
 }
 
 // An invoice paid, however it was paid. Only an open invoice matches, so a
@@ -181,7 +182,7 @@ export async function settleInvoice(cfg, invoice, { via, authorization = null, e
 // invoice carried in the metadata.
 export async function chargeSavedCard(cfg, tenant, invoice, { say = null } = {}) {
   if (!cfg.paystackKey || !tenant.auto_renew) return false;
-  const card = await db(cfg).one('billing_cards', `tenant_id=eq.${tenant.id}&select=*`);
+  const card = await db(cfg).one('billing_cards', `tenant_id=eq.${tenant.id}&select=${COLUMNS.billing_card}`);
   if (!card) return false;
 
   try {

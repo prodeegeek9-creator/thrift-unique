@@ -13,6 +13,8 @@ import { ownerSay } from './billing.js';
 // for bank transfers — which is the behaviour this whole platform exists to
 // replace. So the hold has a deadline, and this is what enforces it.
 //
+// An order with an open dispute waits for the dispute instead.
+//
 // Runs from the scheduled handler. The partial index on
 // (confirm_deadline) WHERE escrow_status = 'held' is what keeps this cheap as
 // the orders table grows.
@@ -25,9 +27,18 @@ export async function releaseExpiredHolds(env, { limit = 100 } = {}) {
 
   const now = new Date().toISOString();
 
+  // Not while a dispute is open: the buyer has said something is wrong, and
+  // releasing would put the money beyond a refund. It releases, or goes back
+  // to the buyer, when the dispute is resolved; one resolved without either
+  // is picked up by the next run. Left out in the query rather than skipped
+  // after it, so disputed orders can never fill a batch and hold up the rest.
+  const disputed = await db(cfg).select('disputes', 'status=in.(open,under_review)&select=order_id');
+  const held = [...new Set(disputed.map((d) => d.order_id).filter(Boolean))];
+
   const due = await db(cfg).select(
     'orders',
     `escrow_status=eq.held&confirm_deadline=lt.${now}` +
+      (held.length ? `&id=not.in.(${held.join(',')})` : '') +
       `&select=id,tenant_id,order_code,amount,commission,confirmed_at` +
       `&order=confirm_deadline.asc&limit=${limit}`
   );

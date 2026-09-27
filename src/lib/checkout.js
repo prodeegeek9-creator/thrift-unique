@@ -13,6 +13,8 @@ async function publicCall(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     const err = new Error(payload.error ?? `Request failed (${res.status})`);
     err.status = res.status;
+    // sold, held, held_minutes: what a page needs to show instead of an error.
+    err.body = payload;
     throw err;
   }
   return payload;
@@ -35,6 +37,7 @@ export const fetchPaymentLink = (token) => publicCall(`/api/checkout/link/${toke
 
 export const fetchOrderByReference = (reference) => publicCall(`/api/checkout/${reference}`);
 
-// For the store: a link at a price agreed in chat.
-export const createPaymentLink = (tenantId, id, price) =>
-  callWorker('/api/listings/payment-link', { body: { tenant: tenantId, id, price } });
+// For the store: a link at a price agreed in chat, that only the buyer on
+// `phone` can pay (worker/lib/paylinks.js).
+export const createPaymentLink = (tenantId, id, price, phone) =>
+  callWorker('/api/listings/payment-link', { body: { tenant: tenantId, id, price, phone } });

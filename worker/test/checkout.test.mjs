@@ -175,18 +175,40 @@ test('a store makes a payment link at an agreed price, and the buyer pays exactl
     const refused = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-stranger'), E(), {});
     assert.equal(refused.status, 403);
 
-    const made = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-owner'), E(), {});
+    // Only with the buyer's number: the link is theirs alone.
+    const noNumber = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k' }, 'tok-owner'), E(), {});
+    assert.equal(noNumber.status, 400);
+    assert.match((await noNumber.json()).error, /buyer's WhatsApp number/);
+
+    const made = await worker.fetch(post('/api/listings/payment-link', { tenant: TENANT, id: PRODUCT, price: '30k', phone: '0803 123 4567' }, 'tok-owner'), E(), {});
     assert.equal(made.status, 200);
-    const { url, price } = await made.json();
+    const { url, price, buyer_last4 } = await made.json();
     assert.equal(price, 30000);
+    assert.equal(buyer_last4, '4567');
     const token = url.match(/^https:\/\/uniquethrift\.ng\/pay\/(.+)$/)[1];
+
+    // The number itself is not in the link, only a fingerprint and its end.
+    const claims = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
+    assert.equal(JSON.stringify(claims).includes('8031234567'), false);
+    assert.equal(claims.l, '4567');
 
     const view = await (await worker.fetch(get(`/api/checkout/link/${token}`), E(), {})).json();
     assert.equal(view.price, 30000);
     assert.equal(view.title, 'Leather Jacket');
     assert.equal(view.store.name, 'Unique Thrift');
+    assert.equal(view.buyer_last4, '4567');
 
-    const res = await worker.fetch(post('/api/checkout', { token, ...BUYER }), E(), {});
+    // Forwarded to somebody else: refused, and nothing is held for them.
+    const other = await worker.fetch(post('/api/checkout', { token, ...BUYER, phone: '0805 555 1234' }), E(), {});
+    assert.equal(other.status, 403);
+    const why = await other.json();
+    assert.equal(why.other_buyer, true);
+    assert.match(why.error, /made for another buyer \(the number ending 4567\)/);
+    assert.equal(supabase.tables.orders.length, 0);
+    assert.equal(supabase.tables.products[0].held_until, undefined);
+
+    // The buyer it was made for, however they type their number.
+    const res = await worker.fetch(post('/api/checkout', { token, ...BUYER, phone: '+234 803 123 4567' }), E(), {});
     assert.equal(res.status, 200);
     assert.equal(supabase.tables.orders[0].amount, 30000);
     assert.equal(supabase.tables.orders[0].source_channel, 'whatsapp');
@@ -258,11 +280,96 @@ test('an escrow order sends the buyer the link that releases the money', async (
   } finally { restore(); }
 });
 
-test('a second buyer paying for a sold item is flagged to the store', async () => {
-  const { sent, restore } = await paidOrder({ alreadySold: true });
+// A payment for an item that had already sold: a Paystack page left open past
+// its hold. Nobody is paid for it and the buyer gets everything back.
+async function lateSale({ escrow = false, refundStatus = 200 } = {}) {
+  const supabase = makeFakeSupabase(seed({ escrow, product: { status: 'sold' } }));
+  supabase.tables.buyers.push({ id: 'b1', tenant_id: TENANT, phone: '2348031234567', name: 'Ada Obi' });
+  supabase.tables.orders.push({
+    id: 'o1', tenant_id: TENANT, order_code: 'UT-ABC234', product_id: PRODUCT, buyer_id: 'b1',
+    amount: 35000, commission: 0, status: 'awaiting_payment', escrow_status: 'none',
+    payment_ref: 'utp_testreference0001', source_channel: 'direct',
+    delivery_address: '12 Allen Avenue, Ikeja', buyer_note: null,
+  });
+  supabase.tables.payout_accounts = [{ tenant_id: TENANT, bank_name: 'GTBank', account_last4: '1234', recipient_code: 'RCP_1' }];
+  const { waha, sent } = fakeWaha();
+  const refunds = [];
+  const transfers = [];
+  const restore = installFetch({
+    supabase,
+    waha,
+    paystackAmountKobo: 3_500_000,
+    paystackFeesKobo: 62_500,
+    paystack: async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path === '/refund') {
+        refunds.push(JSON.parse(init.body));
+        return refundStatus === 200
+          ? new Response(JSON.stringify({ status: true, data: { id: 91, status: 'pending' } }), { status: 200 })
+          : new Response(JSON.stringify({ status: false, message: 'Customer bank details required' }), { status: 400 });
+      }
+      if (path === '/transfer') transfers.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ status: true, data: { transfer_code: 'TRF', status: 'pending' } }), { status: 200 });
+    },
+  });
+  const res = await worker.fetch(get('/api/checkout/utp_testreference0001'), E(), {});
+  return { supabase, sent, refunds, transfers, restore, res };
+}
+
+test('a payment for an item already sold is refunded in full, and the store is not paid for it', async () => {
+  const { supabase, sent, refunds, transfers, restore } = await lateSale();
   try {
-    const toOwner = sent.find((m) => m.chatId === `${OWNER_PHONE}@c.us`);
-    assert.match(toOwner.text, /already sold to someone else/);
+    const order = supabase.tables.orders[0];
+    assert.equal(order.status, 'refunded');
+    assert.equal(order.commission, 0, 'no commission on a sale that did not happen');
+    assert.equal(supabase.tables.payouts.length, 0, 'nothing owed to the store');
+    assert.equal(transfers.length, 0, 'nothing sent to the store');
+
+    // Everything back: Vendwyze carries Paystack's ₦625 fee.
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0].transaction, 'utp_testreference0001');
+    assert.equal(refunds[0].amount, 3_500_000);
+    const refund = supabase.tables.refunds[0];
+    assert.equal(refund.requested_via, 'auto');
+    assert.equal(refund.amount, 35000);
+    assert.equal(refund.fee, 0);
+    assert.equal(refund.platform_fee, 625);
+
+    const toBuyer = sent.find((m) => m.chatId === '2348031234567@c.us');
+    assert.match(toBuyer.text, /sold to someone else just before your payment went through/);
+    assert.match(toBuyer.text, /Your full ₦35,000 is being refunded/);
+    assert.match(toBuyer.text, /3 to 10 working days/);
+    assert.doesNotMatch(toBuyer.text, /Payment received/);
+
+    const toOwner = sent.filter((m) => m.chatId === `${OWNER_PHONE}@c.us`);
+    assert.equal(toOwner.length, 1, 'one message, not a new-order message');
+    assert.match(toOwner[0].text, /second payment.*came in for \*Leather Jacket\* after it had sold/);
+    assert.match(toOwner[0].text, /nothing for you to do/);
+
+    // Asking again changes nothing.
+    await worker.fetch(get('/api/checkout/utp_testreference0001'), E(), {});
+    assert.equal(refunds.length, 1);
+    assert.equal(supabase.tables.refunds.length, 1);
+  } finally { restore(); }
+});
+
+test('on an escrow store, a payment for an item already sold is refunded from the hold', async () => {
+  const { supabase, refunds, restore } = await lateSale({ escrow: true });
+  try {
+    const order = supabase.tables.orders[0];
+    assert.equal(order.status, 'refunded');
+    assert.equal(order.escrow_status, 'refunded', 'escrow can no longer release it');
+    assert.equal(refunds[0].amount, 3_500_000);
+  } finally { restore(); }
+});
+
+test('a refund Paystack refuses is left for the operator, and the buyer is told Vendwyze will refund them', async () => {
+  const { supabase, sent, restore } = await lateSale({ refundStatus: 400 });
+  try {
+    assert.equal(supabase.tables.refunds[0].status, 'failed');
+    assert.equal(supabase.tables.payouts.length, 0);
+    const toBuyer = sent.find((m) => m.chatId === '2348031234567@c.us');
+    assert.match(toBuyer.text, /Vendwyze will refund your full ₦35,000 and message you here/);
   } finally { restore(); }
 });
 
@@ -277,11 +384,16 @@ test('an owner asks the bot for a payment link', async () => {
   });
   const e = E({ WAHA_WEBHOOK_SECRET: 'secret' });
   try {
-    await worker.fetch(hook('LINK jbu4pe 30k', 'm1'), e, {});
+    // Without the buyer's number, the owner is asked for it.
+    await worker.fetch(hook('LINK jbu4pe 30k', 'm0'), e, {});
+    assert.match(sent.at(-1).text, /Add the buyer's WhatsApp number/);
+
+    await worker.fetch(hook('LINK jbu4pe 30k 0803 123 4567', 'm1'), e, {});
     assert.match(sent.at(-1).text, /Payment link for \*Leather Jacket\* — ₦30,000/);
     assert.match(sent.at(-1).text, /https:\/\/uniquethrift\.ng\/pay\//);
+    assert.match(sent.at(-1).text, /Only the buyer on the number ending 4567 can pay it/);
 
-    await worker.fetch(hook('link ZZZZ99', 'm2'), e, {});
+    await worker.fetch(hook('link ZZZZ99 08031234567', 'm2'), e, {});
     assert.match(sent.at(-1).text, /can't find an item with the code \*ZZZZ99\*/);
 
     // A bare "link" is still the store page.

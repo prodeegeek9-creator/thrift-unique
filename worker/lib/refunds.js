@@ -1,4 +1,5 @@
 import { db, SupabaseError } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { paystack } from './transfers.js';
 import { fetchTransaction } from './paystack.js';
 import { formatNaira } from './bot.js';
@@ -9,9 +10,9 @@ import { say } from '../routes/waha.js';
 //
 // Only while Vendwyze still holds the money. Once the buyer has confirmed the
 // item and the payment has been released to the store, or the store has
-// otherwise been paid for the sale, there is no refund: the buyer can open a
-// dispute, and that is settled between them and the store. So a refund never
-// takes money back from a store.
+// otherwise been paid for the sale, there is no refund through Vendwyze: a
+// complaint after that is settled between the buyer and the store. So a refund
+// never takes money back from a store.
 //
 //   held in escrow                     refundable; escrow can no longer release it
 //   no escrow, payout not yet sent     refundable; the payout is cancelled
@@ -21,6 +22,11 @@ import { say } from '../routes/waha.js';
 // Paystack keeps on a refund. Nobody else should carry the cost of a sale
 // that didn't happen, so it is not the store's or the platform's to absorb.
 // Vendwyze waives its commission on a refunded sale.
+//
+// The exception is an automatic refund (via 'auto'): a second payment for an
+// item that had already sold (lateSale in routes/checkout.js). That is not
+// the buyer's doing, so they get everything back and Vendwyze pays the fee,
+// recorded as platform_fee (migration 0033).
 //
 // The order of operations is what keeps this safe to run twice or alongside
 // the escrow sweep:
@@ -44,7 +50,7 @@ const REFUNDABLE = ['paid', 'escrow', 'processing'];
 const MAX_REASON = 300;
 
 const RELEASED =
-  "The payment has already been released to the store, so it can't be refunded. The buyer can open a dispute instead.";
+  "The payment has already been released to the store, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.";
 
 // What refunding this order would do, without doing it: what the buyer paid,
 // Paystack's fee, and what goes back. The fee is read from Paystack; if that
@@ -61,12 +67,13 @@ export async function refundPreview(cfg, order) {
   };
 }
 
-// refundOrder(cfg, order, { reason, via, by, relist, tenant })
-//   via     'store' | 'operator' | 'dispute'
+// refundOrder(cfg, order, { reason, via, by, relist, tenant, notify })
+//   via     'store' | 'operator' | 'dispute' | 'auto' (in full, see above)
 //   relist  put the item back on sale (only if nobody else has bought it)
+//   notify  false when the caller tells the buyer and the store itself
 //
 // Returns the refund row. Throws RefundError with a message fit to show.
-export async function refundOrder(cfg, order, { reason = null, via, by = null, relist = false, tenant = null } = {}) {
+export async function refundOrder(cfg, order, { reason = null, via, by = null, relist = false, tenant = null, notify = true } = {}) {
   const blocked = await whyNot(cfg, order);
   if (blocked) throw new RefundError(blocked);
 
@@ -118,7 +125,7 @@ export async function refundOrder(cfg, order, { reason = null, via, by = null, r
       )
       .catch(() => {});
     await db(cfg).del('refunds', `id=eq.${refund.id}`).catch(() => {});
-    throw new RefundError("The store's payout for this order has just gone out, so it can't be refunded. The buyer can open a dispute instead.");
+    throw new RefundError("The store's payout for this order has just gone out, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.");
   }
 
   if (relist) await relistIfFree(cfg, order);
@@ -126,16 +133,18 @@ export async function refundOrder(cfg, order, { reason = null, via, by = null, r
   // 4. The money.
   refund = await sendRefund(cfg, refund, order);
 
-  await tellPeople(cfg, order, refund, tenant).catch((err) =>
-    console.error('refund notices failed:', order.order_code, err?.message ?? err)
-  );
+  if (notify) {
+    await tellPeople(cfg, order, refund, tenant).catch((err) =>
+      console.error('refund notices failed:', order.order_code, err?.message ?? err)
+    );
+  }
 
   return refund;
 }
 
 // A refund Paystack refused or never received, tried again from the console.
 export async function retryRefund(cfg, refundId) {
-  const refund = await db(cfg).one('refunds', `id=eq.${refundId}&select=*`);
+  const refund = await db(cfg).one('refunds', `id=eq.${refundId}&select=${COLUMNS.refund}`);
   if (!refund) throw new RefundError('No such refund', 404);
   if (refund.status !== 'failed') throw new RefundError('Only a failed refund can be retried.');
   const order = await db(cfg).one('orders', `id=eq.${refund.order_id}&select=id,tenant_id,order_code,payment_ref,amount`);
@@ -151,7 +160,7 @@ export async function settleRefundEvent(cfg, event) {
   // By Paystack's refund id first: a cart's payment can carry several
   // refunds, one per item, all with the same transaction reference.
   let refund = data.id != null
-    ? await db(cfg).one('refunds', `paystack_refund_id=eq.${encodeURIComponent(String(data.id))}&select=*`)
+    ? await db(cfg).one('refunds', `paystack_refund_id=eq.${encodeURIComponent(String(data.id))}&select=${COLUMNS.refund}`)
     : null;
   if (!refund) {
     const order = await db(cfg).one(
@@ -159,7 +168,7 @@ export async function settleRefundEvent(cfg, event) {
       `payment_ref=eq.${encodeURIComponent(reference)}&select=id,order_code`
     );
     if (!order) return { ignored: 'no such order' };
-    refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=*`);
+    refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=${COLUMNS.refund}`);
   }
   if (!refund) return { ignored: 'no refund for order' };
 
@@ -206,7 +215,7 @@ async function whyNot(cfg, order) {
 
   const payout = await payoutFor(cfg, order);
   if (payout && ['sending', 'paid'].includes(payout.status)) {
-    return "The store has already been paid for this order, so it can't be refunded. The buyer can open a dispute instead.";
+    return "The store has already been paid for this order, so it can't be refunded through Vendwyze. Any complaint is now between the store and the buyer.";
   }
   return null;
 }
@@ -281,15 +290,21 @@ async function sendRefund(cfg, refund, order) {
 
   const split = await feeSplit(cfg, order);
   if (!split) return markFailed(cfg, refund, "Couldn't read the payment from Paystack to work out its fee");
-  if (split.refundKobo <= 0) return markFailed(cfg, refund, "Paystack's fee is the whole payment; nothing to refund");
 
-  const amounts = { paid: split.paid, fee: split.fee, amount: split.amount };
+  // In full when Vendwyze carries the fee; otherwise less it.
+  const full = refund.requested_via === 'auto';
+  const refundKobo = full ? split.paidKobo : split.refundKobo;
+  if (refundKobo <= 0) return markFailed(cfg, refund, "Paystack's fee is the whole payment; nothing to refund");
+
+  const amounts = full
+    ? { paid: split.paid, fee: 0, amount: split.paid, platform_fee: split.fee }
+    : { paid: split.paid, fee: split.fee, amount: split.amount };
   try {
     const data = await paystack(cfg, '/refund', {
       method: 'POST',
       body: {
         transaction: split.txRef,
-        amount: split.refundKobo,
+        amount: refundKobo,
         currency: 'NGN',
         merchant_note: `Refund for order ${order.order_code}${refund.reason ? `: ${refund.reason}` : ''}`.slice(0, 250),
         ...(refund.reason ? { customer_note: refund.reason.slice(0, 250) } : {}),
@@ -354,6 +369,24 @@ export function refundedBuyerMessage({ store, title, code, paid, fee, amount, re
       : '') +
     (reason ? `\n\nReason: ${reason}` : '') +
     '\n\nBanks usually take 3 to 10 working days to show it.'
+  );
+}
+
+// A second payment for an item that had already sold (lateSale in
+// routes/checkout.js). In full: see the top of this file.
+export function lateSaleBuyerMessage({ store, title, amount, failed = false }) {
+  return (
+    `↩️ Sorry, *${title}* from ${store} sold to someone else just before your payment went through.` +
+    (failed
+      ? `\n\nVendwyze will refund your full ${formatNaira(amount)} and message you here when it's on its way.`
+      : `\n\nYour full ${formatNaira(amount)} is being refunded to the card or account you paid with. Banks usually take 3 to 10 working days to show it.`)
+  );
+}
+
+export function lateSaleOwnerMessage({ title, code, amount }) {
+  return (
+    `ℹ️ A second payment (${formatNaira(amount)}, order ${code}) came in for *${title}* after it had sold. ` +
+    "Vendwyze is refunding that buyer in full, so there's nothing for you to do, and your payouts aren't affected."
   );
 }
 

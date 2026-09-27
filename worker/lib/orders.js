@@ -1,6 +1,7 @@
 import { db } from './supabase.js';
 import { split } from './money.js';
 import { sendPayout } from './transfers.js';
+import { CONFIRM_WINDOW_DAYS } from './plans.js';
 
 // The order lifecycle, server side. Everything here runs under the service
 // key, so every query names its tenant explicitly — Postgres has stopped
@@ -11,7 +12,7 @@ import { sendPayout } from './transfers.js';
 // Without a deadline a buyer who simply stops replying freezes the seller's
 // money forever, which is the failure mode that makes sellers distrust escrow
 // and go back to asking for bank transfers.
-export const CONFIRM_WINDOW_DAYS = 7;
+export { CONFIRM_WINDOW_DAYS };
 
 const ORDER_FIELDS =
   'id,tenant_id,order_code,product_id,buyer_id,amount,commission,status,' +
@@ -38,7 +39,11 @@ export async function byId(cfg, tenantId, orderId) {
 // waiting for payment, so a replayed webhook updates zero rows and returns the
 // order unchanged. Paystack retries, and a retry that credits twice is the
 // worst bug this file could have.
-export async function markPaid(cfg, order, tenant, { amountNaira, reference, channel }) {
+//
+// owe: false leaves the store's payout to the caller (oweSeller), which
+// checkout does so that nothing is owed until the item is known to be this
+// buyer's rather than already sold to somebody else.
+export async function markPaid(cfg, order, tenant, { amountNaira, reference, channel, owe = true }) {
   const { commission } = split(amountNaira, tenant.commission_pct);
   const escrow = await tenantHasEscrow(cfg, tenant.id);
   const now = new Date().toISOString();
@@ -69,11 +74,17 @@ export async function markPaid(cfg, order, tenant, { amountNaira, reference, cha
 
   const updated = rows[0];
 
-  // Starter takes no hold, so the money is the seller's immediately and the
-  // payout is owed now rather than after a confirmation that will never come.
-  if (!escrow) await createPayout(cfg, updated);
+  if (owe) await oweSeller(cfg, updated);
 
   return { order: updated, replayed: false };
+}
+
+// Starter takes no hold, so the money is the seller's immediately and the
+// payout is owed now rather than after a confirmation that will never come.
+// An order in escrow is owed on release instead.
+export async function oweSeller(cfg, order) {
+  if (order.escrow_status === 'held') return;
+  await createPayout(cfg, order);
 }
 
 // Release the hold: the buyer confirmed, or the window closed.

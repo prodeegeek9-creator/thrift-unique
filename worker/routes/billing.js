@@ -1,4 +1,5 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
@@ -202,7 +203,7 @@ async function locked(request, env) {
 // ── THE PAY PAGE ─────────────────────────────────────────────────────────────
 
 async function invoiceByRef(cfg, ref) {
-  const invoice = await db(cfg).one('plan_invoices', `payment_ref=eq.${ref}&select=*`);
+  const invoice = await db(cfg).one('plan_invoices', `payment_ref=eq.${ref}&select=${COLUMNS.plan_invoice}`);
   if (!invoice) return {};
   const tenant = await db(cfg).one('tenants', `id=eq.${invoice.tenant_id}&select=${TENANT_FIELDS}`);
   return { invoice, tenant };
@@ -274,7 +275,7 @@ async function startPayment(request, env, ref) {
 // the pay page. `data` is Paystack's transaction.
 export async function settlePlanPayment(cfg, data) {
   const ref = data?.metadata?.invoice_ref ?? String(data?.reference ?? '').split('_').slice(0, 2).join('_');
-  const invoice = await db(cfg).one('plan_invoices', `payment_ref=eq.${ref}&select=*`);
+  const invoice = await db(cfg).one('plan_invoices', `payment_ref=eq.${ref}&select=${COLUMNS.plan_invoice}`);
   if (!invoice) return { ignored: 'no such invoice' };
 
   // Paid in full, or not at all.

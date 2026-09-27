@@ -1,12 +1,14 @@
 import { db } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { initializeTransaction } from './paystack.js';
 import { nairaToKobo } from './money.js';
 import { formatNaira } from './bot.js';
 import { chatId } from './waha.js';
-import { refundOrder } from './refunds.js';
 import { settle } from '../routes/checkout.js';
 import { confirmToken } from '../routes/confirm.js';
 import { say } from '../routes/waha.js';
+import { reserveItem, releaseReservation, reservedMinutes } from './reservations.js';
+import { AMOUNT_MISMATCH, paidInFull, amountRefused } from './problems.js';
 
 // A WhatsApp cart becoming a payment, and a paid cart becoming orders.
 //
@@ -16,7 +18,11 @@ import { say } from '../routes/waha.js';
 // the total. When it succeeds (webhook or the return page), every order in
 // the cart is settled exactly like a single purchase: marked paid, held in
 // escrow or owed to the store, the item taken off sale. An item somebody else
-// bought in the meantime is refunded at once, automatically.
+// bought in the meantime is refunded at once and in full, automatically.
+//
+// Each item is held for the cart while its link is live (lib/reservations.js), so
+// that last case needs a link paid after its hold ran out and somebody else
+// took the item over.
 
 const REF_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -35,25 +41,28 @@ function random(n, alphabet) {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
-// → { url, ref, total, count, escrow, dropped: [titles] }
+// → { url, ref, total, count, escrow, dropped: [titles], busy: [{ title, minutes, mine }] }
 //   or { error } with a message for the buyer
 //   or { needPhone: true } when WhatsApp hides this chat's number
+//
+// dropped have sold; busy are being paid for by somebody else (or, mine, by
+// this buyer somewhere else), and are left out rather than paid for twice.
 export async function createCartCheckout(cfg, tenant, { chat, phone, items, name, address }) {
   if (!cfg.paystackKey) return { error: "Online payment isn't switched on for this store yet. The store will reply to you here." };
   if (!phone) return { needPhone: true };
 
   // Still for sale, still this store's, at today's price.
-  const live = [];
+  const candidates = [];
   const dropped = [];
   for (const item of items ?? []) {
     const p = await db(cfg).one(
       'products',
       `id=eq.${item.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status`
     );
-    if (p && p.status === 'active' && Number(p.price) > 0) live.push(p);
+    if (p && p.status === 'active' && Number(p.price) > 0) candidates.push(p);
     else dropped.push(item.title);
   }
-  if (!live.length) return { error: 'Sorry, everything in your cart has sold. Send *BUY* and a code to start again.', dropped };
+  if (!candidates.length) return { error: 'Sorry, everything in your cart has sold. Send *BUY* and a code to start again.', dropped };
 
   const buyer = await db(cfg).insert(
     'buyers',
@@ -62,8 +71,28 @@ export async function createCartCheckout(cfg, tenant, { chat, phone, items, name
   );
   if (!buyer?.id) throw new Error('buyer upsert returned no row');
 
-  const total = live.reduce((n, p) => n + Number(p.price), 0);
+  // Each item held for this cart, or left out and said why.
   const ref = `utc_${random(20, REF_ALPHABET)}`;
+  const live = [];
+  const busy = [];
+  for (const p of candidates) {
+    const hold = await reserveItem(cfg, { productId: p.id, tenantId: tenant.id, ref, buyerId: buyer.id });
+    if (hold.ok) live.push(p);
+    else if (hold.sold) dropped.push(p.title);
+    else if (hold.busy) busy.push({ title: p.title, minutes: hold.busy.minutes, mine: true });
+    else busy.push({ title: p.title, minutes: hold.held.minutes, mine: hold.held.mine });
+  }
+  if (!live.length) {
+    return {
+      error: busy.length
+        ? `${busyLine(busy)}\n\nReply *PAY* to try again then, or send *BUY* and another code.`
+        : 'Sorry, everything in your cart has sold. Send *BUY* and a code to start again.',
+      dropped,
+      busy,
+    };
+  }
+
+  const total = live.reduce((n, p) => n + Number(p.price), 0);
   const cart = await db(cfg).insert('carts', {
     tenant_id: tenant.id,
     buyer_id: buyer.id,
@@ -119,12 +148,44 @@ export async function createCartCheckout(cfg, tenant, { chat, phone, items, name
   }
 
   const escrow = await db(cfg).one('tenant_features', `tenant_id=eq.${tenant.id}&flag=eq.escrow&select=enabled`);
-  return { url: checkout.authorization_url, ref, total, count: live.length, escrow: Boolean(escrow?.enabled), dropped };
+  return { url: checkout.authorization_url, ref, total, count: live.length, escrow: Boolean(escrow?.enabled), dropped, busy };
+}
+
+// "Someone else is paying for *Jacket* right now…", for items left out.
+export function busyLine(busy) {
+  return busy
+    .map((b) =>
+      b.mine
+        ? `You already have a payment open for *${b.title}*, so I've left it out. It frees up in about ${b.minutes} min if you don't finish it.`
+        : `Someone else is paying for *${b.title}* right now, so I've left it out. If their payment doesn't go through, it'll be free again in about ${b.minutes} min.`
+    )
+    .join('\n');
+}
+
+// Before a cart's link is sent again: the items it no longer has, because
+// they sold or somebody else took them over once its hold ran out. A hold
+// that has run out but that nobody else wanted is still this cart's.
+export async function cartLost(cfg, tenantId, ref) {
+  if (!isCartRef(ref)) return [];
+  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&tenant_id=eq.${tenantId}&status=eq.open&select=id`);
+  if (!cart) return [];
+  const orders = await db(cfg).select('orders', `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=product_id`);
+  const lost = [];
+  for (const o of orders) {
+    const p = await db(cfg).one(
+      'products',
+      `id=eq.${o.product_id}&tenant_id=eq.${tenantId}&select=title,status,held_by_ref,held_until`
+    );
+    if (!p || p.status !== 'active' || (p.held_by_ref !== ref && reservedMinutes(p))) lost.push(p?.title ?? 'An item');
+  }
+  return lost;
 }
 
 // An unpaid link replaced or cancelled. Only an open cart; a paid one stays.
+// Its items go back on sale at once.
 export async function abandonCart(cfg, tenantId, ref) {
   if (!isCartRef(ref)) return;
+  await releaseReservation(cfg, { tenantId, ref });
   const rows = await db(cfg).update('carts', `payment_ref=eq.${ref}&tenant_id=eq.${tenantId}&status=eq.open`, { status: 'cancelled' });
   if (!rows.length) return;
   await db(cfg).update(
@@ -137,14 +198,17 @@ export async function abandonCart(cfg, tenantId, ref) {
 
 // Paystack says the cart's payment succeeded. Safe to run twice, and from
 // both the webhook and the return page: only an unpaid cart is claimed.
-export async function settleCart(cfg, ref, { kobo }) {
-  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=*`);
+//
+// Only for the cart's total, as settle() is only for an order's price.
+export async function settleCart(cfg, ref, { kobo, requestedKobo = null }) {
+  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=${COLUMNS.cart}`);
   if (!cart) return { ignored: 'no such cart' };
   if (cart.status === 'paid') return { replayed: true };
 
-  if (Number(kobo) < nairaToKobo(cart.amount)) {
-    console.error('cart payment short:', ref, kobo);
-    return { ignored: 'amount short' };
+  const expectedKobo = nairaToKobo(cart.amount);
+  if (!paidInFull(expectedKobo, { kobo, requestedKobo })) {
+    await amountRefused(cfg, { reference: ref, kobo, expectedKobo, what: 'a WhatsApp cart' });
+    return { ignored: AMOUNT_MISMATCH };
   }
 
   // Paid even if the link had been replaced: the money arrived.
@@ -163,27 +227,16 @@ export async function settleCart(cfg, ref, { kobo }) {
 
   const orders = await db(cfg).select(
     'orders',
-    `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=*&order=payment_ref.asc`
+    `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=${COLUMNS.order}&order=payment_ref.asc`
   );
 
+  // An item sold to somebody else first is refunded in full inside settle()
+  // (lateSale), and nobody is paid for it; the messages are sent below, one
+  // for the lot.
   const done = [];
   for (const order of orders) {
     const r = await settle(cfg, order, { kobo: nairaToKobo(order.amount), channel: 'whatsapp', notify: false });
-    done.push({ order: r.order ?? order, doubleSale: Boolean(r.doubleSale), title: r.title });
-  }
-
-  // Sold to somebody else first: the buyer gets that one back straight away.
-  for (const d of done.filter((x) => x.doubleSale)) {
-    try {
-      const refund = await refundOrder(cfg, d.order, {
-        reason: 'Sold to someone else just before your payment',
-        via: 'auto',
-      });
-      d.refunded = refund?.amount ?? null;
-    } catch (err) {
-      console.error('cart: auto-refund failed for', d.order.order_code, err?.message ?? err);
-      d.refundFailed = true;
-    }
+    done.push({ order: r.order ?? order, doubleSale: Boolean(r.doubleSale), refundFailed: Boolean(r.refundFailed), title: r.title });
   }
 
   // The chat is finished with; the next BUY starts a new cart.
@@ -221,8 +274,8 @@ async function tellCart(cfg, cart, done) {
     for (const d of lost) {
       buyer.push(
         d.refundFailed
-          ? `⚠️ *${d.title}* was sold to someone else just before you paid. ${tenant.name} will refund you for it.`
-          : `↩️ *${d.title}* was sold to someone else just before you paid, so it's being refunded to you now.`
+          ? `⚠️ *${d.title}* was sold to someone else just before you paid. Vendwyze will refund you in full for it and message you here when it's on its way.`
+          : `↩️ *${d.title}* was sold to someone else just before you paid, so its full ${formatNaira(d.order.amount)} is being refunded to you. Banks usually take 3 to 10 working days to show it.`
       );
     }
   }
@@ -254,7 +307,7 @@ async function tellCart(cfg, cart, done) {
         : 'Your payout is on its way.',
     ];
     if (lost.length) {
-      lines.push('', `${lost.map((d) => d.title).join(', ')} had already sold, so ${lost.length === 1 ? 'it was' : 'they were'} refunded to the buyer.`);
+      lines.push('', `${lost.map((d) => d.title).join(', ')} had already sold, so Vendwyze is refunding the buyer in full for ${lost.length === 1 ? 'it' : 'them'}. Nothing for you to do.`);
     }
     await say(cfg, tenant, owner, lines.join('\n'));
   }
@@ -262,7 +315,7 @@ async function tellCart(cfg, cart, done) {
 
 // For the page Paystack returns the buyer to: /order/<cart ref>.
 export async function cartView(cfg, ref) {
-  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=*`);
+  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=${COLUMNS.cart}`);
   if (!cart) return null;
   const [orders, tenant] = await Promise.all([
     db(cfg).select('orders', `cart_id=eq.${cart.id}&select=order_code,amount,status,escrow_status,product_id&order=payment_ref.asc`),

@@ -190,7 +190,10 @@ filter decides which store they are looking at.
 
 **Never `select('*')`.** Each module names its columns, and the list for a grid
 is not the list for an editor — descriptions are the longest column on
-`products` and no card displays one.
+`products` and no card displays one. The Worker too, though it reads under the
+service key: its lists are in `worker/lib/columns.js`, so a column added later
+(a token, an internal note) is read only once someone adds it there, and
+`worker/test/rules.test.mjs` fails on any `select=*`.
 
 **Totals are computed from rows, never stored.** A balance kept on the tenant
 drifts the first time something is deleted or a webhook is replayed, and the
@@ -488,9 +491,10 @@ otherwise, and adding a column to a granted table publishes that column.**
 current findings are the intended design and should not be "fixed":
 
 - **`rls_enabled_no_policy`** on `bot_conversations`, `bot_messages`,
-  `whatsapp_secrets`, `channel_connections`, `platform_admins` and
-  `operator_audit`. That is the pattern, not an oversight — RLS on, no policy,
-  no grant, reachable only under the service key.
+  `whatsapp_secrets`, `channel_connections`, `platform_admins`,
+  `operator_audit`, `payment_problems` and `reconciliation_runs`, among
+  others the Worker alone uses. That is the pattern, not an oversight — RLS on, no policy, no grant,
+  reachable only under the service key.
 - **`public_product()` executable by `anon`.** It is the storefront's one
   public read and returns a fixed, safe column list by design.
 - **`current_tenant_ids()` / `has_tenant_role()` / `channel_status()`
@@ -525,8 +529,10 @@ should run exactly once.
 2. The Worker creates the store as `onboarding` on Starter, registered to the
    sender's number, so the seller never types their number anywhere
    (`provisionStore()` in `worker/lib/provision.js`). The email waits in
-   `signups`, and no login exists yet. Until approval the bot answers "waiting
-   for approval" instead of listing.
+   `signups`, and no login exists yet. Until approval the seller can list, but
+   nothing is public: each listing is saved, the store and product pages answer
+   "not found", nothing is posted to Status and nothing can be bought. It all
+   goes live on approval.
 3. The operator opens the store in `/admin` and presses **Approve**
    (`approveStore()`). A new email gets an account and a set-password link, sent
    to the seller on WhatsApp. An email that already has an account is linked and
@@ -683,10 +689,15 @@ without a network, WAHA or Paystack):
   starting with SELL; the store reviews them under "Items to review", sets its
   price and approves; the seller is told on WhatsApp.
 - **The owner's menu** on the platform number: STORE, REVIEW, DASHBOARD, and
-  `LINK <code> <price>` for a payment link.
+  `LINK <code> <price> <buyer's number>` for a payment link only that buyer
+  can pay.
 - **Public pages**: homepage, store pages, product pages (above).
 - **Checkout**: Buy now and payment links → Paystack → order paid, item off
   sale, owner and buyer told on WhatsApp, escrow link for escrow plans.
+- **One buyer at a time for each item**: pressing Pay holds the item for 15
+  minutes, and every route shows "Payment in progress" meanwhile
+  (`worker/lib/reservations.js`, migration 0032). See item 1 under "Before live
+  money".
 - **Paying stores**: the owner adds a bank account (checked with the bank
   through Paystack; only the last four digits are kept), and payouts go out as
   Paystack transfers automatically (at once on Starter, on release for escrow),
@@ -720,7 +731,11 @@ without a network, WAHA or Paystack):
   answered directly, anything else about it is left for the owner. The
   Channels page has a "Resume bot" card: which chats are on hold, who each is
   with and what the owner typed, and a button to hand a chat (or all of them)
-  back to the bot early (`GET/POST /api/waha/holds*`).
+  back to the bot early (`GET/POST /api/waha/holds*`). "Buy" on its own, or
+  "cart" with nothing in it, is told how to buy: send BUY and a code (a real
+  one from the store), with the store's page. WhatsApp buttons aren't used:
+  WAHA's NOWEB engine doesn't send them, and WhatsApp only shows them
+  reliably through its official Cloud API.
 - **Changing plan and upgrade nudges**: the store owner picks a plan on the
   Billing page. Up is immediate once they pay the difference for the rest of
   the paid month (free on the trial); down waits for the end of the paid
@@ -732,11 +747,16 @@ without a network, WAHA or Paystack):
   price, or moving down.
 - **Refunds**: from the order page, a dispute or the release queue, back to the
   buyer's card through Paystack less Paystack's fee, only while the payment is
-  still held. Paystack's `refund.*` webhooks settle them.
+  still held. Paystack's `refund.*` webhooks settle them. A payment for an item
+  that had already sold is refunded automatically and in full, with Vendwyze
+  paying the fee, and the store is not paid for it (item 2 under "Before
+  live money").
 - **The operator console** at `/admin`, with its own login at `/admin/login`
   and an Admin team page: approvals, plans and commission, store
   details, a look inside each store, payouts (pause, retry), escrow release,
-  disputes, platform WhatsApp health, and an append-only audit log.
+  disputes, platform WhatsApp health, a Money page for payments nobody can
+  match and payouts or refunds that aren't getting through, a daily check of
+  the books against Paystack, and an append-only audit log.
 - **Security boundaries**: RLS is strictly tenant-scoped with no admin
   exception; operator access is checked in the Worker only; store owners can
   change only name, logo, colour and number on their store (migration 0022).
@@ -766,6 +786,143 @@ without a network, WAHA or Paystack):
   Facebook" needs no approval, since it only opens Facebook's own link
   sharer; the item page's link preview supplies the photo and price.
 
+## Before live money
+
+Decided after an outside review of this README, to be done one at a time and
+in this order, before Paystack is switched to live (item 4 below). All six were
+built in PR #47; a second review of `main` before it merged added the amount
+check under item 2, the Worker's named columns (see "The data layer") and the
+name "reservation" under item 1.
+
+**What is true is `main`'s code and migrations.** This README describes them,
+and a claim here that isn't in `main` is a bug in the README. Work that is on a
+branch is described as being in its pull request until that merges.
+
+1. **One buyer at a time for each item.** *Done in PR #47*
+   (`worker/lib/reservations.js`, migration 0032). When a buyer has entered
+   their details and pressed Pay, the item is reserved for them for 15
+   minutes, before an order or a Paystack page exists. Everyone else sees
+   "Payment in progress" instead of the Pay button: on the product page, on a
+   payment link, and for WhatsApp BUY. The link page says "Paid" once the item
+   has sold, and the button comes back if the payment doesn't go through. The
+   reservation is on the product, not the link, so every route checks the
+   same thing, and taking it is a single conditional update, so two buyers
+   pressing Pay at once can't both get it. (Called a reservation because
+   "hold" already means a chat the bot has stepped back from; the columns
+   keep their first names, `products.held_by_ref`, `held_by_buyer` and
+   `held_until`.)
+   - A reservation is never cleared by a timer. When one has run out, the
+     next buyer to press Pay first asks Paystack whether that payment went
+     through; if it did, it is settled there and then and the item shows as
+     sold.
+   - The buyer who is paying can press Pay again with the same number and is
+     sent back to the same Paystack page, not a second payment.
+   - One payment at a time per phone number per store.
+   - A WhatsApp cart reserves each of its items under the cart's reference.
+     An item somebody else is paying for is left out of the link and the
+     buyer is told, the same way a sold item already was. Cancelling or
+     replacing the cart puts its items straight back. Asking for the link
+     again checks the cart still has everything; if not, it offers a new link
+     for the rest.
+   - A reservation running out is not the end of that payment: the order
+     stays awaiting payment, so a Paystack page left open can still be paid.
+     If someone else has the item by then, that is item 2.
+2. **A late second payment is refunded in full, and nobody is credited.**
+   *Done in PR #47* (`settle()` and `lateSale()` in
+   `worker/routes/checkout.js`, migration 0033). A Paystack page left open
+   past its reservation can still be paid after someone else has bought the
+   item. A payment is now recorded first, then the item is taken off sale for it, and only then is the store owed
+   anything. If the item had already gone, no payout is created, no
+   commission is taken, and the buyer is refunded automatically and in full:
+   Vendwyze carries Paystack's fee, recorded on the refund as `platform_fee`.
+   The same applies to an item in a WhatsApp cart and to escrow stores. The
+   buyer is told their full amount is on its way (allow 3 to 10 working
+   days), and the store that nothing is needed from it. A refund Paystack
+   refuses is left failed for the operator to retry, and the buyer is told
+   Vendwyze will refund them. Still to confirm with Paystack: whether a
+   bank-transfer payment can be refunded without the buyer's account details.
+   - Only the price is ever a sale. A payment for any other amount (Paystack's
+     `amount`, or its `requested_amount` when the account passes its fee on
+     to the buyer) is not settled: nothing is sold, nothing is owed, and it
+     goes to the Money page as an amount that differs, for a person to refund
+     or settle. The same check covers a WhatsApp cart's total, and every path
+     that settles: the webhook, the return page, reconciliation, and taking
+     over a lapsed reservation.
+3. **Money problems visible in `/admin`.** *Done in PR #47* (the Money page,
+   `worker/lib/problems.js`, migration 0034). One page lists everything about
+   money that needs a person, and the overview's "Needs attention" counts link
+   to it:
+   - payments nobody can match: Paystack took money against a reference no
+     order, cart or plan fee has, or one that couldn't be applied (short, or
+     unreadable). These used to reach only the Worker's logs; they are now
+     kept in `payment_problems`, once per reference however often Paystack
+     sends them;
+   - payouts not getting through: refused by Paystack, out of attempts, or
+     sent over a day ago with no word back, with Retry;
+   - refunds that failed, with Retry, automatic ones marked as in full;
+   - calls to the Paystack webhook it did not sign, one row a day. A run of
+     these usually means `PAYSTACK_SECRET_KEY` is not the key of the account
+     sending webhooks, which turns every real payment away.
+   Anyone on the admin team can look; owners act, and "Mark sorted" needs a
+   line on what was done, which goes in the audit log. A problem Paystack
+   sends again after that opens again. WhatsApp webhook health was already on
+   the overview, from `webhook_activity`.
+4. **Refund policy stated where sellers choose a plan.** *Done in PR #47.*
+   The bot's plan list, the terms a seller accepts (now `terms-v3`, so it is clear who
+   agreed to which) and the homepage's pricing all say it: on Starter the
+   store is paid the same day, so after that a complaint is between the store
+   and the buyer; on Growth and Business the payment is held until the buyer
+   confirms delivery, or for 7 days, and can be refunded until then. The terms
+   also say a payment for an item already sold is refunded in full at no cost
+   to the store. Two things found on the way, and fixed:
+   - The 7-day release ran even with a dispute open, so a buyer who
+     complained on day 6 could lose their refund on day 7. The sweep now
+     leaves a hold alone while its order has an open dispute
+     (`worker/routes/escrow.js`).
+   - Every store and product page said "Payment protected by Vendwyze", which
+     isn't so on Starter. They now say "Secure payment through Vendwyze", and
+     refund refusals no longer tell buyers to "open a dispute", which only a
+     store can do.
+5. **Daily reconciliation.** *Done in PR #47* (`worker/lib/reconcile.js`,
+   migration 0035). Every morning at 4am Lagos time, or from "Check now" on the Money
+   page, the Worker lists Paystack's successful payments and its transfers for
+   the past week and compares them with our records:
+   - A payment Paystack took that nobody applied (its webhook was lost, and
+     the buyer never came back to the return page) is settled, through the
+     same code the webhook runs, and the buyer and store are told as usual.
+     So is a WhatsApp cart or plan fee in the same state.
+   - A transfer whose outcome we missed is recorded: a success marks the
+     payout paid, a failure or reversal puts it back to be retried.
+   - Everything else goes to the Money page: a payment no order, cart or plan
+     fee has; one for a cancelled order; an amount that differs; an order or
+     plan fee we have as paid in the last 48 hours that Paystack has no
+     successful payment for (each asked about on its own first); a payout we
+     have as paid that Paystack failed or has no transfer for; a transfer out
+     of the balance that isn't one of our payouts.
+   Each run is kept in `reconciliation_runs`. The Money page shows the last
+   one, and the overview warns if the check failed or hasn't run in over a
+   day. Paystack's list endpoints are paged 100 at a time; a week with more
+   than 5,000 payments stops the check with an error rather than check part.
+6. **Payment links for one buyer.** *Done in PR #47*
+   (`worker/lib/paylinks.js`). A link carries a price agreed in chat, often a discount, so it now works only
+   for the buyer's WhatsApp number it was made for: `LINK JBU4PE 30k
+   08031234567` on WhatsApp, or the number field beside the price in the
+   dashboard. The link holds an HMAC fingerprint of the number, not the
+   number (a link's contents are readable by whoever has it), and its last
+   four digits, which its page shows so the right buyer knows it's theirs.
+   Any other number is refused at Pay before the item is held, so a forwarded
+   link can't keep it from the buyer it was meant for. Links sent before this
+   change name no buyer and keep working until they expire, three days on.
+
+Considered and not doing:
+
+- **A ledger keyed on Paystack event IDs.** Paystack's webhooks carry no
+  unique event ID. Replays are already handled by the payment reference and by
+  updating only an order still awaiting payment.
+- **A full money ledger.** `payouts`, `payout_items` and `refunds` already
+  trace every movement by reference. Worth doing later, not before launch.
+- **Several people signing off each refund.** Too much process at this size.
+
 ## Planned, not built
 
 From the spec, this README's earlier notes, and decisions made while building:
@@ -779,7 +936,8 @@ From the spec, this README's earlier notes, and decisions made while building:
 3. **Custom domain and subdomains**: point a domain at the Worker, then offer
    `store.domain` to higher plans.
 4. **Live payments**: switch Paystack from test to live once the business
-   account is verified (Transfers enabled, OTP off for API transfers).
+   account is verified (Transfers enabled, OTP off for API transfers), and
+   once the list under "Before live money" is done.
 
 ## Setup
 

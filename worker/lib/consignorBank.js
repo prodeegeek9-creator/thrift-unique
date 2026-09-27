@@ -1,4 +1,5 @@
 import { db } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { listBanks, resolveAccount } from './transfers.js';
 import { YES, NO, CANCEL } from './bot.js';
 import { INTAKE_STATES } from './intake.js';
@@ -218,14 +219,14 @@ const chatty = (text) => String(text ?? '').trim().split(/\s+/).length > 3;
 export async function accountFor(cfg, tenantId, chat) {
   return db(cfg).one(
     'consignor_accounts',
-    `tenant_id=eq.${tenantId}&seller_chat_id=eq.${encodeURIComponent(chat)}&select=*`
+    `tenant_id=eq.${tenantId}&seller_chat_id=eq.${encodeURIComponent(chat)}&select=${COLUMNS.consignor_account}`
   );
 }
 
 async function openChange(cfg, tenantId, chat) {
   return db(cfg).one(
     'consignor_account_changes',
-    `tenant_id=eq.${tenantId}&seller_chat_id=eq.${encodeURIComponent(chat)}&status=eq.pending&select=*&order=requested_at.desc`
+    `tenant_id=eq.${tenantId}&seller_chat_id=eq.${encodeURIComponent(chat)}&status=eq.pending&select=${COLUMNS.consignor_account_change}&order=requested_at.desc`
   );
 }
 
@@ -310,7 +311,7 @@ export async function bankTurn(cfg, tenant, chat, conversation, text) {
 
     case 'bank_verify': {
       const change = draft.change_id
-        ? await db(cfg).one('consignor_account_changes', `id=eq.${draft.change_id}&tenant_id=eq.${tenant.id}&select=*`)
+        ? await db(cfg).one('consignor_account_changes', `id=eq.${draft.change_id}&tenant_id=eq.${tenant.id}&select=${COLUMNS.consignor_account_change}`)
         : null;
       if (!change || change.status !== 'pending') return done([]);
       if (YES.test(body)) {

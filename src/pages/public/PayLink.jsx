@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
 import CheckoutForm from '../../components/CheckoutForm.jsx';
+import PaymentInProgress from '../../components/PaymentInProgress.jsx';
 import { fetchPaymentLink } from '../../lib/checkout.js';
 import { formatNaira } from '../../lib/money.js';
 import { imageUrl } from '../../lib/images.js';
@@ -11,19 +12,25 @@ import { imageUrl } from '../../lib/images.js';
 // the price they agreed there. The price is inside the signed token, so the
 // buyer cannot change it; the item and store are read fresh, so a link for
 // something that has since sold says so.
+//
+// One buyer at a time: while somebody is paying, the link says "Payment in
+// progress"; once paid, "Paid"; if the payment doesn't go through, the Pay
+// button comes back.
 export default function PayLink() {
   const { token } = useParams();
   const [state, setState] = useState({ loading: true });
+  const [reload, setReload] = useState(0);
+  const [paying, setPaying] = useState(false);
 
   useEffect(() => {
     let active = true;
     fetchPaymentLink(token)
       .then((link) => active && setState({ link }))
-      .catch((err) => active && setState({ error: err.message }));
+      .catch((err) => active && setState({ error: err.message, sold: Boolean(err.body?.sold) }));
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, reload]);
 
   if (state.loading) return <LogoLoader fullScreen label="Loading" />;
 
@@ -34,7 +41,12 @@ export default function PayLink() {
           <BrandMark className="h-8 w-8" />
         </div>
         <div className="card p-5">
-          {state.error ? (
+          {state.sold ? (
+            <>
+              <h1 className="font-display text-lg font-semibold text-ink">Paid</h1>
+              <p className="mt-2 text-sm text-muted">This item has been paid for.</p>
+            </>
+          ) : state.error ? (
             <>
               <h1 className="font-display text-lg font-semibold text-ink">This link can't be paid</h1>
               <p className="mt-2 text-sm text-muted">{state.error}</p>
@@ -61,7 +73,23 @@ export default function PayLink() {
                   <p className="text-2xl font-semibold text-ink">{formatNaira(state.link.price)}</p>
                 </div>
               </div>
-              <CheckoutForm token={token} price={state.link.price} />
+              {/* A link is for the buyer the store agreed the price with, and
+                  only their number can pay it (worker/lib/paylinks.js). */}
+              {state.link.buyer_last4 ? (
+                <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">
+                  This link is for the buyer on the WhatsApp number ending{' '}
+                  <span className="font-semibold text-ink">{state.link.buyer_last4}</span>. Pay with that number.
+                </p>
+              ) : null}
+              {state.link.held_minutes && !paying ? (
+                <PaymentInProgress
+                  minutes={state.link.held_minutes}
+                  onCheck={() => setReload((n) => n + 1)}
+                  onMine={() => setPaying(true)}
+                />
+              ) : (
+                <CheckoutForm token={token} price={state.link.price} />
+              )}
             </>
           )}
         </div>

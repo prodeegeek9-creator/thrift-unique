@@ -14,7 +14,8 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
-import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION } from './plans.js';
+import { normalizeNumber } from './phone.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION, CONFIRM_WINDOW_DAYS } from './plans.js';
 
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
@@ -136,7 +137,7 @@ export const MAX_BUSINESS_NAME = 60;
 
 // Bumped whenever the wording of TERMS changes, so the version stored against
 // a store always names the text its owner actually said YES to.
-export const DISCLAIMER_VERSION = 'terms-v2';
+export const DISCLAIMER_VERSION = 'terms-v3';
 
 // Commission per plan: see lib/plans.js.
 export { COMMISSION };
@@ -214,8 +215,8 @@ const SIGNUP = {
   badCategory: `Reply with a number from 1 to ${CATEGORIES.length}.`,
   askPlan:
     'Pick a plan:\n\n' +
-    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
-    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
+    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day. Because you're paid straight away, a buyer with a problem sorts it out with you.\n\n` +
+    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale. Each payment is held until the buyer confirms it arrived, or ${CONFIRM_WINDOW_DAYS} days pass, and can be refunded to them until then.\n\n` +
     `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds sales analytics, staff logins and priority support (TikTok posting coming soon). Commission agreed with you.\n\n` +
     `Your first ${TRIAL_DAYS} days are free, and you can change plan later. Reply 1, 2 or 3.`,
   badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
@@ -235,6 +236,12 @@ export function termsMessage(tier) {
     tier === 'starter'
       ? "You're paid the same day the buyer pays."
       : "The buyer's payment is held until they confirm they've received the item, then released to you.";
+  // What a buyer can get back, and until when (lib/refunds.js). Starter is
+  // paid at once, so there is nothing held to refund from for long.
+  const refunds =
+    tier === 'starter'
+      ? "Refunds: you're paid the same day, so Vendwyze can only refund a buyer before your payout has gone. After that, a complaint is between you and the buyer."
+      : `Refunds: a buyer's payment is held until they confirm it arrived, or for ${CONFIRM_WINDOW_DAYS} days. Until then it can be refunded to them, less Paystack's fee. After that, a complaint is between you and the buyer.`;
   const rate =
     tier === 'business'
       ? `A ${pct}% commission applies to every sale paid through Vendwyze until we agree a different rate with you.`
@@ -244,6 +251,8 @@ export function termsMessage(tier) {
     '*Before we set you up — our terms*\n\n' +
     `• ${rate}\n` +
     `• ${payout}\n` +
+    `• ${refunds}\n` +
+    "• If a buyer pays for an item that has already sold, Vendwyze refunds them in full and you're not charged.\n" +
     '• Buyers always pay through Vendwyze. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
     `• Your plan is free for ${TRIAL_DAYS} days after your store is approved, then ${formatNaira(PLAN_PRICES[tier] ?? PLAN_PRICES.starter)} a month, paid in advance. If it isn't paid within ${GRACE_DAYS} days of the due date, your store is paused until it is.\n\n` +
     'Reply *YES* to accept, or *CANCEL*.'
@@ -463,10 +472,11 @@ export function savedMessage(product) {
   );
 }
 
-export function paymentLinkMessage({ title, price, url }) {
+export function paymentLinkMessage({ title, price, url, phone }) {
   return (
     `💳 Payment link for *${title}* — ${formatNaira(price)}:\n${url}\n\n` +
-    'Send it to the buyer. It works for 3 days, and the item comes off sale as soon as it is paid.'
+    (phone ? `Only the buyer on the number ending ${String(phone).slice(-4)} can pay it. ` : '') +
+    'Send it to them. It works for 3 days, and the item comes off sale as soon as it is paid.'
   );
 }
 
@@ -547,19 +557,26 @@ function idleStep(text, image, ctx = {}) {
     };
   }
 
-  // "LINK JBU4PE 30k": a payment link for a price agreed in chat. Before the
-  // menu words, since a bare "link" is the store page.
+  // "LINK JBU4PE 30k 08031234567": a payment link for a price agreed in chat,
+  // for that buyer's number alone (lib/paylinks.js). Before the menu words,
+  // since a bare "link" is the store page.
   const pay = MENU_PAYLINK.exec(text);
   if (pay) {
-    const price = pay[2] ? parsePrice(pay[2]) : null;
-    if (pay[2] && price == null) {
-      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k*, or leave the price off to use the listed one.");
+    const { phone, rest } = linkArgs(pay[2] ?? '');
+    if (!phone) {
+      return done(
+        "Add the buyer's WhatsApp number, so only they can pay it: e.g. *LINK JBU4PE 30k 08031234567*. Leave the price out to use the listed one."
+      );
+    }
+    const price = rest ? parsePrice(rest) : null;
+    if (rest && price == null) {
+      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k 08031234567*, or leave the price out to use the listed one.");
     }
     return {
       state: 'idle',
       draft: {},
       replies: [],
-      action: { type: 'payment_link', code: pay[1].toUpperCase(), price },
+      action: { type: 'payment_link', code: pay[1].toUpperCase(), price, phone },
     };
   }
 
@@ -587,6 +604,21 @@ function idleStep(text, image, ctx = {}) {
 // mistaken for a request.
 
 const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
+// What follows LINK and the code: a phone number, however it is spaced, and
+// perhaps a price. A number has at least ten digits, which no price here has.
+export function linkArgs(text) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i += 1) {
+    for (let j = words.length; j > i; j -= 1) {
+      const joined = words.slice(i, j).join('');
+      if (!/^\+?[\d-]+$/.test(joined) || joined.replace(/\D/g, '').length < 10) continue;
+      const phone = normalizeNumber(joined);
+      if (phone) return { phone, rest: [...words.slice(0, i), ...words.slice(j)].join(' ') };
+    }
+  }
+  return { phone: null, rest: words.join(' ') };
+}
+
 const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s+(.+))?$/i;
 const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
 const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
@@ -608,7 +640,7 @@ export function menuMessage(ctx = {}) {
     lines.push(`📥 *REVIEW* for items people sent you${pending ? ` (${pending} waiting)` : ''}`);
   }
   lines.push(
-    '💳 *LINK code price* for a payment link to send a buyer (e.g. LINK JBU4PE 30k)',
+    "💳 *LINK code price number* for a payment link only that buyer can pay (e.g. LINK JBU4PE 30k 08031234567)",
     '📣 *SHARE code* for a photo and caption to post on Instagram, TikTok or Facebook',
     '💻 *DASHBOARD* to manage listings, orders and payouts',
     '🔑 *PASSWORD* for a link to set a new dashboard password',

@@ -1,4 +1,5 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { approveStore } from '../lib/provision.js';
 import { approvedMessage } from '../lib/bot.js';
 import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
@@ -10,6 +11,7 @@ import { ownerSay } from './billing.js';
 import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
+import { reconcile } from '../lib/reconcile.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
@@ -96,6 +98,11 @@ export async function handleAdmin(request, env, path) {
   const release = rest.match(/^\/escrow\/([0-9a-f-]{36})\/release$/i);
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
 
+  if (rest === '/money' && method === 'GET') return moneyProblems(cfg);
+  if (rest === '/reconcile' && method === 'POST') return reconcileNow(cfg, op);
+  const problem = rest.match(/^\/problems\/([0-9a-f-]{36})\/resolve$/i);
+  if (problem && method === 'POST') return resolveProblem(request, cfg, op, problem[1]);
+
   if (rest === '/refunds' && method === 'GET') return listRefunds(cfg);
   const refundRetry = rest.match(/^\/refunds\/([0-9a-f-]{36})\/retry$/i);
   if (refundRetry && method === 'POST') return retryRefundRoute(cfg, op, refundRetry[1]);
@@ -111,14 +118,17 @@ export async function handleAdmin(request, env, path) {
 // ── READS ────────────────────────────────────────────────────────────────────
 
 async function overview(cfg, request) {
-  const [tenants, orders, held, disputes, platform, owed] = await Promise.all([
+  const [tenants, orders, held, disputes, platform, owed, problems, refundsFailed] = await Promise.all([
     db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status,billing_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
     platformHealth(cfg, request),
-    db(cfg).select('payouts', 'status=in.(pending,sending)&select=amount,status,failure_reason,attempts'),
+    db(cfg).select('payouts', 'status=in.(pending,sending)&select=amount,status,failure_reason,attempts,sent_at'),
+    db(cfg).select('payment_problems', 'resolved_at=is.null&select=kind'),
+    db(cfg).select('refunds', 'status=eq.failed&select=id'),
   ]);
+  const lastRun = await db(cfg).one('reconciliation_runs', 'select=ran_at,error&order=ran_at.desc').catch(() => null);
 
   const gross = sum(orders, (o) => Number(o.amount));
   const now = Date.now();
@@ -161,7 +171,21 @@ async function overview(cfg, request) {
     payouts: {
       owed: owed.length,
       amount: sum(owed, (p) => Number(p.amount)),
-      stuck: owed.filter((p) => p.status === 'pending' && (p.failure_reason || p.attempts >= MAX_ATTEMPTS)).length,
+      stuck: owed.filter(stuckPayout).length,
+    },
+
+    // Money that arrived or was due and did not get where it should (the
+    // console's Money page): a payment nobody can match or apply, a refund
+    // Paystack refused, calls to the Paystack webhook it did not sign.
+    money: {
+      unmatched: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)).length,
+      transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)).length,
+      refundsFailed: refundsFailed.length,
+      badSignatureDays: problems.filter((p) => p.kind === 'bad_signature').length,
+      // When the books were last checked against Paystack. Older than a day
+      // and a bit means the daily check has stopped running.
+      lastCheckAt: lastRun?.ran_at ?? null,
+      lastCheckFailed: Boolean(lastRun?.error),
     },
 
     // WhatsApp, across the platform.
@@ -212,7 +236,7 @@ async function platformHealth(cfg, request) {
 
   const [live, activity] = await Promise.all([
     withTimeout(getSession(cfg, session), 5000).catch((err) => ({ error: err?.message ?? 'unreachable' })),
-    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=*`).catch(() => null),
+    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=${COLUMNS.webhook_activity}`).catch(() => null),
   ]);
 
   if (live?.error) {
@@ -264,7 +288,7 @@ async function listTenants(cfg) {
 
 async function tenantView(cfg, tenantId) {
   const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts, planInvoices] = await Promise.all([
-    db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
+    db(cfg).one('tenants', `id=eq.${tenantId}&select=${COLUMNS.tenant}`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
     db(cfg).select(
       'tenant_members',
@@ -506,7 +530,7 @@ async function setPayoutsPaused(request, cfg, op, tenantId) {
   if (!paused) {
     const pending = await db(cfg).select(
       'payouts',
-      `tenant_id=eq.${tenantId}&status=eq.pending&select=*&order=created_at.asc&limit=100`
+      `tenant_id=eq.${tenantId}&status=eq.pending&select=${COLUMNS.payout}&order=created_at.asc&limit=100`
     );
     for (const p of pending) if ((await sendPayout(cfg, p).catch(() => null)) === 'sent') sent += 1;
   }
@@ -516,7 +540,7 @@ async function setPayoutsPaused(request, cfg, op, tenantId) {
 // One more go at a payout that is stuck: Paystack refused it, or it used up
 // its attempts. The attempt count starts again.
 async function retryPayout(cfg, op, payoutId) {
-  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=*`);
+  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=${COLUMNS.payout}`);
   if (!payout) return json({ error: 'No such payout' }, 404);
   if (payout.status !== 'pending') return json({ error: `This payout is ${payout.status}, not waiting.` }, 409);
 
@@ -810,10 +834,94 @@ async function storeMemberLink(cfg, op, tenantId, userId) {
 
 // ── REFUNDS ──────────────────────────────────────────────────────────────────
 
+// Payment problems by what they are about: money coming in, or money going
+// out to stores (lib/problems.js, lib/reconcile.js).
+const PAYMENT_KINDS = ['unmatched_payment', 'unsettled_payment', 'amount_mismatch', 'missing_payment'];
+const TRANSFER_KINDS = ['payout_mismatch', 'unknown_transfer'];
+
+// A payout the platform owes and is not getting to the store: Paystack
+// refused it, it ran out of attempts, or it went to Paystack over a day ago
+// and Paystack never said it arrived.
+const SENDING_TOO_LONG_MS = 86_400_000;
+function stuckPayout(p) {
+  if (p.status === 'pending') return Boolean(p.failure_reason) || p.attempts >= MAX_ATTEMPTS;
+  if (p.status === 'sending') return Boolean(p.sent_at) && Date.now() - new Date(p.sent_at).getTime() > SENDING_TOO_LONG_MS;
+  return false;
+}
+
+// GET /api/admin/money: everything about money that needs a person, in one
+// place. Failed payouts and refunds are read from their own rows; payments
+// nobody could match, and webhooks Paystack did not sign, from
+// payment_problems (lib/problems.js).
+async function moneyProblems(cfg) {
+  const [problems, payouts, refunds, lastRun] = await Promise.all([
+    db(cfg).select(
+      'payment_problems',
+      'resolved_at=is.null&select=id,kind,reference,amount,detail,first_seen,last_seen&order=last_seen.desc&limit=200'
+    ),
+    db(cfg).select(
+      'payouts',
+      'status=in.(pending,sending)&select=id,tenant_id,amount,status,reference,failure_reason,attempts,sent_at,created_at' +
+        '&order=created_at.asc&limit=500'
+    ),
+    db(cfg).select(
+      'refunds',
+      'status=eq.failed&select=id,tenant_id,paid,amount,platform_fee,reason,failure_reason,requested_via,created_at,' +
+        'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
+    ),
+    db(cfg).one('reconciliation_runs', `select=${COLUMNS.reconciliation_run}&order=ran_at.desc`),
+  ]);
+  const stuck = payouts.filter(stuckPayout);
+  const names = await tenantNames(cfg, [...stuck, ...refunds].map((r) => r.tenant_id));
+  const named = (r) => ({ ...r, tenant_name: names[r.tenant_id] ?? null });
+
+  return json({
+    payments: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)),
+    transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)),
+    badSignatures: problems.filter((p) => p.kind === 'bad_signature'),
+    payouts: stuck.map(named),
+    refunds: refunds.map(named),
+    // The last daily check against Paystack (lib/reconcile.js).
+    lastRun: lastRun ?? null,
+  });
+}
+
+// POST /api/admin/reconcile: the daily check, now. Settles what Paystack's
+// record settles, like the scheduled run, so it is an owner's, and audited.
+async function reconcileNow(cfg, op) {
+  if (!cfg.paystackKey) return json({ error: 'Paystack is not set up on the platform yet.' }, 503);
+  const run = await reconcile(cfg);
+  await audit(cfg, op.userId, 'reconcile.run', {
+    detail: { payments: run.payments, transfers: run.transfers, settled_late: run.settled_late, problems: run.problems, error: run.error },
+  });
+  return json({ ok: !run.error, run });
+}
+
+// POST /api/admin/problems/:id/resolve { note }: an owner has dealt with it
+// (found the order, refunded the payment by hand, fixed the key) and says how.
+async function resolveProblem(request, cfg, op, problemId) {
+  const body = await request.json().catch(() => ({}));
+  const note = String(body?.note ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+  if (note.length < 3) return json({ error: 'Say what was done about it.' }, 400);
+
+  const rows = await db(cfg).update(
+    'payment_problems',
+    `id=eq.${problemId}&resolved_at=is.null`,
+    { resolved_at: new Date().toISOString(), resolved_by: op.userId, resolution: note }
+  );
+  if (!rows.length) return json({ error: 'Already sorted, or no such problem.' }, 409);
+
+  await audit(cfg, op.userId, 'problem.resolve', {
+    subject: rows[0].reference ?? rows[0].key,
+    detail: { kind: rows[0].kind, amount: rows[0].amount, note },
+  });
+  return json({ ok: true });
+}
+
 async function listRefunds(cfg) {
   const rows = await db(cfg).select(
     'refunds',
-    'select=id,tenant_id,order_id,paid,fee,amount,reason,status,failure_reason,requested_via,created_at,processed_at,' +
+    'select=id,tenant_id,order_id,paid,fee,platform_fee,amount,reason,status,failure_reason,requested_via,created_at,processed_at,' +
       'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
   );
   const names = await tenantNames(cfg, rows.map((r) => r.tenant_id));

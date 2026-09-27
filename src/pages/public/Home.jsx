@@ -19,14 +19,14 @@ const PLANS = [
     name: 'Starter',
     price: '₦10,000',
     commission: '8% per sale',
-    points: ['List items on WhatsApp or the dashboard', 'Auto-posts to your WhatsApp Status', 'Your own store page', 'Paid out the same day'],
+    points: ['List items on WhatsApp or the dashboard', 'Auto-posts to your WhatsApp Status', 'Your own store page', 'Paid out the same day; you handle after-sale issues'],
   },
   {
     name: 'Growth',
     price: '₦25,000',
     commission: '7% per sale',
     featured: true,
-    points: ['Everything in Starter', 'Buyer protection (escrow)', 'Customer list & disputes', 'Instagram & Facebook posting (coming soon)'],
+    points: ['Everything in Starter', 'Buyer protection: payment held until delivery is confirmed (up to 7 days)', 'Customer list & disputes', 'Instagram & Facebook posting (coming soon)'],
   },
   {
     name: 'Business',
@@ -178,6 +178,13 @@ export default function Home() {
                 </div>
               ))}
             </div>
+            {/* What a buyer can get back differs by plan (worker/lib/refunds.js),
+                so it is said here, where a seller picks one. */}
+            <p className="mx-auto mt-6 max-w-2xl text-center text-xs leading-relaxed text-muted">
+              Refunds: on Starter the store is paid straight away, so issues after a sale are settled with the store. On
+              Growth and Business the buyer's payment is held until they confirm delivery, or for 7 days, and can be
+              refunded until then.
+            </p>
           </div>
         </section>
 
@@ -197,7 +204,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-line py-6 text-center text-xs text-muted">
-        © {new Date().getFullYear()} Vendwyze · Payments protected by Vendwyze
+        © {new Date().getFullYear()} Vendwyze · Secure payments through Vendwyze
       </footer>
     </div>
   );

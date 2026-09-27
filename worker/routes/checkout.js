@@ -2,9 +2,12 @@ import { config, require_, originOf } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { verify } from '../lib/sign.js';
+import { linkIsFor } from '../lib/paylinks.js';
+import { AMOUNT_MISMATCH, paidInFull, amountRefused } from '../lib/problems.js';
 import { initializeTransaction, fetchTransaction } from '../lib/paystack.js';
 import { koboToNaira, nairaToKobo } from '../lib/money.js';
-import { markPaid, byPaymentRef } from '../lib/orders.js';
+import { markPaid, oweSeller, byPaymentRef } from '../lib/orders.js';
+import { refundOrder, lateSaleBuyerMessage, lateSaleOwnerMessage } from '../lib/refunds.js';
 import { normalizeNumber } from '../lib/phone.js';
 import { chatId } from '../lib/waha.js';
 import { formatNaira } from '../lib/bot.js';
@@ -12,7 +15,8 @@ import { confirmToken } from './confirm.js';
 import { say } from './waha.js';
 import { soldConsignorMessage } from '../lib/intake.js';
 import { accountFor } from '../lib/consignorBank.js';
-import { settleCart, cartView, isCartRef } from '../lib/cartCheckout.js';
+import { settleCart, cartView, isCartRef, cartRefOf } from '../lib/cartCheckout.js';
+import { reserveItem, releaseReservation, markSold, reservedMinutes } from '../lib/reservations.js';
 
 // Buying on the platform.
 //
@@ -61,8 +65,12 @@ async function readLink(env, token) {
   if (!claims || claims.k !== 'pay') return json({ error: 'This payment link has expired or is not valid.' }, 410);
 
   const found = await buyable(cfg, { id: claims.p });
+  // Sold is an answer the link's page shows, not an error: "Paid".
+  if (found.sold) return json({ error: 'This item has been paid for.', sold: true }, 409);
   if (found.error) return json({ error: found.error }, found.status);
-  return json({ ...publicView(found), price: claims.a });
+  // Whose it is, by the last four digits of their number, so the right buyer
+  // can see it's theirs and anybody else that it isn't.
+  return json({ ...publicView(found), price: claims.a, buyer_last4: claims.l ?? null });
 }
 
 // ── STARTING A PAYMENT ───────────────────────────────────────────────────────
@@ -80,9 +88,10 @@ async function start(request, env) {
   // the agreed price a payment link carries.
   let price;
   let found;
+  let claims = null;
   let source = 'direct';
   if (body.token) {
-    const claims = await verify(cfg.tokenSecret, String(body.token));
+    claims = await verify(cfg.tokenSecret, String(body.token));
     if (!claims || claims.k !== 'pay') return json({ error: 'This payment link has expired or is not valid.' }, 410);
     found = await buyable(cfg, { id: claims.p });
     price = Number(claims.a);
@@ -106,6 +115,16 @@ async function start(request, env) {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "That email doesn't look right." }, 400);
   if (!Number.isFinite(price) || price <= 0) return json({ error: 'This item has no price.' }, 409);
 
+  // A payment link is for the buyer the store agreed the price with
+  // (lib/paylinks.js). Checked before anything is held, so a forwarded link
+  // can't keep the item from the person it was made for.
+  if (claims && !(await linkIsFor(cfg, claims, phone))) {
+    return json({
+      error: `This payment link was made for another buyer${claims.l ? ` (the number ending ${claims.l})` : ''}. Message the store if you'd like to buy this.`,
+      other_buyer: true,
+    }, 403);
+  }
+
   const buyer = await db(cfg).insert(
     'buyers',
     { tenant_id: tenant.id, phone, name },
@@ -114,6 +133,19 @@ async function start(request, env) {
   if (!buyer?.id) throw new Error('buyer upsert returned no row');
 
   const reference = `utp_${random(20, 'abcdefghijkmnpqrstuvwxyz23456789')}`;
+
+  // The item, for this buyer alone, before an order or a Paystack page exists
+  // (lib/reservations.js). A buyer coming back to an item they are already paying
+  // for goes back to the same Paystack page rather than opening a second.
+  const hold = await reserveItem(cfg, { productId: product.id, tenantId: tenant.id, ref: reference, buyerId: buyer.id });
+  if (hold.held?.mine) {
+    const open = await byPaymentRef(cfg, hold.held.ref);
+    if (open?.status === 'awaiting_payment' && open.checkout_url) {
+      return json({ ok: true, url: open.checkout_url, reference: open.payment_ref, order_code: open.order_code, resumed: true });
+    }
+  }
+  if (!hold.ok) return holdRefused(hold);
+
   let order = null;
   for (let i = 0; i < 4 && !order; i += 1) {
     order = await db(cfg).insert(
@@ -137,7 +169,10 @@ async function start(request, env) {
       { onConflict: 'order_code' }
     );
   }
-  if (!order) throw new Error('could not allocate an order code');
+  if (!order) {
+    await releaseReservation(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
+    throw new Error('could not allocate an order code');
+  }
 
   let checkout;
   try {
@@ -161,21 +196,47 @@ async function start(request, env) {
     await db(cfg)
       .update('orders', `id=eq.${order.id}&status=eq.awaiting_payment`, { status: 'cancelled' }, { returning: false })
       .catch(() => {});
+    await releaseReservation(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
     return json({ error: "Couldn't start the payment. Try again in a minute." }, 502);
   }
 
+  await db(cfg)
+    .update('orders', `id=eq.${order.id}`, { checkout_url: checkout.authorization_url }, { returning: false })
+    .catch((err) => console.error('checkout: could not keep the checkout url:', err?.message ?? err));
+
   return json({ ok: true, url: checkout.authorization_url, reference, order_code: order.order_code });
 }
+
+// Why this buyer can't pay for this item right now, in words for the page.
+function holdRefused(hold) {
+  if (hold.sold) return json({ error: 'Sorry, this item has sold.', sold: true }, 409);
+  if (hold.busy) {
+    return json({
+      error: `You're already paying for ${hold.busy.title}. Finish that payment first, or try again in about ${minutes(hold.busy.minutes)}.`,
+      busy: true,
+    }, 409);
+  }
+  const m = hold.held.minutes;
+  return json({
+    error: hold.held.mine
+      ? `You already have a payment open for this item. Finish it, or try again in about ${minutes(m)}.`
+      : `Someone else is paying for this item right now. If their payment doesn't go through, it'll be available again in about ${minutes(m)}.`,
+    held: true,
+    held_minutes: m,
+  }, 409);
+}
+
+const minutes = (n) => `${n} minute${n === 1 ? '' : 's'}`;
 
 // The item, if it can be bought right now: live, in a live store, not sold.
 async function buyable(cfg, { id, code }) {
   const filter = id ? `id=eq.${id}` : `public_code=eq.${encodeURIComponent(code.toUpperCase())}`;
   const product = await db(cfg).one(
     'products',
-    `${filter}&select=id,tenant_id,public_code,title,price,condition,images,status`
+    `${filter}&select=id,tenant_id,public_code,title,price,condition,images,status,held_until`
   );
   if (!product) return { error: 'That item no longer exists.', status: 404 };
-  if (product.status !== 'active') return { error: 'Sorry, this item has sold.', status: 409 };
+  if (product.status !== 'active') return { error: 'Sorry, this item has sold.', status: 409, sold: true };
 
   const tenant = await db(cfg).one(
     'tenants',
@@ -194,6 +255,8 @@ function publicView({ product, tenant }) {
     price: Number(product.price),
     condition: product.condition,
     images: product.images ?? [],
+    // Minutes left while somebody else is paying for it, else null.
+    held_minutes: reservedMinutes(product),
     store: { name: tenant.name, slug: tenant.slug, whatsapp: tenant.whatsapp_number },
   };
 }
@@ -213,7 +276,7 @@ async function orderStatus(request, env, reference) {
   if (order.status === 'awaiting_payment' && cfg.paystackKey) {
     const verified = await fetchTransaction(cfg.paystackKey, reference).catch(() => null);
     if (verified?.status === 'success') {
-      const settled = await settle(cfg, order, { kobo: verified.amount, channel: null });
+      const settled = await settle(cfg, order, { kobo: verified.amount, requestedKobo: verified.requested_amount, channel: null });
       order = settled.order ?? order;
     }
   }
@@ -242,28 +305,40 @@ async function cartStatus(request, env, ref) {
   if (view.status !== 'paid' && cfg.paystackKey && isCartRef(ref)) {
     const verified = await fetchTransaction(cfg.paystackKey, ref).catch(() => null);
     if (verified?.status === 'success') {
-      await settleCart(cfg, ref, { kobo: verified.amount });
+      await settleCart(cfg, ref, { kobo: verified.amount, requestedKobo: verified.requested_amount });
       view = await cartView(cfg, ref);
     }
   }
   return json(view);
 }
 
-// A payment Paystack says succeeded, applied to its order: mark it paid (and
-// owe the seller, via markPaid), take the item off sale, and tell both sides.
+// A payment Paystack says succeeded, applied to its order: mark it paid, take
+// the item off sale, owe the seller, and tell both sides. In that order: the
+// store is owed nothing until the item is known to be this buyer's. If it had
+// already sold to somebody else, the payment is refunded in full instead
+// (lateSale) and the store is not paid for it.
 // Shared by the webhook and the return page; markPaid only matches an order
 // still awaiting payment, so whichever arrives second does nothing.
 // notify: false leaves the WhatsApp messages to the caller (a cart sends one
 // for all its items, see lib/cartCheckout.js); the item still comes off sale
 // and a consignor is still told.
-export async function settle(cfg, order, { kobo, channel, notify = true }) {
-  let amountNaira;
+//
+// Only for the order's price. A payment for any other amount is not turned
+// into a sale: it is recorded on the Money page (lib/problems.js) and the
+// order is left awaiting payment, with nothing owed to anybody.
+export async function settle(cfg, order, { kobo, requestedKobo = null, channel, notify = true }) {
   try {
-    amountNaira = koboToNaira(kobo);
+    koboToNaira(kobo);
   } catch (err) {
     console.error('paystack: bad amount', kobo, err.message);
     return { order, replayed: true, ignored: 'bad amount' };
   }
+  const expectedKobo = nairaToKobo(order.amount);
+  if (!paidInFull(expectedKobo, { kobo, requestedKobo })) {
+    await amountRefused(cfg, { reference: order.payment_ref, kobo, expectedKobo, what: `order ${order.order_code}` });
+    return { order, replayed: true, ignored: AMOUNT_MISMATCH };
+  }
+  const amountNaira = Number(order.amount);
 
   const tenant = await db(cfg).one(
     'tenants',
@@ -274,32 +349,85 @@ export async function settle(cfg, order, { kobo, channel, notify = true }) {
     return { order, replayed: true, ignored: 'no tenant' };
   }
 
+  // Recorded first, owing nobody yet. markPaid matches only an order still
+  // awaiting payment, so of the webhook and the return page arriving together
+  // exactly one goes on past here.
   const result = await markPaid(cfg, order, tenant, {
     amountNaira,
     reference: order.payment_ref,
     channel: channel ?? order.source_channel,
+    owe: false,
   });
-  if (!result.replayed) {
-    const after = await afterPayment(cfg, result.order, tenant, { notify }).catch((err) => {
-      // The money is recorded; a failed notice is not worth failing the webhook.
-      console.error('after-payment notices failed:', err?.message ?? err);
-      return null;
-    });
-    return { ...result, doubleSale: Boolean(after?.doubleSale), title: after?.title ?? null };
+  if (result.replayed) return result;
+
+  // Off sale, for this payment: the item is its if it holds it, or if nobody
+  // else is paying for it (lib/reservations.js). A cart's orders hold their items
+  // under the cart's reference.
+  const won = await markSold(cfg, {
+    productId: order.product_id,
+    tenantId: tenant.id,
+    ref: cartRefOf(order.payment_ref) ?? order.payment_ref,
+  });
+  if (!won) {
+    const lost = await lateSale(cfg, result.order, tenant, { notify });
+    return { ...result, doubleSale: true, title: lost.title, refundFailed: lost.failed };
   }
-  return result;
+
+  await oweSeller(cfg, result.order);
+  const after = await afterPayment(cfg, result.order, tenant, { notify }).catch((err) => {
+    // The money is recorded; a failed notice is not worth failing the webhook.
+    console.error('after-payment notices failed:', err?.message ?? err);
+    return null;
+  });
+  return { ...result, doubleSale: false, title: after?.title ?? null };
+}
+
+// A payment for an item that had already gone to somebody else: a Paystack
+// page left open past its hold (lib/reservations.js), paid after the item was sold.
+// Nobody is credited: no payout, no commission, and the buyer gets all of it
+// back, Vendwyze carrying Paystack's fee (lib/refunds.js, via 'auto'). A
+// refund Paystack refuses is left failed for the operator to retry, and the
+// buyer is told Vendwyze will refund them.
+async function lateSale(cfg, order, tenant, { notify = true } = {}) {
+  await db(cfg)
+    .update('orders', `id=eq.${order.id}&tenant_id=eq.${tenant.id}`, { commission: 0 }, { returning: false })
+    .catch(() => {});
+
+  let failed = false;
+  try {
+    const refund = await refundOrder(cfg, { ...order, commission: 0 }, {
+      reason: 'Sold to someone else just before your payment went through',
+      via: 'auto',
+      tenant,
+      notify: false,
+    });
+    failed = refund?.status === 'failed';
+  } catch (err) {
+    console.error('late sale: refund not started for', order.order_code, err?.message ?? err);
+    failed = true;
+  }
+
+  const [product, buyer] = await Promise.all([
+    db(cfg).one('products', `id=eq.${order.product_id}&select=title`),
+    db(cfg).one('buyers', `id=eq.${order.buyer_id}&select=phone`),
+  ]);
+  const title = product?.title ?? 'your item';
+
+  if (notify) {
+    const own = tenant.waha_session && tenant.waha_status === 'WORKING' ? { session: tenant.waha_session } : {};
+    const toBuyer = chatId(buyer?.phone);
+    const toOwner = chatId(tenant.whatsapp_number);
+    await Promise.all([
+      toBuyer
+        ? say(cfg, tenant, toBuyer, lateSaleBuyerMessage({ store: tenant.name, title, amount: order.amount, failed }), own)
+        : null,
+      toOwner ? say(cfg, tenant, toOwner, lateSaleOwnerMessage({ title, code: order.order_code, amount: order.amount })) : null,
+    ]).catch((err) => console.error('late sale notices failed:', err?.message ?? err));
+  }
+  return { title, failed };
 }
 
 async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
-  // Off sale. Only an item still listed matches: a second buyer who paid for
-  // something already sold is the store's to refund, and it is told so below.
-  const sold = await db(cfg).update(
-    'products',
-    `id=eq.${order.product_id}&tenant_id=eq.${tenant.id}&status=eq.active`,
-    { status: 'sold', sold_at: new Date().toISOString(), quantity_available: 0 }
-  );
-  const doubleSale = sold.length === 0;
-
   const [product, buyer, account] = await Promise.all([
     db(cfg).one('products', `id=eq.${order.product_id}&select=title,public_code`),
     db(cfg).one('buyers', `id=eq.${order.buyer_id}&select=name,phone`),
@@ -328,9 +456,6 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
           ? `Your payout is on its way to your ${account.bank_name} account ending ${account.account_last4}.`
           : `Add your bank account under Payouts in your dashboard to receive it: ${cfg.publicOrigin ?? ''}/dashboard/payouts`
     );
-    if (doubleSale) {
-      lines.push('', '⚠️ This item was already sold to someone else. Contact the buyer to arrange a refund or a swap.');
-    }
     await say(cfg, tenant, owner, lines.join('\n'));
   }
 
@@ -341,7 +466,7 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
     'submissions',
     `product_id=eq.${order.product_id}&tenant_id=eq.${tenant.id}&select=seller_chat_id,title,asking_price,owed_amount`
   );
-  if (brought?.seller_chat_id && !doubleSale && tenant.waha_session && tenant.waha_status === 'WORKING') {
+  if (brought?.seller_chat_id && tenant.waha_session && tenant.waha_status === 'WORKING') {
     await say(
       cfg,
       tenant,
@@ -380,7 +505,7 @@ async function afterPayment(cfg, order, tenant, { notify = true } = {}) {
     await say(cfg, tenant, to, lines.join('\n'), own);
   }
 
-  return { doubleSale, title };
+  return { title };
 }
 
 function random(length, alphabet = CODE_ALPHABET) {

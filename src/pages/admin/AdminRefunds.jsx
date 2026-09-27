@@ -8,7 +8,8 @@ import { formatNaira } from '../../lib/money.js';
 import { dateTime } from '../../lib/time.js';
 
 // Every refund on the platform: who asked for it, what went back to the buyer
-// after Paystack's fee, and whether it reached their card. A failed one
+// after Paystack's fee (all of it, for an automatic one), and whether it
+// reached their card. A failed one
 // (usually the Paystack balance was short) is retried from here by an owner.
 
 // Colours come from StatusPill's own map; only the words differ.
@@ -19,7 +20,7 @@ const LABEL = {
   failed: 'Failed',
 };
 
-const VIA = { store: 'Store', operator: 'Console', dispute: 'Dispute' };
+const VIA = { store: 'Store', operator: 'Console', dispute: 'Dispute', auto: 'Automatic' };
 
 export default function AdminRefunds({ operator }) {
   const qc = useQueryClient();
@@ -79,6 +80,11 @@ export default function AdminRefunds({ operator }) {
                       <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">{formatNaira(r.paid)}</td>
                       <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">
                         {Number(r.fee) > 0 ? `−${formatNaira(r.fee)}` : '—'}
+                        {/* An automatic refund goes back in full, Vendwyze
+                            paying Paystack's fee (lib/refunds.js). */}
+                        {Number(r.platform_fee) > 0 ? (
+                          <span className="block text-[11px]">Vendwyze paid {formatNaira(r.platform_fee)}</span>
+                        ) : null}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">{formatNaira(r.amount)}</td>
                       <td className="px-4 py-3 text-muted">{VIA[r.requested_via] ?? r.requested_via}</td>

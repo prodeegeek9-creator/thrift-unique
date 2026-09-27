@@ -37,6 +37,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     nudge_events: [],
     disputes: [],
     operator_audit: [],
+    payment_problems: [],
+    reconciliation_runs: [],
     ...structuredClone(seed),
   };
 
@@ -58,6 +60,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     refunds: 'order_id',
     bot_conversations: ['tenant_id', 'chat_id'],
     consignor_accounts: ['tenant_id', 'seller_chat_id'],
+    payment_problems: ['kind', 'key'],
   };
 
   // Column defaults the real tables have, which the code reads back.
@@ -89,7 +92,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       else if (k === 'order') order = v;
       else if (k === 'on_conflict') continue;
       else {
-        const m = /^(eq|neq|lt|gt|lte|gte|in|not\.is|is)\.(.*)$/s.exec(v);
+        const m = /^(eq|neq|lt|gt|lte|gte|in|not\.in|not\.is|is)\.(.*)$/s.exec(v);
         if (m) filters.push({ col: k, op: m[1], val: m[2] });
       }
     }
@@ -121,6 +124,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
   function matches(row, filters) {
     return filters.every((f) => {
       const cell = row[f.col];
+      // As in SQL, NULL compares to nothing: lt, gt and neq never match it.
+      if (['lt', 'gt', 'lte', 'gte', 'neq'].includes(f.op) && cell == null) return false;
       if (f.op === 'eq') return String(cell) === f.val;
       if (f.op === 'neq') return String(cell) !== f.val;
       if (f.op === 'lt') return new Date(cell) < new Date(f.val);
@@ -130,6 +135,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (f.op === 'is') return f.val === 'null' ? cell == null : String(cell) === f.val;
       if (f.op === 'not.is') return f.val === 'null' ? cell != null : String(cell) !== f.val;
       if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));
+      if (f.op === 'not.in') return cell != null && !f.val.replace(/[()]/g, '').split(',').includes(String(cell));
       return false;
     });
   }
@@ -237,6 +243,9 @@ export function installFetch({
   waha = null,
   // Any other Paystack call (initialize, transfers): (url, init) => Response.
   paystack = null,
+  // Per reference, instead of the one answer above: ref => transaction data,
+  // or null for a reference Paystack has never heard of.
+  paystackVerify = null,
 }) {
   const real = globalThis.fetch;
 
@@ -266,6 +275,13 @@ export function installFetch({
     }
 
     if (url.startsWith(SUPABASE_URL)) return supabase.handler(url, init);
+
+    if (paystackVerify && url.startsWith('https://api.paystack.co/transaction/verify/')) {
+      const data = paystackVerify(decodeURIComponent(url.split('/').pop()));
+      return data
+        ? new Response(JSON.stringify({ status: true, data }), { status: 200 })
+        : new Response(JSON.stringify({ status: false, message: 'Transaction reference not found' }), { status: 404 });
+    }
 
     if (url.startsWith('https://api.paystack.co/transaction/verify/')) {
       if (paystackAmountKobo == null) return new Response('nope', { status: 404 });
