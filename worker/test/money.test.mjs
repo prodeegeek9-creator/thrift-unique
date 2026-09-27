@@ -168,3 +168,66 @@ test('an owner marks a problem sorted, saying what was done; it opens again if s
     assert.equal(sb.tables.payment_problems[0].resolved_at, null);
   } finally { restore(); }
 });
+
+// ── a payment for the wrong amount ───────────────────────────────────────────
+
+function priced() {
+  const s = seed();
+  s.tenant_features = [{ tenant_id: TENANT, flag: 'escrow', enabled: false }];
+  s.products = [{ id: 'prod-1', tenant_id: TENANT, public_code: 'JBU4PE', title: 'Jacket', price: 35000, status: 'active' }];
+  s.buyers = [{ id: 'b1', tenant_id: TENANT, phone: null, name: 'Ada' }];
+  s.orders = [{
+    id: 'o-1', tenant_id: TENANT, order_code: 'VW-AMT1', product_id: 'prod-1', buyer_id: 'b1', amount: 35000,
+    commission: 0, status: 'awaiting_payment', escrow_status: 'none', payment_ref: 'utp_amountcheck000001',
+  }];
+  s.payouts = [];
+  s.refunds = [];
+  s.carts = [{ id: 'cart-1', tenant_id: TENANT, buyer_id: 'b1', chat_id: 'x@c.us', payment_ref: 'utc_amountcheckcart00001', amount: 20000, status: 'open' }];
+  return s;
+}
+
+function priceSetup(verify) {
+  const sb = makeFakeSupabase(priced());
+  const restore = installFetch({ supabase: sb, tokens: TOKENS, paystackVerify: verify });
+  return { sb, restore };
+}
+
+test('a payment for less than the price is not a sale: nothing sold, nothing owed, one problem', async () => {
+  const { sb, restore } = priceSetup((ref) => ({ reference: ref, amount: 3_000_000, status: 'success' }));
+  try {
+    const res = await send(await signed({ event: 'charge.success', data: { reference: 'utp_amountcheck000001', amount: 3_000_000 } }));
+    assert.equal(res.body.ignored, 'amount mismatch');
+
+    assert.equal(sb.tables.orders[0].status, 'awaiting_payment');
+    assert.equal(sb.tables.products[0].status, 'active');
+    assert.equal(sb.tables.payouts.length, 0);
+
+    assert.equal(sb.tables.payment_problems.length, 1, 'recorded once, not also as unsettled');
+    const p = sb.tables.payment_problems[0];
+    assert.equal(p.kind, 'amount_mismatch');
+    assert.equal(p.amount, 30000);
+    assert.match(p.detail, /took ₦30,000 for order VW-AMT1, whose price is ₦35,000/);
+  } finally { restore(); }
+});
+
+test('with Paystack’s fee passed to the buyer, the requested amount is the price, and it settles', async () => {
+  const { sb, restore } = priceSetup((ref) => ({ reference: ref, amount: 3_562_500, requested_amount: 3_500_000, status: 'success' }));
+  try {
+    await send(await signed({ event: 'charge.success', data: { reference: 'utp_amountcheck000001', amount: 3_562_500 } }));
+    const order = sb.tables.orders[0];
+    assert.equal(order.status, 'paid');
+    assert.equal(order.amount, 35000, 'the price, not the price plus the fee');
+    assert.equal(sb.tables.products[0].status, 'sold');
+    assert.equal(sb.tables.payment_problems.length, 0);
+  } finally { restore(); }
+});
+
+test('a cart paid for the wrong amount is not settled either', async () => {
+  const { sb, restore } = priceSetup((ref) => ({ reference: ref, amount: 2_500_000, status: 'success' }));
+  try {
+    await send(await signed({ event: 'charge.success', data: { reference: 'utc_amountcheckcart00001', amount: 2_500_000, metadata: { kind: 'cart' } } }));
+    assert.equal(sb.tables.carts[0].status, 'open');
+    assert.deepEqual(sb.tables.payment_problems.map((p) => p.kind), ['amount_mismatch']);
+    assert.match(sb.tables.payment_problems[0].detail, /₦25,000 for a WhatsApp cart, whose price is ₦20,000/);
+  } finally { restore(); }
+});

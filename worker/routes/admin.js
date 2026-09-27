@@ -1,4 +1,5 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { approveStore } from '../lib/provision.js';
 import { approvedMessage } from '../lib/bot.js';
 import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
@@ -235,7 +236,7 @@ async function platformHealth(cfg, request) {
 
   const [live, activity] = await Promise.all([
     withTimeout(getSession(cfg, session), 5000).catch((err) => ({ error: err?.message ?? 'unreachable' })),
-    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=*`).catch(() => null),
+    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=${COLUMNS.webhook_activity}`).catch(() => null),
   ]);
 
   if (live?.error) {
@@ -287,7 +288,7 @@ async function listTenants(cfg) {
 
 async function tenantView(cfg, tenantId) {
   const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts, planInvoices] = await Promise.all([
-    db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
+    db(cfg).one('tenants', `id=eq.${tenantId}&select=${COLUMNS.tenant}`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
     db(cfg).select(
       'tenant_members',
@@ -529,7 +530,7 @@ async function setPayoutsPaused(request, cfg, op, tenantId) {
   if (!paused) {
     const pending = await db(cfg).select(
       'payouts',
-      `tenant_id=eq.${tenantId}&status=eq.pending&select=*&order=created_at.asc&limit=100`
+      `tenant_id=eq.${tenantId}&status=eq.pending&select=${COLUMNS.payout}&order=created_at.asc&limit=100`
     );
     for (const p of pending) if ((await sendPayout(cfg, p).catch(() => null)) === 'sent') sent += 1;
   }
@@ -539,7 +540,7 @@ async function setPayoutsPaused(request, cfg, op, tenantId) {
 // One more go at a payout that is stuck: Paystack refused it, or it used up
 // its attempts. The attempt count starts again.
 async function retryPayout(cfg, op, payoutId) {
-  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=*`);
+  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=${COLUMNS.payout}`);
   if (!payout) return json({ error: 'No such payout' }, 404);
   if (payout.status !== 'pending') return json({ error: `This payout is ${payout.status}, not waiting.` }, 409);
 
@@ -868,7 +869,7 @@ async function moneyProblems(cfg) {
       'status=eq.failed&select=id,tenant_id,paid,amount,platform_fee,reason,failure_reason,requested_via,created_at,' +
         'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
     ),
-    db(cfg).one('reconciliation_runs', 'select=*&order=ran_at.desc'),
+    db(cfg).one('reconciliation_runs', `select=${COLUMNS.reconciliation_run}&order=ran_at.desc`),
   ]);
   const stuck = payouts.filter(stuckPayout);
   const names = await tenantNames(cfg, [...stuck, ...refunds].map((r) => r.tenant_id));

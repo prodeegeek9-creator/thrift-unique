@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import worker from '../index.js';
 import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
 import { sign } from '../lib/sign.js';
-import { HOLD_MINUTES } from '../lib/holds.js';
+import { RESERVATION_MINUTES } from '../lib/reservations.js';
 
-// One buyer at a time for each item (lib/holds.js): once somebody presses
+// One buyer at a time for each item (lib/reservations.js): once somebody presses
 // Pay, everyone else is told a payment is in progress until it goes through
 // or its hold runs out.
 
@@ -99,13 +99,13 @@ test('pressing Pay holds the item for that buyer, and the next buyer is told a p
     assert.equal(jacket.held_by_ref, order.payment_ref);
     assert.equal(jacket.held_by_buyer, order.buyer_id);
     const minutes = (new Date(jacket.held_until) - Date.now()) / 60_000;
-    assert.ok(minutes > HOLD_MINUTES - 1 && minutes <= HOLD_MINUTES, `held for ${minutes} minutes`);
+    assert.ok(minutes > RESERVATION_MINUTES - 1 && minutes <= RESERVATION_MINUTES, `held for ${minutes} minutes`);
     assert.equal(order.checkout_url, first.body.url, 'the Paystack page is kept for the same buyer');
 
     const second = await pay({ code: 'JBU4PE', ...BOLA });
     assert.equal(second.status, 409);
     assert.equal(second.body.held, true);
-    assert.equal(second.body.held_minutes, HOLD_MINUTES);
+    assert.equal(second.body.held_minutes, RESERVATION_MINUTES);
     assert.match(second.body.error, /Someone else is paying for this item right now/);
     assert.equal(supabase.tables.orders.length, 1, 'no second order');
     assert.equal(ps.initialized.length, 1, 'no second Paystack page');
@@ -150,7 +150,7 @@ test('the payment link says "Payment in progress" while held, and "Paid" once so
 
     await pay({ token, ...ADA });
     const held = await get(`/api/checkout/link/${token}`);
-    assert.equal(held.body.held_minutes, HOLD_MINUTES);
+    assert.equal(held.body.held_minutes, RESERVATION_MINUTES);
     assert.equal(held.body.price, 30000);
 
     supabase.tables.products.find((p) => p.id === JACKET).status = 'sold';

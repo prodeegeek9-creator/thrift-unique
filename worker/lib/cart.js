@@ -255,7 +255,7 @@ function offer(product, code) {
   return `*${product.title}* is ${formatNaira(product.price)}, and it's still available. Reply *BUY ${code}* to order it.`;
 }
 
-// Somebody else is paying for it right now (lib/holds.js). The caller sets
+// Somebody else is paying for it right now (lib/reservations.js). The caller sets
 // busy_minutes; this stays free of the database.
 function busy(product, code) {
   const m = product.busy_minutes;

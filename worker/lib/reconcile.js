@@ -3,7 +3,7 @@ import { db } from './supabase.js';
 import { paystack, settleTransfer } from './transfers.js';
 import { fetchTransaction } from './paystack.js';
 import { nairaToKobo } from './money.js';
-import { noteProblem } from './problems.js';
+import { noteProblem, AMOUNT_MISMATCH, paidInFull } from './problems.js';
 import { byPaymentRef } from './orders.js';
 import { settleCart, cartRefOf, isCartRef } from './cartCheckout.js';
 import { settle } from '../routes/checkout.js';
@@ -151,7 +151,8 @@ async function checkPayment(cfg, tx, run, note) {
     const order = await byPaymentRef(cfg, ref);
     if (!order) return found('no order has its reference');
     if (order.status === 'awaiting_payment') {
-      const r = await settle(cfg, order, { kobo, channel: tx.metadata?.source_channel ?? null });
+      const r = await settle(cfg, order, { kobo, requestedKobo: tx.requested_amount, channel: tx.metadata?.source_channel ?? null });
+      if (r.ignored === AMOUNT_MISMATCH) return;
       if (r.ignored) return unsettled(note, ref, kobo, `order ${order.order_code}: ${r.ignored}`);
       run.settled_late += 1;
       return;
@@ -159,7 +160,7 @@ async function checkPayment(cfg, tx, run, note) {
     if (order.status === 'cancelled') {
       return unsettled(note, ref, kobo, `order ${order.order_code}, which had been cancelled. Refund it on Paystack, or settle it by hand`);
     }
-    if (nairaToKobo(order.amount) !== kobo) {
+    if (!paidInFull(nairaToKobo(order.amount), { kobo, requestedKobo: tx.requested_amount })) {
       return mismatch(note, ref, kobo, `Order ${order.order_code} has ₦${Number(order.amount).toLocaleString('en-NG')}`);
     }
     return;
@@ -170,12 +171,13 @@ async function checkPayment(cfg, tx, run, note) {
     const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=id,status,amount`);
     if (!cart) return found('no WhatsApp cart has its reference');
     if (cart.status !== 'paid') {
-      const r = await settleCart(cfg, ref, { kobo });
+      const r = await settleCart(cfg, ref, { kobo, requestedKobo: tx.requested_amount });
+      if (r.ignored === AMOUNT_MISMATCH) return;
       if (r.ignored) return unsettled(note, ref, kobo, `a WhatsApp cart: ${r.ignored}`);
       if (r.settled) run.settled_late += 1;
       return;
     }
-    if (nairaToKobo(cart.amount) !== kobo) {
+    if (!paidInFull(nairaToKobo(cart.amount), { kobo, requestedKobo: tx.requested_amount })) {
       return mismatch(note, ref, kobo, `The cart has ₦${Number(cart.amount).toLocaleString('en-NG')}`);
     }
     return;

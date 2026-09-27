@@ -3,6 +3,7 @@ import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { verify } from '../lib/sign.js';
 import { linkIsFor } from '../lib/paylinks.js';
+import { AMOUNT_MISMATCH, paidInFull, amountRefused } from '../lib/problems.js';
 import { initializeTransaction, fetchTransaction } from '../lib/paystack.js';
 import { koboToNaira, nairaToKobo } from '../lib/money.js';
 import { markPaid, oweSeller, byPaymentRef } from '../lib/orders.js';
@@ -15,7 +16,7 @@ import { say } from './waha.js';
 import { soldConsignorMessage } from '../lib/intake.js';
 import { accountFor } from '../lib/consignorBank.js';
 import { settleCart, cartView, isCartRef, cartRefOf } from '../lib/cartCheckout.js';
-import { takeHold, releaseHold, markSold, heldMinutes } from '../lib/holds.js';
+import { reserveItem, releaseReservation, markSold, reservedMinutes } from '../lib/reservations.js';
 
 // Buying on the platform.
 //
@@ -134,9 +135,9 @@ async function start(request, env) {
   const reference = `utp_${random(20, 'abcdefghijkmnpqrstuvwxyz23456789')}`;
 
   // The item, for this buyer alone, before an order or a Paystack page exists
-  // (lib/holds.js). A buyer coming back to an item they are already paying
+  // (lib/reservations.js). A buyer coming back to an item they are already paying
   // for goes back to the same Paystack page rather than opening a second.
-  const hold = await takeHold(cfg, { productId: product.id, tenantId: tenant.id, ref: reference, buyerId: buyer.id });
+  const hold = await reserveItem(cfg, { productId: product.id, tenantId: tenant.id, ref: reference, buyerId: buyer.id });
   if (hold.held?.mine) {
     const open = await byPaymentRef(cfg, hold.held.ref);
     if (open?.status === 'awaiting_payment' && open.checkout_url) {
@@ -169,7 +170,7 @@ async function start(request, env) {
     );
   }
   if (!order) {
-    await releaseHold(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
+    await releaseReservation(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
     throw new Error('could not allocate an order code');
   }
 
@@ -195,7 +196,7 @@ async function start(request, env) {
     await db(cfg)
       .update('orders', `id=eq.${order.id}&status=eq.awaiting_payment`, { status: 'cancelled' }, { returning: false })
       .catch(() => {});
-    await releaseHold(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
+    await releaseReservation(cfg, { tenantId: tenant.id, ref: reference }).catch(() => {});
     return json({ error: "Couldn't start the payment. Try again in a minute." }, 502);
   }
 
@@ -255,7 +256,7 @@ function publicView({ product, tenant }) {
     condition: product.condition,
     images: product.images ?? [],
     // Minutes left while somebody else is paying for it, else null.
-    held_minutes: heldMinutes(product),
+    held_minutes: reservedMinutes(product),
     store: { name: tenant.name, slug: tenant.slug, whatsapp: tenant.whatsapp_number },
   };
 }
@@ -275,7 +276,7 @@ async function orderStatus(request, env, reference) {
   if (order.status === 'awaiting_payment' && cfg.paystackKey) {
     const verified = await fetchTransaction(cfg.paystackKey, reference).catch(() => null);
     if (verified?.status === 'success') {
-      const settled = await settle(cfg, order, { kobo: verified.amount, channel: null });
+      const settled = await settle(cfg, order, { kobo: verified.amount, requestedKobo: verified.requested_amount, channel: null });
       order = settled.order ?? order;
     }
   }
@@ -304,7 +305,7 @@ async function cartStatus(request, env, ref) {
   if (view.status !== 'paid' && cfg.paystackKey && isCartRef(ref)) {
     const verified = await fetchTransaction(cfg.paystackKey, ref).catch(() => null);
     if (verified?.status === 'success') {
-      await settleCart(cfg, ref, { kobo: verified.amount });
+      await settleCart(cfg, ref, { kobo: verified.amount, requestedKobo: verified.requested_amount });
       view = await cartView(cfg, ref);
     }
   }
@@ -321,14 +322,23 @@ async function cartStatus(request, env, ref) {
 // notify: false leaves the WhatsApp messages to the caller (a cart sends one
 // for all its items, see lib/cartCheckout.js); the item still comes off sale
 // and a consignor is still told.
-export async function settle(cfg, order, { kobo, channel, notify = true }) {
-  let amountNaira;
+//
+// Only for the order's price. A payment for any other amount is not turned
+// into a sale: it is recorded on the Money page (lib/problems.js) and the
+// order is left awaiting payment, with nothing owed to anybody.
+export async function settle(cfg, order, { kobo, requestedKobo = null, channel, notify = true }) {
   try {
-    amountNaira = koboToNaira(kobo);
+    koboToNaira(kobo);
   } catch (err) {
     console.error('paystack: bad amount', kobo, err.message);
     return { order, replayed: true, ignored: 'bad amount' };
   }
+  const expectedKobo = nairaToKobo(order.amount);
+  if (!paidInFull(expectedKobo, { kobo, requestedKobo })) {
+    await amountRefused(cfg, { reference: order.payment_ref, kobo, expectedKobo, what: `order ${order.order_code}` });
+    return { order, replayed: true, ignored: AMOUNT_MISMATCH };
+  }
+  const amountNaira = Number(order.amount);
 
   const tenant = await db(cfg).one(
     'tenants',
@@ -351,7 +361,7 @@ export async function settle(cfg, order, { kobo, channel, notify = true }) {
   if (result.replayed) return result;
 
   // Off sale, for this payment: the item is its if it holds it, or if nobody
-  // else is paying for it (lib/holds.js). A cart's orders hold their items
+  // else is paying for it (lib/reservations.js). A cart's orders hold their items
   // under the cart's reference.
   const won = await markSold(cfg, {
     productId: order.product_id,
@@ -373,7 +383,7 @@ export async function settle(cfg, order, { kobo, channel, notify = true }) {
 }
 
 // A payment for an item that had already gone to somebody else: a Paystack
-// page left open past its hold (lib/holds.js), paid after the item was sold.
+// page left open past its hold (lib/reservations.js), paid after the item was sold.
 // Nobody is credited: no payout, no commission, and the buyer gets all of it
 // back, Vendwyze carrying Paystack's fee (lib/refunds.js, via 'auto'). A
 // refund Paystack refuses is left failed for the operator to retry, and the

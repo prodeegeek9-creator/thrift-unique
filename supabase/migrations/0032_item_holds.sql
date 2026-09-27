@@ -3,7 +3,7 @@
 -- A thrift item is usually the only one, and it can be bought from its page,
 -- from a payment link, or in a WhatsApp cart. Once a buyer has given their
 -- details and pressed Pay, the item is held for them for a few minutes
--- (worker/lib/holds.js), and everyone else is told a payment is in progress
+-- (worker/lib/reservations.js), and everyone else is told a payment is in progress
 -- instead of being let pay for the same thing.
 --
 --   held_by_ref    the Paystack reference paying for it: an order's (utp_…)

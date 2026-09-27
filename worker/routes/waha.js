@@ -1,4 +1,5 @@
 import { require_, originOf, config } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
@@ -24,7 +25,7 @@ import { provisionStore } from '../lib/provision.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
-import { heldMinutes } from '../lib/holds.js';
+import { reservedMinutes } from '../lib/reservations.js';
 import {
   BANK,
   INTAKE_BUSY,
@@ -870,9 +871,9 @@ async function checkout(cfg, event, tenant, conversation) {
     );
   }
   // Minutes somebody else is paying for each, if they are: not this chat's
-  // own cart, whose link a new BUY replaces (lib/holds.js).
+  // own cart, whose link a new BUY replaces (lib/reservations.js).
   for (const p of Object.values(products)) {
-    if (p) p.busy_minutes = p.held_by_ref && p.held_by_ref === conversation?.draft?.cart_ref ? null : heldMinutes(p);
+    if (p) p.busy_minutes = p.held_by_ref && p.held_by_ref === conversation?.draft?.cart_ref ? null : reservedMinutes(p);
   }
   const known = await db(cfg).one(
     'carts',
@@ -1148,7 +1149,7 @@ export async function consignorBankSweep(env, { now = new Date() } = {}) {
 
   const toVerify = await db(cfg).select(
     'consignor_account_changes',
-    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=*&order=requested_at.asc&limit=50`
+    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=${COLUMNS.consignor_account_change}&order=requested_at.asc&limit=50`
   );
   for (const change of toVerify) {
     const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status,whatsapp_number`);
@@ -1171,7 +1172,7 @@ export async function consignorBankSweep(env, { now = new Date() } = {}) {
 
   const stale = await db(cfg).select(
     'consignor_account_changes',
-    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=*&limit=50`
+    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=${COLUMNS.consignor_account_change}&limit=50`
   );
   for (const change of stale) {
     const hit = await db(cfg).update(

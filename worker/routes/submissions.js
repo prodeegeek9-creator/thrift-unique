@@ -1,4 +1,5 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
@@ -50,7 +51,7 @@ async function decide(request, env) {
 
   const submission = await db(cfg).one(
     'submissions',
-    `id=eq.${id}&tenant_id=eq.${tenantId}&select=*`
+    `id=eq.${id}&tenant_id=eq.${tenantId}&select=${COLUMNS.submission}`
   );
   if (!submission) return json({ error: 'No such item' }, 404);
   if (submission.status !== 'pending') {
@@ -184,7 +185,7 @@ async function markPaid(request, env) {
   }
   if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'Bad item' }, 400);
 
-  const submission = await db(cfg).one('submissions', `id=eq.${id}&tenant_id=eq.${tenantId}&select=*`);
+  const submission = await db(cfg).one('submissions', `id=eq.${id}&tenant_id=eq.${tenantId}&select=${COLUMNS.submission}`);
   if (!submission) return json({ error: 'No such item' }, 404);
   if (!submission.sold_at) return json({ error: "This item hasn't sold yet." }, 409);
   if (submission.consignor_paid_at) return json({ error: 'Already marked as paid.' }, 409);

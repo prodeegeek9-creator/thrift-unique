@@ -1,4 +1,5 @@
 import { db } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { initializeTransaction } from './paystack.js';
 import { nairaToKobo } from './money.js';
 import { formatNaira } from './bot.js';
@@ -6,7 +7,8 @@ import { chatId } from './waha.js';
 import { settle } from '../routes/checkout.js';
 import { confirmToken } from '../routes/confirm.js';
 import { say } from '../routes/waha.js';
-import { takeHold, releaseHold, heldMinutes } from './holds.js';
+import { reserveItem, releaseReservation, reservedMinutes } from './reservations.js';
+import { AMOUNT_MISMATCH, paidInFull, amountRefused } from './problems.js';
 
 // A WhatsApp cart becoming a payment, and a paid cart becoming orders.
 //
@@ -18,7 +20,7 @@ import { takeHold, releaseHold, heldMinutes } from './holds.js';
 // escrow or owed to the store, the item taken off sale. An item somebody else
 // bought in the meantime is refunded at once and in full, automatically.
 //
-// Each item is held for the cart while its link is live (lib/holds.js), so
+// Each item is held for the cart while its link is live (lib/reservations.js), so
 // that last case needs a link paid after its hold ran out and somebody else
 // took the item over.
 
@@ -74,7 +76,7 @@ export async function createCartCheckout(cfg, tenant, { chat, phone, items, name
   const live = [];
   const busy = [];
   for (const p of candidates) {
-    const hold = await takeHold(cfg, { productId: p.id, tenantId: tenant.id, ref, buyerId: buyer.id });
+    const hold = await reserveItem(cfg, { productId: p.id, tenantId: tenant.id, ref, buyerId: buyer.id });
     if (hold.ok) live.push(p);
     else if (hold.sold) dropped.push(p.title);
     else if (hold.busy) busy.push({ title: p.title, minutes: hold.busy.minutes, mine: true });
@@ -174,7 +176,7 @@ export async function cartLost(cfg, tenantId, ref) {
       'products',
       `id=eq.${o.product_id}&tenant_id=eq.${tenantId}&select=title,status,held_by_ref,held_until`
     );
-    if (!p || p.status !== 'active' || (p.held_by_ref !== ref && heldMinutes(p))) lost.push(p?.title ?? 'An item');
+    if (!p || p.status !== 'active' || (p.held_by_ref !== ref && reservedMinutes(p))) lost.push(p?.title ?? 'An item');
   }
   return lost;
 }
@@ -183,7 +185,7 @@ export async function cartLost(cfg, tenantId, ref) {
 // Its items go back on sale at once.
 export async function abandonCart(cfg, tenantId, ref) {
   if (!isCartRef(ref)) return;
-  await releaseHold(cfg, { tenantId, ref });
+  await releaseReservation(cfg, { tenantId, ref });
   const rows = await db(cfg).update('carts', `payment_ref=eq.${ref}&tenant_id=eq.${tenantId}&status=eq.open`, { status: 'cancelled' });
   if (!rows.length) return;
   await db(cfg).update(
@@ -196,14 +198,17 @@ export async function abandonCart(cfg, tenantId, ref) {
 
 // Paystack says the cart's payment succeeded. Safe to run twice, and from
 // both the webhook and the return page: only an unpaid cart is claimed.
-export async function settleCart(cfg, ref, { kobo }) {
-  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=*`);
+//
+// Only for the cart's total, as settle() is only for an order's price.
+export async function settleCart(cfg, ref, { kobo, requestedKobo = null }) {
+  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=${COLUMNS.cart}`);
   if (!cart) return { ignored: 'no such cart' };
   if (cart.status === 'paid') return { replayed: true };
 
-  if (Number(kobo) < nairaToKobo(cart.amount)) {
-    console.error('cart payment short:', ref, kobo);
-    return { ignored: 'amount short' };
+  const expectedKobo = nairaToKobo(cart.amount);
+  if (!paidInFull(expectedKobo, { kobo, requestedKobo })) {
+    await amountRefused(cfg, { reference: ref, kobo, expectedKobo, what: 'a WhatsApp cart' });
+    return { ignored: AMOUNT_MISMATCH };
   }
 
   // Paid even if the link had been replaced: the money arrived.
@@ -222,7 +227,7 @@ export async function settleCart(cfg, ref, { kobo }) {
 
   const orders = await db(cfg).select(
     'orders',
-    `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=*&order=payment_ref.asc`
+    `cart_id=eq.${cart.id}&status=eq.awaiting_payment&select=${COLUMNS.order}&order=payment_ref.asc`
   );
 
   // An item sold to somebody else first is refunded in full inside settle()
@@ -310,7 +315,7 @@ async function tellCart(cfg, cart, done) {
 
 // For the page Paystack returns the buyer to: /order/<cart ref>.
 export async function cartView(cfg, ref) {
-  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=*`);
+  const cart = await db(cfg).one('carts', `payment_ref=eq.${ref}&select=${COLUMNS.cart}`);
   if (!cart) return null;
   const [orders, tenant] = await Promise.all([
     db(cfg).select('orders', `cart_id=eq.${cart.id}&select=order_code,amount,status,escrow_status,product_id&order=payment_ref.asc`),

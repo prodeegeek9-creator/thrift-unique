@@ -1,4 +1,5 @@
 import { db, SupabaseError } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { paystack } from './transfers.js';
 import { fetchTransaction } from './paystack.js';
 import { formatNaira } from './bot.js';
@@ -143,7 +144,7 @@ export async function refundOrder(cfg, order, { reason = null, via, by = null, r
 
 // A refund Paystack refused or never received, tried again from the console.
 export async function retryRefund(cfg, refundId) {
-  const refund = await db(cfg).one('refunds', `id=eq.${refundId}&select=*`);
+  const refund = await db(cfg).one('refunds', `id=eq.${refundId}&select=${COLUMNS.refund}`);
   if (!refund) throw new RefundError('No such refund', 404);
   if (refund.status !== 'failed') throw new RefundError('Only a failed refund can be retried.');
   const order = await db(cfg).one('orders', `id=eq.${refund.order_id}&select=id,tenant_id,order_code,payment_ref,amount`);
@@ -159,7 +160,7 @@ export async function settleRefundEvent(cfg, event) {
   // By Paystack's refund id first: a cart's payment can carry several
   // refunds, one per item, all with the same transaction reference.
   let refund = data.id != null
-    ? await db(cfg).one('refunds', `paystack_refund_id=eq.${encodeURIComponent(String(data.id))}&select=*`)
+    ? await db(cfg).one('refunds', `paystack_refund_id=eq.${encodeURIComponent(String(data.id))}&select=${COLUMNS.refund}`)
     : null;
   if (!refund) {
     const order = await db(cfg).one(
@@ -167,7 +168,7 @@ export async function settleRefundEvent(cfg, event) {
       `payment_ref=eq.${encodeURIComponent(reference)}&select=id,order_code`
     );
     if (!order) return { ignored: 'no such order' };
-    refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=*`);
+    refund = await db(cfg).one('refunds', `order_id=eq.${order.id}&select=${COLUMNS.refund}`);
   }
   if (!refund) return { ignored: 'no refund for order' };
 

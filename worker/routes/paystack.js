@@ -10,7 +10,7 @@ import { db } from '../lib/supabase.js';
 import { chatId } from '../lib/waha.js';
 import { say } from './waha.js';
 import { json } from '../lib/http.js';
-import { noteProblem, lagosDay } from '../lib/problems.js';
+import { noteProblem, lagosDay, AMOUNT_MISMATCH } from '../lib/problems.js';
 
 // POST /api/paystack/webhook
 //
@@ -88,7 +88,7 @@ export async function handlePaystackWebhook(request, env) {
     if (verified && verified.status !== 'success') return json({ ok: true, ignored: `status ${verified.status}` });
     cfg.publicOrigin = originOf(request, cfg);
     const kobo = verified?.amount ?? event.data.amount;
-    const result = await settleCart(cfg, reference, { kobo });
+    const result = await settleCart(cfg, reference, { kobo, requestedKobo: verified?.requested_amount });
     await noteIgnored(cfg, reference, kobo, result.ignored, 'WhatsApp cart');
     return json({ ok: true, cart: true, ...result });
   }
@@ -131,19 +131,23 @@ export async function handlePaystackWebhook(request, env) {
   cfg.publicOrigin = originOf(request, cfg);
   const { order: updated, replayed, ignored } = await settle(cfg, order, {
     kobo,
+    requestedKobo: verified?.requested_amount ?? event.data?.requested_amount ?? null,
     // Attribution, recorded at the only moment it is knowable. Paystack's own
     // `channel` is the payment method (card, bank), not where the buyer found
     // the item — that comes from the metadata set when checkout started.
     channel: event.data?.metadata?.source_channel ?? null,
   });
   if (ignored) {
-    await noteProblem(cfg, {
-      kind: 'unsettled_payment',
-      key: reference,
-      reference,
-      amount: nairaOf(kobo),
-      detail: `Paid for order ${order.order_code}, but it could not be applied: ${ignored}.`,
-    });
+    // A wrong amount was recorded by settle() itself.
+    if (ignored !== AMOUNT_MISMATCH) {
+      await noteProblem(cfg, {
+        kind: 'unsettled_payment',
+        key: reference,
+        reference,
+        amount: nairaOf(kobo),
+        detail: `Paid for order ${order.order_code}, but it could not be applied: ${ignored}.`,
+      });
+    }
     return json({ ok: true, ignored });
   }
 
@@ -158,7 +162,7 @@ export async function handlePaystackWebhook(request, env) {
 // A plan fee or cart payment its settle step turned away. Anything else it
 // ignores (already paid, a replay) is not a problem.
 async function noteIgnored(cfg, reference, kobo, ignored, what) {
-  if (!ignored) return;
+  if (!ignored || ignored === AMOUNT_MISMATCH) return;
   const unmatched = /^no such/.test(ignored);
   await noteProblem(cfg, {
     kind: unmatched ? 'unmatched_payment' : 'unsettled_payment',

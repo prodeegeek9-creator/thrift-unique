@@ -1,4 +1,5 @@
 import { db } from './supabase.js';
+import { COLUMNS } from './columns.js';
 import { nairaToKobo } from './money.js';
 import { formatNaira } from './bot.js';
 
@@ -147,7 +148,7 @@ export async function sendPayout(cfg, payout) {
 export async function sendPendingFor(cfg, tenantId) {
   const pending = await db(cfg).select(
     'payouts',
-    `tenant_id=eq.${tenantId}&status=eq.pending&select=*&order=created_at.asc&limit=100`
+    `tenant_id=eq.${tenantId}&status=eq.pending&select=${COLUMNS.payout}&order=created_at.asc&limit=100`
   );
   const results = [];
   for (const p of pending ?? []) results.push(await sendPayout(cfg, p));
@@ -158,7 +159,7 @@ export async function sendPendingFor(cfg, tenantId) {
 export async function sendAllPending(cfg, { limit = 100 } = {}) {
   const pending = await db(cfg).select(
     'payouts',
-    `status=eq.pending&attempts=lt.${MAX_ATTEMPTS}&select=*&order=created_at.asc&limit=${limit}`
+    `status=eq.pending&attempts=lt.${MAX_ATTEMPTS}&select=${COLUMNS.payout}&order=created_at.asc&limit=${limit}`
   );
   let sent = 0;
   for (const p of pending ?? []) {

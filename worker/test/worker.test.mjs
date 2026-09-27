@@ -23,7 +23,8 @@ function seed({ escrow = true, commission_pct = 8, order = {} } = {}) {
         order_code: 'UT-1001',
         product_id: 'prod-1',
         buyer_id: 'buyer-1',
-        amount: 0,
+        // The price, as checkout creates it; Paystack's payment must match.
+        amount: 35000,
         commission: 0,
         status: 'awaiting_payment',
         escrow_status: 'none',

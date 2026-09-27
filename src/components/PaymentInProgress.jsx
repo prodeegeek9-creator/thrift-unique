@@ -1,5 +1,5 @@
 // "Payment in progress", where Buy now or Pay would be, while somebody else is
-// on Paystack's page paying for a one-off item (worker/lib/holds.js). The
+// on Paystack's page paying for a one-off item (worker/lib/reservations.js). The
 // buyer who did can carry on: the same details take them back to the same
 // payment.
 export default function PaymentInProgress({ minutes, onCheck, onMine, askLink }) {

@@ -433,7 +433,7 @@ test('the dashboard lists the chats on hold, and Resume bot hands one or all bac
   } finally { restore(); }
 });
 
-// ── one buyer at a time (lib/holds.js) ───────────────────────────────────────
+// ── one buyer at a time (lib/reservations.js) ───────────────────────────────────────
 
 const OTHER = '2348033333333@c.us';
 
