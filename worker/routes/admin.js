@@ -340,11 +340,24 @@ async function tenantView(cfg, tenantId) {
         )
       : null;
 
+  // Who the owner is: the name, phone and address their account was made
+  // with (migration 0037). For a store waiting on approval, that's the
+  // account its sign-up email belongs to, if one exists yet: a web sign-up
+  // does, a WhatsApp one gets its account when approved.
+  const ownerId =
+    members.find((m) => m.role === 'owner')?.user_id ??
+    (signup?.email ? await db(cfg).rpc('user_id_for_email', { addr: signup.email }) : null);
+  const owner =
+    typeof ownerId === 'string'
+      ? await db(cfg).one('account_profiles', `user_id=eq.${ownerId}&select=${COLUMNS.account_profile}`)
+      : null;
+
   const countStatus = (rows) => countBy(rows, (r) => r.status);
 
   return json({
     tenant,
     signup,
+    owner,
     flags,
     members,
     listings: {

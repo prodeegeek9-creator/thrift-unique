@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import Icon from '../components/ui/Icon.jsx';
 import LogoLoader from '../components/ui/LogoLoader.jsx';
@@ -8,6 +8,8 @@ import { setupDeepLink, botNumberDisplay } from '../lib/whatsapp.js';
 import { useAuth, signOut } from '../lib/AuthContext.jsx';
 import { useTenant } from '../lib/TenantContext.jsx';
 import { fetchSignupStatus } from '../lib/signup.js';
+import ProfileFields from '../components/ProfileFields.jsx';
+import { EMPTY_PROFILE, checkedProfile, fetchMyProfile, missingDetails, nameFromAccount, saveMyProfile } from '../lib/profile.js';
 
 // Where somebody lands with an account but no store: made on the web
 // (Signup.jsx), or a store that hasn't been approved yet.
@@ -18,6 +20,10 @@ import { fetchSignupStatus } from '../lib/signup.js';
 // account without asking for an email (worker/routes/signup.js). The page
 // checks back while it's open, and goes to the dashboard once the store is
 // approved.
+//
+// First, though, who the account belongs to: anybody without a name, phone
+// and address on file is asked for them here. That's everybody who signed up
+// with Google, which only brings a name (lib/profile.js).
 export default function Onboarding() {
   const { user, loading: authLoading } = useAuth();
   const { memberships, loading } = useTenant();
@@ -28,6 +34,11 @@ export default function Onboarding() {
     queryFn: fetchSignupStatus,
     enabled: Boolean(signedInWithoutStore),
     refetchInterval: 20_000,
+  });
+  const { data: profile, isError: profileError } = useQuery({
+    queryKey: ['profile', 'me', user?.id],
+    queryFn: () => fetchMyProfile(user.id),
+    enabled: Boolean(signedInWithoutStore),
   });
 
   // Approved while the page was open: a full load, so the dashboard reads
@@ -43,6 +54,13 @@ export default function Onboarding() {
   if (!user) return <Navigate to="/login" replace />;
   if (memberships.length) return <Navigate to="/dashboard" replace />;
   if (!status && !isError) return <LogoLoader fullScreen label="Opening your store" />;
+  if (profile === undefined && !profileError) return <LogoLoader fullScreen label="Opening your store" />;
+
+  // A failed read isn't a reason to hold anybody up: the details are asked
+  // for again next time.
+  if (!profileError && missingDetails(profile).length) {
+    return <DetailsStep user={user} profile={profile} />;
+  }
 
   const code = status?.code ?? null;
   const link = setupDeepLink(code);
@@ -122,6 +140,75 @@ export default function Onboarding() {
           </button>
         </p>
       </div>
+    </div>
+  );
+}
+
+// Name, phone and address, for an account that doesn't have them yet.
+function DetailsStep({ user, profile }) {
+  const queryClient = useQueryClient();
+  const [details, setDetails] = useState(() => ({
+    ...EMPTY_PROFILE,
+    ...Object.fromEntries(Object.entries(profile ?? {}).filter(([k, v]) => k in EMPTY_PROFILE && v)),
+    full_name: profile?.full_name || nameFromAccount(user),
+  }));
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    const { profile: checked, error: detailsError } = checkedProfile(details);
+    if (detailsError) {
+      setError(detailsError);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await saveMyProfile(user.id, checked);
+      queryClient.setQueryData(['profile', 'me', user.id], saved);
+    } catch {
+      setError("Couldn't save your details. Try again in a minute.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-bg px-4 py-8">
+      <form onSubmit={submit} className="card w-full max-w-sm space-y-4 p-6">
+        <div className="flex justify-center">
+          <BrandLockup tone="dark" />
+        </div>
+        <div>
+          <h1 className="font-display text-lg font-semibold">A little about you</h1>
+          <p className="mt-1 text-sm text-muted">
+            Before your store: who we're opening it for, and how to reach you.
+          </p>
+        </div>
+
+        <ProfileFields value={details} onChange={setDetails} />
+
+        {error ? (
+          <p role="alert" className="rounded-lg bg-red-lt px-3 py-2 text-xs text-red">
+            {error}
+          </p>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full rounded-pill bg-green py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : 'Continue'}
+        </button>
+
+        <p className="text-center text-[11px] text-muted">
+          Signed in as {user.email}.{' '}
+          <button type="button" onClick={signOut} className="font-medium text-green hover:underline">
+            Sign out
+          </button>
+        </p>
+      </form>
     </div>
   );
 }

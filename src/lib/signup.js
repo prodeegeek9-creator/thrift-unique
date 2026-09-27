@@ -31,11 +31,15 @@ export async function signInWithGoogle() {
 
 // → { confirm: true } when Supabase has sent a confirmation email, or
 //   { confirm: false } when the account is signed in straight away.
-export async function signUpWithEmail(email, password) {
+//
+// `profile` (name, phone, address; lib/profile.js) goes with the account, and
+// the database files it when the account is made (migration 0037), so it's
+// kept even while the account waits on its confirmation email.
+export async function signUpWithEmail(email, password, profile = {}) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
-    options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+    options: { emailRedirectTo: `${window.location.origin}/dashboard`, data: profile },
   });
   if (error) throw error;
   return { confirm: !data.session };

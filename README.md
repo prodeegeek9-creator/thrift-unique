@@ -552,7 +552,19 @@ Somebody can also make an account at `/signup`, with an email and password or
 opened on WhatsApp, from the number it will run on, because messaging the bot
 from that number is what proves the seller has it.
 
-1. Signed in with no store, they land on `/onboarding`: "Set up your store on
+The sign-up form also asks who they are: full name, phone number, and
+address (street, town or city, and state, one of the 36 and the FCT). They
+travel with the account itself, and a trigger files them in
+`account_profiles` when it's created, so they're kept even while the account
+waits on its confirmation email (migration 0037). Each person can read and
+change only their own row; the Worker reads them for the console, where a
+store's page shows its owner's name, phone and address (for a pending store,
+the account its sign-up email belongs to).
+
+1. Signed in with no store, they land on `/onboarding`. Anybody without a
+   name, phone and address on file is asked for them first, "A little about
+   you": that's everybody who came in with Google, which brings only a name
+   (it starts the form). Then "Set up your store on
    WhatsApp". Its button opens WhatsApp with a message already typed that
    carries the account's code, `VW-` and six characters (`GET /api/signup/me`,
    `worker/routes/signup.js`, migration 0036).

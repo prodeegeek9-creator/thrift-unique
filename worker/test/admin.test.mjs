@@ -50,6 +50,7 @@ function seed() {
     payouts: [],
     payout_items: [],
     operator_audit: [],
+    account_profiles: [],
   };
 }
 
@@ -583,6 +584,47 @@ test('an operator sees who is asking for a pending store', async () => {
     const body = await res.json();
     assert.equal(body.signup.email, 'ada@example.com');
     assert.equal(body.tenant.whatsapp_number, PENDING_PHONE);
+  } finally { restore(); }
+});
+
+test('a pending store shows the name, phone and address its account was made with', async () => {
+  const { sb, restore } = approvalCtx({ accounts: { 'ada@example.com': 'user-ada' } });
+  sb.tables.account_profiles.push(
+    { user_id: 'user-ada', full_name: 'Ada Obi', phone: '2348031234567', address: '12 Allen Ave',
+      city: 'Ikeja', state: 'Lagos' },
+    { user_id: 'user-other', full_name: 'Somebody Else', phone: '2348000000000' },
+  );
+  try {
+    const res = await worker.fetch(call(`/api/admin/tenants/${PENDING}`, { token: 'tok-support' }), env(), {});
+    const body = await res.json();
+    assert.equal(body.owner.full_name, 'Ada Obi');
+    assert.equal(body.owner.address, '12 Allen Ave');
+    assert.equal(body.owner.state, 'Lagos');
+  } finally { restore(); }
+});
+
+test('a pending store signed up on WhatsApp has no account yet, and no details', async () => {
+  const { restore } = approvalCtx();
+  try {
+    const res = await worker.fetch(call(`/api/admin/tenants/${PENDING}`, { token: 'tok-support' }), env(), {});
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).owner, null);
+  } finally { restore(); }
+});
+
+test("a live store shows its owner's details", async () => {
+  const { sb, restore } = ctx();
+  sb.tables.tenant_members.push(
+    { tenant_id: TENANT, user_id: 'user-staff', role: 'staff', email: 'staff@example.com' },
+    { tenant_id: TENANT, user_id: 'user-owner', role: 'owner', email: 'owner@example.com' },
+  );
+  sb.tables.account_profiles.push(
+    { user_id: 'user-staff', full_name: 'Staff Person' },
+    { user_id: 'user-owner', full_name: 'Store Owner', phone: '2348031234567' },
+  );
+  try {
+    const res = await worker.fetch(call(`/api/admin/tenants/${TENANT}`, { token: 'tok-owner' }), env(), {});
+    assert.equal((await res.json()).owner.full_name, 'Store Owner');
   } finally { restore(); }
 });
 
