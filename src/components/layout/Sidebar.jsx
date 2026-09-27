@@ -36,10 +36,9 @@ function NavRow({ item }) {
 export default function Sidebar() {
   const { tenant } = useTenant();
   return (
-    // Pinned to the window: the page scrolls, the sidebar stays, and its own
-    // list scrolls inside it on a short screen. Without the height it grew
-    // with the page and scrolled away with it.
-    <aside className="pinned-sidebar hidden w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
+    // The frame's full height (SellerShell); its own list scrolls inside it
+    // on a short screen.
+    <aside className="hidden h-full w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
       <div className="px-5 py-5">
         <BrandLockup />
       </div>
