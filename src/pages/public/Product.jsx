@@ -4,6 +4,7 @@ import { fetchPublicProduct } from '../../lib/products.js';
 import { formatNaira } from '../../lib/money.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
+import SiteFooter from '../../components/layout/SiteFooter.jsx';
 import { firstImage, imageUrl } from '../../lib/images.js';
 import { fetchPublicStore } from '../../lib/tenants.js';
 import { checkoutEnabled } from '../../lib/checkout.js';
@@ -243,6 +244,7 @@ function Frame({ children, wide = false }) {
         </div>
         <div className="card p-5">{children}</div>
       </div>
+      <SiteFooter compact />
     </div>
   );
 }
