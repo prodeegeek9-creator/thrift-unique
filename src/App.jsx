@@ -18,6 +18,11 @@ import PayLink from './pages/public/PayLink.jsx';
 import OrderStatus from './pages/public/OrderStatus.jsx';
 import PlanPay from './pages/public/PlanPay.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
+import About from './pages/legal/About.jsx';
+import Contact from './pages/legal/Contact.jsx';
+import Privacy from './pages/legal/Privacy.jsx';
+import Terms from './pages/legal/Terms.jsx';
+import Refunds from './pages/legal/Refunds.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
 import Listings from './pages/seller/Listings.jsx';
@@ -61,6 +66,13 @@ export default function App() {
       <Route path="/order/:reference" element={<OrderStatus />} />
       <Route path="/billing/pay/:ref" element={<PlanPay />} />
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
+
+      {/* The platform's own pages, linked from the footer (SiteFooter.jsx). */}
+      <Route path="/about" element={<About />} />
+      <Route path="/contact" element={<Contact />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/refunds" element={<Refunds />} />
 
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />

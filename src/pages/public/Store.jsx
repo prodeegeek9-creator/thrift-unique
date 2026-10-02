@@ -5,6 +5,7 @@ import { formatNaira } from '../../lib/money.js';
 import { imageUrl } from '../../lib/images.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
+import SiteFooter from '../../components/layout/SiteFooter.jsx';
 
 // A store's own page: /s/<slug>.
 //
@@ -160,8 +161,9 @@ export default function Store() {
           </section>
         ) : null}
 
-        <p className="mt-8 text-center text-xs text-muted">Secure payment through Vendwyze</p>
       </main>
+
+      <SiteFooter compact />
     </div>
   );
 }

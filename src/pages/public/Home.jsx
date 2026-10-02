@@ -1,6 +1,7 @@
 import { Link, Navigate } from 'react-router-dom';
 import { BrandLockup } from '../../components/ui/BrandMark.jsx';
 import Icon from '../../components/ui/Icon.jsx';
+import SiteFooter from '../../components/layout/SiteFooter.jsx';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { botNumberDisplay, setupDeepLink } from '../../lib/whatsapp.js';
 
@@ -105,7 +106,7 @@ export default function Home() {
           ) : null}
         </section>
 
-        <section className="border-y border-line bg-surface py-12">
+        <section id="how-it-works" className="scroll-mt-4 border-y border-line bg-surface py-12">
           <div className="mx-auto max-w-5xl px-4">
             <h2 className="text-center font-display text-2xl font-semibold text-ink">How it works</h2>
             <ol className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -142,7 +143,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="border-t border-line bg-surface py-12">
+        <section id="plans" className="scroll-mt-4 border-t border-line bg-surface py-12">
           <div className="mx-auto max-w-5xl px-4">
             <h2 className="text-center font-display text-2xl font-semibold text-ink">Plans</h2>
             <p className="mt-2 text-center text-sm text-muted">
@@ -203,9 +204,7 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-line py-6 text-center text-xs text-muted">
-        © {new Date().getFullYear()} Vendwyze · Secure payments through Vendwyze
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
