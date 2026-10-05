@@ -40,6 +40,10 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     payment_problems: [],
     reconciliation_runs: [],
     web_signup_codes: [],
+    photo_categories: [],
+    photo_shot_rules: [],
+    listing_drafts: [],
+    listing_photos: [],
     ...structuredClone(seed),
   };
 
@@ -63,11 +67,16 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     consignor_accounts: ['tenant_id', 'seller_chat_id'],
     payment_problems: ['kind', 'key'],
     web_signup_codes: 'code',
+    // A retried webhook is the same photo, not a second one.
+    listing_photos: ['tenant_id', 'source_message_id'],
+    // The draft filer can run twice; the item is filed once.
+    submissions: 'draft_id',
   };
 
   // Column defaults the real tables have, which the code reads back.
   const defaults = {
     consignor_account_changes: () => ({ id: crypto.randomUUID(), requested_at: new Date().toISOString(), status: 'pending', store_decision: 'pending' }),
+    listing_drafts: () => ({ id: crypto.randomUUID(), status: 'awaiting_photos', flags: [], missing_shots: [], extracted: {}, updated_at: new Date().toISOString() }),
   };
 
   // Unique columns an UPDATE can collide on, answered with PostgREST's 409.
@@ -123,9 +132,17 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     });
   }
 
+  // `extracted->>source`: a key inside a jsonb column, read as text.
+  const cellOf = (row, col) => {
+    const arrow = col.indexOf('->>');
+    if (arrow < 0) return row[col];
+    const inner = row[col.slice(0, arrow)]?.[col.slice(arrow + 3)];
+    return inner == null ? inner : String(inner);
+  };
+
   function matches(row, filters) {
     return filters.every((f) => {
-      const cell = row[f.col];
+      const cell = cellOf(row, f.col);
       // As in SQL, NULL compares to nothing: lt, gt and neq never match it.
       if (['lt', 'gt', 'lte', 'gte', 'neq'].includes(f.op) && cell == null) return false;
       if (f.op === 'eq') return String(cell) === f.val;
@@ -227,7 +244,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     return new Response('unsupported', { status: 405 });
   }
 
-  return { tables, calls, uploads: [], handler };
+  return { tables, calls, uploads: [], downloads: [], missingObjects: [], handler };
 }
 
 // Installs a global fetch that routes Supabase and Paystack to fakes and
@@ -248,6 +265,8 @@ export function installFetch({
   // Per reference, instead of the one answer above: ref => transaction data,
   // or null for a reference Paystack has never heard of.
   paystackVerify = null,
+  // The photo-check service: { url, handler(url, init) }.
+  photoCheck = null,
 }) {
   const real = globalThis.fetch;
 
@@ -262,11 +281,22 @@ export function installFetch({
     // takes raw bytes rather than JSON.
     if (url.startsWith(`${SUPABASE_URL}/storage/v1/object/`)) {
       const path = url.slice(`${SUPABASE_URL}/storage/v1/object/`.length);
+      // A read: a reviewed photo coming out of the private bucket.
+      if ((init?.method ?? 'GET') === 'GET') {
+        supabase.downloads.push(path);
+        if (supabase.missingObjects.includes(path)) return new Response('not found', { status: 404 });
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9]), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg' },
+        });
+      }
       supabase.uploads.push({ path, contentType: init?.headers?.['Content-Type'] ?? null });
       return new Response(JSON.stringify({ Key: path }), { status: 200 });
     }
 
     if (waha && url.startsWith(waha.url)) return waha.handler(url, init);
+
+    if (photoCheck && url.startsWith(photoCheck.url)) return photoCheck.handler(url, init);
 
     if (url === `${SUPABASE_URL}/auth/v1/user`) {
       const auth = init?.headers?.Authorization ?? '';

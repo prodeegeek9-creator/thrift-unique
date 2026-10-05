@@ -4,7 +4,7 @@ import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
-import { storeImage, publicUrl, MediaError } from '../lib/media.js';
+import { storeImage, publicUrl, mediaRequest, MediaError } from '../lib/media.js';
 import {
   step,
   listedMessage,
@@ -25,6 +25,7 @@ import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { accountForCode } from './signup.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
+import { photoIntakeStep, photoStatusMessage, PHOTO_STATES } from '../lib/photoIntake.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
 import { reservedMinutes } from '../lib/reservations.js';
@@ -706,13 +707,20 @@ async function storeSession(cfg, event) {
     (tenant.store_type !== 'brand' && BANK.test(body)) ||
     // Confirming a payout account change: the bot asked, and this answers it.
     (conversation?.state === 'bank_verify' && /^\s*(yes|no|y|n)\b/i.test(body));
+  // A photo the bot asked for still gets checked while the owner is in the
+  // chat — dropping it silently would leave the item waiting on a shot the
+  // seller already sent. It does not lift the pause: the owner is still
+  // answering everything else.
+  const askedForPhoto = conversation?.state === 'pi_photos' && Boolean(event.hasMedia);
   if (conversation?.paused_until && new Date(conversation.paused_until) > new Date()) {
-    if (!asked) return json({ ok: true, ignored: 'owner is handling this chat' });
-    await db(cfg).update(
-      'bot_conversations',
-      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}`,
-      { paused_until: null }
-    );
+    if (!asked && !askedForPhoto) return json({ ok: true, ignored: 'owner is handling this chat' });
+    if (asked) {
+      await db(cfg).update(
+        'bot_conversations',
+        `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}`,
+        { paused_until: null }
+      );
+    }
   }
 
   // Where a consignor is paid (lib/consignorBank.js). SELL always starts an
@@ -721,8 +729,19 @@ async function storeSession(cfg, event) {
     return bankChat(cfg, event, tenant, conversation);
   }
 
-  const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(body);
-  if (tenant.store_type !== 'brand' && selling) return intake(cfg, event, tenant, conversation);
+  // Two intakes while stores are moved across: lib/photoIntake.js where the
+  // store has photo_review switched on, lib/intake.js everywhere else. A
+  // conversation already under way finishes in the flow it started in,
+  // whichever way the switch has since been flipped.
+  if (tenant.store_type !== 'brand') {
+    if (PHOTO_STATES.includes(conversation?.state)) return photoIntake(cfg, event, tenant, conversation);
+    if (INTAKE_STATES.includes(conversation?.state)) return intake(cfg, event, tenant, conversation);
+    if (SELL.test(body)) {
+      return (await photoReviewOn(cfg, tenant))
+        ? photoIntake(cfg, event, tenant, conversation)
+        : intake(cfg, event, tenant, conversation);
+    }
+  }
 
   if (await checkoutOn(cfg, tenant)) {
     const handled = await checkout(cfg, event, tenant, conversation);
@@ -1053,16 +1072,25 @@ async function fileSubmission(cfg, tenant, event, action) {
     return;
   }
 
-  await say(cfg, tenant, event.from, receivedMessage(tenant.name), own);
+  await announceSubmission(cfg, tenant, event.from, action.submission);
+}
+
+// After a submission is filed, from either intake: the seller is told, asked
+// where to be paid if this is their first item, and the owner hears about it.
+// Returns whether the bank question took over the conversation.
+export async function announceSubmission(cfg, tenant, chat, submission) {
+  const own = { session: tenant.waha_session };
+
+  await say(cfg, tenant, chat, receivedMessage(tenant.name), own);
 
   // Their first item: where to pay them when it sells.
-  const ask = await firstAsk(cfg, tenant, event.from).catch((err) => {
+  const ask = await firstAsk(cfg, tenant, chat).catch((err) => {
     console.warn('bank ask skipped:', err?.message ?? err);
     return null;
   });
   if (ask) {
-    await setConversation(cfg, tenant, event.from, ask);
-    for (const reply of ask.replies) await say(cfg, tenant, event.from, reply, own);
+    await setConversation(cfg, tenant, chat, ask);
+    for (const reply of ask.replies) await say(cfg, tenant, chat, reply, own);
   }
 
   // And the owner, on the platform number where they already talk to us.
@@ -1073,13 +1101,257 @@ async function fileSubmission(cfg, tenant, event, action) {
       tenant,
       owner,
       newSubmissionMessage({
-        title: action.submission.title,
-        price: action.submission.asking_price,
-        name: action.submission.seller_name,
+        title: submission.title,
+        price: submission.asking_price,
+        name: submission.seller_name,
         origin: cfg.publicOrigin,
       })
     );
   }
+
+  return Boolean(ask);
+}
+
+// ── ITEMS BROUGHT TO A STORE, WITH THE PHOTOS CHECKED ────────────────────────
+//
+// lib/photoIntake.js, for stores with photo_review on. The conversation
+// collects the details and creates a listing_drafts row; each photo then goes
+// to the photo-check service, which stores it and runs the plain-code checks;
+// the photo-review worker labels the shots; and routes/photoReview.js files
+// the item as a submission once every required shot has passed.
+
+const OPEN_DRAFT = 'status=in.(awaiting_photos,ready)';
+
+export async function photoReviewOn(cfg, tenant) {
+  if (!cfg.photoCheckUrl || !cfg.photoCheckKey) return false;
+  const row = await db(cfg).one(
+    'tenant_features',
+    `tenant_id=eq.${tenant.id}&flag=eq.photo_review&select=enabled`
+  );
+  return Boolean(row?.enabled);
+}
+
+const CHECK_SAY = {
+  failed: "I couldn't check that photo just now. Please send it again in a minute.",
+  tooLarge: "That photo is too large. Please send it as a normal photo, not as a document.",
+  closed: (store) => `That item has already gone to ${store}. Send *SELL* to offer another one.`,
+  ended: 'That item timed out before all the photos arrived. Send *SELL* to start again.',
+  draftFailed: 'Something went wrong saving that. Send *SELL* to try again.',
+};
+
+async function photoIntake(cfg, event, tenant, conversation) {
+  const own = { session: tenant.waha_session };
+
+  // Waiting on photos, but the draft has moved on without the chat — filed,
+  // expired or cancelled. The conversation is treated as over, so only a
+  // fresh SELL starts anything.
+  let current = conversation;
+  let ended = null;
+  if (conversation?.state === 'pi_photos') {
+    const open = conversation.draft?.draft_id
+      ? await openDraft(cfg, tenant.id, conversation.draft.draft_id)
+      : null;
+    if (!open) {
+      current = null;
+      ended = conversation.draft?.draft_id
+        ? await db(cfg).one('listing_drafts', `id=eq.${conversation.draft.draft_id}&tenant_id=eq.${tenant.id}&select=status`)
+        : null;
+    }
+  }
+
+  const [previous, categories, rules] = await Promise.all([
+    db(cfg).one(
+      'submissions',
+      `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(event.from)}` +
+        '&seller_name=not.is.null&select=seller_name&order=created_at.desc'
+    ),
+    db(cfg).select('photo_categories', 'active=eq.true&select=slug,name&order=name.asc'),
+    db(cfg).select('photo_shot_rules', 'select=category,shot_type,label,requirement,condition_flag,sort_order'),
+  ]);
+
+  const result = photoIntakeStep(current, event, {
+    store: tenant.name,
+    knownName: previous?.seller_name ?? null,
+    categories: categories ?? [],
+    rules: rules ?? [],
+  });
+
+  if (!result) {
+    // A photo for a draft that has since closed: say so once, then let go.
+    if (conversation?.state === 'pi_photos' && !current) {
+      await setConversation(cfg, tenant, event.from, { state: 'idle', draft: {} });
+      if (event.hasMedia) {
+        const text = ended?.status === 'published' ? CHECK_SAY.closed(tenant.name) : CHECK_SAY.ended;
+        await say(cfg, tenant, event.from, text, own);
+      }
+    }
+    return json({ ok: true, ignored: 'not an item for sale' });
+  }
+
+  // The same replay guard as the old intake, now that this message is ours.
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  const action = result.action;
+
+  if (action?.type === 'create_draft') {
+    let draftId;
+    try {
+      draftId = await createDraft(cfg, tenant, event.from, action.item);
+    } catch (err) {
+      console.error('draft insert failed:', err?.message ?? err);
+      await setConversation(cfg, tenant, event.from, { state: 'idle', draft: {} });
+      await say(cfg, tenant, event.from, CHECK_SAY.draftFailed, own);
+      return json({ ok: true, intake: 'failed' });
+    }
+    result.draft = { ...result.draft, draft_id: draftId };
+  }
+
+  if (action?.type === 'cancel_draft') {
+    await db(cfg).update(
+      'listing_drafts',
+      `id=eq.${action.draftId}&tenant_id=eq.${tenant.id}&${OPEN_DRAFT}`,
+      { status: 'cancelled' },
+      { returning: false }
+    );
+  }
+
+  await persist(cfg, tenant, event.from, conversation, result);
+  for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
+
+  const draftId = result.draft?.draft_id;
+
+  if (action?.type === 'create_draft') {
+    for (const [i, image] of action.early.entries()) {
+      await checkPhoto(cfg, tenant, event.from, draftId, image, {
+        ack: false,
+        messageId: image.id ?? `${draftId}:early:${i}`,
+      });
+    }
+  }
+
+  if (action?.type === 'check_photo') {
+    await checkPhoto(cfg, tenant, event.from, draftId, action.image, {
+      ack: action.ack,
+      messageId: action.image.id ?? inboundId(event),
+    });
+  }
+
+  if (action?.type === 'photo_status') {
+    const draft = await openDraft(cfg, tenant.id, draftId);
+    if (draft) {
+      const labels = Object.fromEntries(
+        (rules ?? []).filter((r) => r.category === draft.category).map((r) => [r.shot_type, r.label])
+      );
+      await say(
+        cfg,
+        tenant,
+        event.from,
+        photoStatusMessage({
+          title: draft.extracted?.title ?? 'your item',
+          missing: (draft.missing_shots ?? []).map((s) => labels[s] ?? s),
+          store: tenant.name,
+        }),
+        own
+      );
+    }
+  }
+
+  return json({ ok: true, intake: result.state });
+}
+
+async function openDraft(cfg, tenantId, draftId) {
+  if (!draftId) return null;
+  return db(cfg).one(
+    'listing_drafts',
+    `id=eq.${draftId}&tenant_id=eq.${tenantId}&${OPEN_DRAFT}` +
+      '&select=id,status,category,missing_shots,extracted'
+  );
+}
+
+// One open draft per seller per store (a partial unique index). Reaching here
+// means the chat has no live draft, so any open one is abandoned: it goes, and
+// the new item takes its place.
+async function createDraft(cfg, tenant, chat, item) {
+  await db(cfg).update(
+    'listing_drafts',
+    `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(chat)}&${OPEN_DRAFT}`,
+    { status: 'cancelled' },
+    { returning: false }
+  );
+  const row = await db(cfg).insert('listing_drafts', {
+    tenant_id: tenant.id,
+    seller_chat_id: chat,
+    category: item.category,
+    flags: item.flags,
+    // `source` is what routes/photoReview.js files as a submission. A draft
+    // made any other way is left alone.
+    extracted: {
+      source: 'sell',
+      title: item.title,
+      asking_price: item.asking_price,
+      condition: item.condition,
+      seller_name: item.seller_name,
+    },
+  });
+  if (!row?.id) throw new Error('listing_drafts insert returned no row');
+  return row.id;
+}
+
+// One photo to the photo-check service, and its answer to the seller.
+//
+// The service downloads the photo from WAHA itself and only from WAHA's host,
+// so the URL goes through mediaRequest(): WAHA writes its own (often
+// localhost) host into media URLs, and the service needs the public one.
+async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId }) {
+  const own = { session: tenant.waha_session };
+
+  let res;
+  let body;
+  try {
+    const mediaUrl = mediaRequest(cfg, image.url).url;
+    res = await fetch(`${cfg.photoCheckUrl}/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Service-Key': cfg.photoCheckKey },
+      body: JSON.stringify({ tenant_id: tenant.id, draft_id: draftId, message_id: messageId, media_url: mediaUrl }),
+    });
+    body = await res.json().catch(() => null);
+  } catch (err) {
+    console.error('photo check unreachable:', err?.message ?? err);
+    await say(cfg, tenant, chat, CHECK_SAY.failed, own);
+    return null;
+  }
+
+  if (!res.ok || !body) {
+    console.error('photo check refused:', res.status, body?.error, body?.detail);
+    const text =
+      body?.error === 'draft_closed' ? CHECK_SAY.closed(tenant.name)
+      : body?.error === 'media_too_large' ? CHECK_SAY.tooLarge
+      : CHECK_SAY.failed;
+    await say(cfg, tenant, chat, text, own);
+    return null;
+  }
+
+  // WAHA delivered the same message twice; the first answer already went.
+  if (body.repeat_request) return body;
+
+  if (body.status === 'rejected') {
+    await say(cfg, tenant, chat, body.message || CHECK_SAY.failed, own);
+  } else if (ack && body.message) {
+    await say(cfg, tenant, chat, body.message, own);
+  }
+  return body;
 }
 
 // ── WHERE CONSIGNORS ARE PAID ────────────────────────────────────────────────

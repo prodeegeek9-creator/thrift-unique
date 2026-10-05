@@ -95,6 +95,15 @@ export async function storeImage(cfg, tenantId, { url, mimetype }) {
   return upload(cfg, storagePath(tenantId, type), bytes, type);
 }
 
+// Bytes we already have — a reviewed photo moving out of the private
+// listing-photos bucket — into the public one, under a fresh path.
+export async function storeBytes(cfg, tenantId, bytes, type = 'image/jpeg') {
+  if (!bytes?.byteLength) throw new MediaError('Empty image');
+  if (bytes.byteLength > MAX_BYTES) throw new MediaError(`Image too large: ${bytes.byteLength} bytes`);
+  const contentType = String(type).startsWith('image/') ? type : 'image/jpeg';
+  return upload(cfg, storagePath(tenantId, contentType), bytes, contentType);
+}
+
 async function upload(cfg, path, bytes, contentType) {
   const res = await fetch(`${cfg.supabaseUrl}/storage/v1/object/${BUCKET}/${path}`, {
     method: 'POST',
