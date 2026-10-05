@@ -327,34 +327,45 @@ alter table public.listing_drafts enable row level security;
 alter table public.listing_photos enable row level security;
 alter table public.listing_shot_exceptions enable row level security;
 
-drop policy if exists "photo_categories read" on public.photo_categories;
-create policy "photo_categories read" on public.photo_categories
-  for select to authenticated using (true);
+-- Created only where missing, rather than dropped and recreated: on the live
+-- database they already exist, and a drop would leave a moment with no
+-- policy at all.
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'photo_categories' and policyname = 'photo_categories read') then
+    create policy "photo_categories read" on public.photo_categories
+      for select to authenticated using (true);
+  end if;
 
-drop policy if exists "photo_shot_rules read" on public.photo_shot_rules;
-create policy "photo_shot_rules read" on public.photo_shot_rules
-  for select to authenticated using (true);
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'photo_shot_rules' and policyname = 'photo_shot_rules read') then
+    create policy "photo_shot_rules read" on public.photo_shot_rules
+      for select to authenticated using (true);
+  end if;
 
-drop policy if exists "listing_drafts member read" on public.listing_drafts;
-create policy "listing_drafts member read" on public.listing_drafts
-  for select to authenticated using (
-    exists (select 1 from public.tenant_members m
-            where m.tenant_id = listing_drafts.tenant_id and m.user_id = (select auth.uid()))
-  );
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'listing_drafts' and policyname = 'listing_drafts member read') then
+    create policy "listing_drafts member read" on public.listing_drafts
+      for select to authenticated using (
+        exists (select 1 from public.tenant_members m
+                where m.tenant_id = listing_drafts.tenant_id and m.user_id = (select auth.uid()))
+      );
+  end if;
 
-drop policy if exists "listing_photos member read" on public.listing_photos;
-create policy "listing_photos member read" on public.listing_photos
-  for select to authenticated using (
-    exists (select 1 from public.tenant_members m
-            where m.tenant_id = listing_photos.tenant_id and m.user_id = (select auth.uid()))
-  );
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'listing_photos' and policyname = 'listing_photos member read') then
+    create policy "listing_photos member read" on public.listing_photos
+      for select to authenticated using (
+        exists (select 1 from public.tenant_members m
+                where m.tenant_id = listing_photos.tenant_id and m.user_id = (select auth.uid()))
+      );
+  end if;
 
-drop policy if exists "listing_shot_exceptions member read" on public.listing_shot_exceptions;
-create policy "listing_shot_exceptions member read" on public.listing_shot_exceptions
-  for select to authenticated using (
-    exists (select 1 from public.tenant_members m
-            where m.tenant_id = listing_shot_exceptions.tenant_id and m.user_id = (select auth.uid()))
-  );
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'listing_shot_exceptions' and policyname = 'listing_shot_exceptions member read') then
+    create policy "listing_shot_exceptions member read" on public.listing_shot_exceptions
+      for select to authenticated using (
+        exists (select 1 from public.tenant_members m
+                where m.tenant_id = listing_shot_exceptions.tenant_id and m.user_id = (select auth.uid()))
+      );
+  end if;
+end $$;
 
 -- ── GRANTS ───────────────────────────────────────────────────────────────────
 --
