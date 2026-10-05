@@ -11,6 +11,35 @@ admin-proxy `worker.js`) has been removed, and the database is a new, empty
 Supabase project rather than the one that site ran on. Nothing is carried
 over. The old code is in git history if it is ever wanted.
 
+## "Vendwyze" and "Unique Thrift" are the same project
+
+This repo was renamed mid-build (`43f3f6e`, "Rebrand the platform as
+Vendwyze"). If a conversation, a doc, or a server refers to either name,
+assume it means this codebase — not two products sharing infrastructure.
+That confusion already cost one session a round of wrong assumptions, which
+is why this note exists.
+
+**One real piece of fragmentation this did leave behind, though:** a
+standalone Python microservice — not part of this repo, not deployed from
+it, and not tracked in `supabase/migrations/` — runs on a separate server
+(`92.5.43.201`, systemd units `vendwyze-photo-check` and
+`vendwyze-photo-review`) doing AI-assisted photo review for listings: a
+Flask app that does blur/brightness/size/duplicate checks, and a background
+worker that labels shot types with OpenAI vision and messages the seller
+back over WhatsApp. It reads and writes its own tables applied directly to
+this project's Supabase database — `photo_categories`, `photo_shot_rules`,
+`listing_drafts`, `listing_photos`, `listing_shot_exceptions` — which exist
+*only* in the live database, with no migration file here to show for them.
+
+That is a **different, parallel system** from this repo's own WhatsApp
+photo intake (`0018_submissions.sql`, `0019_listing_photo_uploads.sql`,
+`worker/lib/intake.js`). The two have not been reconciled, and nothing here
+decides which one is canonical — that is a deliberate call still to be
+made, not an oversight to silently resolve either way. Both talk to the
+same self-hosted WAHA instance (on a separate VPS, reverse-proxied through
+nginx — session names like `ut-platform`, `ut-kay-stores` are this
+project's tenants).
+
 ## Structure
 
 ```
