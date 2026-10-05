@@ -48,6 +48,18 @@ export function config(env) {
     // off, so it is configuration.
     wahaWebhookSecret: env.WAHA_WEBHOOK_SECRET || null,
 
+    // The photo-check service (a separate Python app on its own server) that
+    // runs the plain-code checks on each photo of an item brought to a store,
+    // before the review worker labels its shots. Base URL, no trailing slash;
+    // the Worker calls <url>/check. Not a secret, so wrangler.jsonc `vars`.
+    // The key it checks is: PHOTO_CHECK_KEY, a Worker secret, the same value
+    // as PHOTO_CHECK_KEY in that service's .env.
+    //
+    // Both unset means the photo-review intake is off for every store,
+    // whatever their photo_review flag says.
+    photoCheckUrl: env.PHOTO_CHECK_URL ? env.PHOTO_CHECK_URL.replace(/\/+$/, '') : null,
+    photoCheckKey: env.PHOTO_CHECK_KEY || null,
+
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.
     wahaTypingMs:

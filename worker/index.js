@@ -15,6 +15,7 @@ import { releaseExpiredHolds, sendOwedPayouts, runBilling } from './routes/escro
 import { handlePayouts } from './routes/payouts.js';
 import { handleBilling } from './routes/billing.js';
 import { handleWaha, consignorBankSweep } from './routes/waha.js';
+import { finalizeDrafts } from './routes/photoReview.js';
 import { reconcileSweep } from './lib/reconcile.js';
 import { handleTeam } from './routes/team.js';
 import { handleSignup } from './routes/signup.js';
@@ -22,6 +23,10 @@ import { handleSubmissions } from './routes/submissions.js';
 import { handleListings } from './routes/listings.js';
 import { handleCheckout } from './routes/checkout.js';
 import { handleOrders } from './routes/orders.js';
+
+// The second cron in wrangler.jsonc. Cloudflare passes the expression that
+// fired, which is how the two schedules are told apart.
+export const EVERY_MINUTE = '* * * * *';
 
 export default {
   async fetch(request, env, ctx) {
@@ -70,6 +75,17 @@ export default {
   // trigger, held funds never release on their own and every order waits on a
   // buyer who may never come back.
   async scheduled(event, env, ctx) {
+    // Every minute, and nothing else: items whose photos have all passed go
+    // to their store (routes/photoReview.js). Must match wrangler.jsonc.
+    if (event.cron === EVERY_MINUTE) {
+      ctx.waitUntil(
+        finalizeDrafts(env).then((r) => {
+          if (r && (r.filed || r.failed || r.expired)) console.log(`draft filing: ${JSON.stringify(r)}`);
+        })
+      );
+      return;
+    }
+
     ctx.waitUntil(
       releaseExpiredHolds(env)
         .then((r) => console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`))

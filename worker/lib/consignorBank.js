@@ -3,6 +3,7 @@ import { COLUMNS } from './columns.js';
 import { listBanks, resolveAccount } from './transfers.js';
 import { YES, NO, CANCEL } from './bot.js';
 import { INTAKE_STATES } from './intake.js';
+import { PHOTO_STATES } from './photoIntake.js';
 
 // Where a store pays the people who bring it items: their bank account,
 // collected on WhatsApp on the store's own number (see migration 0031).
@@ -207,7 +208,7 @@ export function wantsBank(conversation, text, now = new Date()) {
 export function INTAKE_BUSY(conversation, now = new Date()) {
   const state = conversation?.state;
   if (!state || state === 'idle' || state === 'bank_verify') return false;
-  if (!INTAKE_STATES.includes(state) && !BANK_STATES.includes(state)) return false;
+  if (!INTAKE_STATES.includes(state) && !PHOTO_STATES.includes(state) && !BANK_STATES.includes(state)) return false;
   const then = new Date(conversation.updated_at ?? 0).getTime();
   return then > 0 && now.getTime() - then < ASK_LAPSES_HOURS * 3_600_000;
 }

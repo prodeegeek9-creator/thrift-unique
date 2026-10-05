@@ -19,26 +19,58 @@ assume it means this codebase — not two products sharing infrastructure.
 That confusion already cost one session a round of wrong assumptions, which
 is why this note exists.
 
-**One real piece of fragmentation this did leave behind, though:** a
-standalone Python microservice — not part of this repo, not deployed from
-it, and not tracked in `supabase/migrations/` — runs on a separate server
-(`92.5.43.201`, systemd units `vendwyze-photo-check` and
-`vendwyze-photo-review`) doing AI-assisted photo review for listings: a
-Flask app that does blur/brightness/size/duplicate checks, and a background
-worker that labels shot types with OpenAI vision and messages the seller
-back over WhatsApp. It reads and writes its own tables applied directly to
-this project's Supabase database — `photo_categories`, `photo_shot_rules`,
-`listing_drafts`, `listing_photos`, `listing_shot_exceptions` — which exist
-*only* in the live database, with no migration file here to show for them.
+## Items brought to a store: the photo-review intake
 
-That is a **different, parallel system** from this repo's own WhatsApp
-photo intake (`0018_submissions.sql`, `0019_listing_photo_uploads.sql`,
-`worker/lib/intake.js`). The two have not been reconciled, and nothing here
-decides which one is canonical — that is a deliberate call still to be
-made, not an oversight to silently resolve either way. Both talk to the
-same self-hosted WAHA instance (on a separate VPS, reverse-proxied through
-nginx — session names like `ut-platform`, `ut-kay-stores` are this
-project's tenants).
+Two Python services that are **not in this repo** run on their own server
+(`92.5.43.201`, systemd units `vendwyze-photo-check` and
+`vendwyze-photo-review`, code in `/opt/vendwyze-photo-check`):
+
+- **photo-check** (Flask, `POST /check`): downloads a photo from WAHA, runs
+  plain-code checks — size, light, blur, near-duplicates — stores it in the
+  private `listing-photos` bucket and inserts a `listing_photos` row,
+  `'rejected'` with a reason or `'pending'`.
+- **photo-review** (a polling worker): waits until a draft's photos have
+  stopped arriving for 30 seconds, labels every pending photo's shot type in
+  one vision-model call, marks each `'passed'` or `'rejected'`, and tells
+  the seller on WhatsApp what was rejected and what is still missing.
+
+Their tables were first created by hand on the live database;
+`0038_photo_review.sql` brings them into the repo, closes the default grants
+they were created with, and links a submission to its draft.
+
+**This is now the canonical intake**, for stores with the `photo_review`
+flag on (a `tenant_features` row; off unless set). The old one
+(`worker/lib/intake.js`) still runs for everyone else, and a conversation
+finishes in whichever flow it started in. The two are not parallel systems
+any more — the new one *feeds* the old one's end:
+
+```
+SELL on the store's WhatsApp
+  → lib/photoIntake.js: category, name, price, condition, flag questions
+      (flaws? a phone?), seller's name, summary → YES
+  → a listing_drafts row (extracted.source = 'sell')
+  → each photo → photo-check /check → listing_photos
+  → photo-review labels the shots; the 0038 triggers flip the draft to
+    'ready' once every required shot has passed
+  → routes/photoReview.js, every minute: photos copied to product-images,
+    a submissions row filed (draft_id set), draft 'published'
+  → the existing path, unchanged: review queue, approve/decline,
+    consignor bank details, consignor payouts
+```
+
+The category comes first because each needs different shots
+(`photo_shot_rules`); the details come before the photos so the photo stage
+can end on its own — the item goes to the store the moment the last
+required shot passes, with no "done" to type.
+
+Configuration on the Worker: `PHOTO_CHECK_URL` (in `wrangler.jsonc` vars)
+and `PHOTO_CHECK_KEY` (a secret, the same value as the service's
+`PHOTO_CHECK_KEY`). Without both, every store gets the old intake whatever
+its flag says. The URL must be a hostname with HTTPS — a Worker cannot call a
+bare IP, and the key travels in a header.
+
+Both services and the Worker talk to the same self-hosted WAHA (session
+names like `ut-platform`, `ut-kay-stores` are this project's tenants).
 
 ## Structure
 
