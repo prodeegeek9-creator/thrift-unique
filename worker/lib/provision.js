@@ -108,7 +108,8 @@ export async function approveStore(cfg, tenant, { origin } = {}) {
 
   if (!userId) {
     const created = await generateInvite(cfg, signup.email, {
-      redirectTo: origin ? `${origin}/dashboard` : null,
+      origin,
+      landing: '/welcome',
       data: { invited_to: tenant.id },
     });
     if (!created?.userId) throw new Error('generate_link returned no user');

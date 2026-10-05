@@ -5,6 +5,7 @@ import { formatNaira } from '../../lib/money.js';
 import { imageUrl } from '../../lib/images.js';
 import BrandMark from '../../components/ui/BrandMark.jsx';
 import LogoLoader from '../../components/ui/LogoLoader.jsx';
+import SiteFooter from '../../components/layout/SiteFooter.jsx';
 
 // A store's own page: /s/<slug>.
 //
@@ -60,6 +61,18 @@ export default function Store() {
           <p className="mt-2 text-sm text-muted">
             This store doesn't exist, or isn't open yet.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (store.paused) {
+    return (
+      <div className="min-h-dvh bg-bg px-4 py-10">
+        <div className="card mx-auto max-w-sm p-5 text-center">
+          <BrandMark className="mx-auto h-8 w-8" />
+          <h1 className="mt-3 font-display text-lg font-semibold">{store.name}</h1>
+          <p className="mt-2 text-sm text-muted">This store is temporarily unavailable. Please check back soon.</p>
         </div>
       </div>
     );
@@ -148,8 +161,9 @@ export default function Store() {
           </section>
         ) : null}
 
-        <p className="mt-8 text-center text-xs text-muted">Payment protected by Unique Thrift</p>
       </main>
+
+      <SiteFooter compact />
     </div>
   );
 }

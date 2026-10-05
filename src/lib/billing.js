@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { FLAG_MIN_TIER, TIERS, hasFeature, minTierFor } from './features.js';
+import { callWorker } from './api.js';
 
 // The plan card, the usage counters and the two feature columns.
 
@@ -82,6 +83,7 @@ const FEATURE_LABELS = {
   contacts: 'Buyer tracking',
   disputes: 'Dispute support',
   escrow: 'Escrow payments',
+  whatsapp_checkout: 'Checkout inside WhatsApp',
   publish_instagram: 'Instagram',
   publish_facebook: 'Facebook',
   analytics: 'Advanced analytics',
@@ -101,3 +103,49 @@ function startOfMonth() {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth(), 1).toISOString();
 }
+
+// ── THE PLAN FEE ─────────────────────────────────────────────────────────────
+//
+// Charged by the Worker (worker/lib/billing.js), which holds the prices, the
+// invoices and any saved card. Kept in step with PLAN_PRICES there.
+export const PLAN_PRICES = { starter: 10000, growth: 25000, business: 75000 };
+export const TRIAL_DAYS = 14;
+
+export const fetchBillingSummary = (tenantId) =>
+  callWorker(`/api/billing?tenant=${encodeURIComponent(tenantId)}`, { method: 'GET' });
+
+export const payPlanNow = (tenantId) => callWorker('/api/billing/pay-now', { body: { tenant: tenantId } });
+
+export const setAutoRenew = (tenantId, on) => callWorker('/api/billing/auto-renew', { body: { tenant: tenantId, on } });
+
+// The public pay page, /billing/pay/<ref>: no login, the reference is the key.
+export async function fetchPlanInvoice(ref, reference) {
+  const q = reference ? `?reference=${encodeURIComponent(reference)}` : '';
+  const res = await fetch(`/api/billing/pay/${ref}${q}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
+}
+
+export async function startPlanPayment(ref, autoRenew) {
+  const res = await fetch(`/api/billing/pay/${ref}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_renew: autoRenew }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
+}
+
+// Changing plan (owner only). Answers { done: 'changed' | 'pay' | 'scheduled'
+// | 'kept', pay_url?, amount?, effective_at? }. See worker/lib/planChange.js.
+export const changePlan = (tenantId, tier) => callWorker('/api/billing/change-plan', { body: { tenant: tenantId, tier } });
+
+// The dashboard's upgrade card: { nudge } or { nudge: null }.
+export const fetchNudge = (tenantId) =>
+  callWorker(`/api/billing/nudge?tenant=${encodeURIComponent(tenantId)}`, { method: 'GET' });
+
+// A screen the plan doesn't include was opened. Fire and forget.
+export const recordLocked = (tenantId, flag) =>
+  callWorker('/api/billing/locked', { body: { tenant: tenantId, flag } }).catch(() => null);

@@ -51,13 +51,16 @@ export function db(cfg) {
       return rows?.[0] ?? null;
     },
 
-    async insert(table, row, { returning = true, onConflict } = {}) {
+    // With onConflict, a clash is ignored (the row that was there wins) unless
+    // merge is set, in which case the new values overwrite it: an upsert.
+    async insert(table, row, { returning = true, onConflict, merge = false } = {}) {
       const prefer = returning ? 'return=representation' : 'return=minimal';
       const q = onConflict ? `?on_conflict=${onConflict}` : '';
+      const resolution = merge ? 'merge-duplicates' : 'ignore-duplicates';
       const rows = await call(cfg, `${table}${q}`, {
         method: 'POST',
         headers: headers(cfg, {
-          Prefer: onConflict ? `resolution=ignore-duplicates,${prefer}` : prefer,
+          Prefer: onConflict ? `resolution=${resolution},${prefer}` : prefer,
         }),
         body: JSON.stringify(row),
       });

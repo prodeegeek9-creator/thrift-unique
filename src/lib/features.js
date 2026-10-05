@@ -26,6 +26,7 @@ export const FLAG_MIN_TIER = {
   contacts: 'growth',           // CRM: buyer list, repeat-buyer flags
   disputes: 'growth',           // manual dispute flagging, routed to staff
   escrow: 'growth',             // funds held until the buyer confirms receipt
+  whatsapp_checkout: 'growth',  // cart and payment inside the store's WhatsApp chat
   publish_instagram: 'growth',
   publish_facebook: 'growth',
 

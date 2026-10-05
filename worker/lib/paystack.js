@@ -58,3 +58,25 @@ export async function fetchTransaction(secretKey, reference) {
   const body = await res.json().catch(() => null);
   return body?.status ? body.data : null;
 }
+
+// Starting a payment. Paystack hands back a checkout page to send the buyer
+// to; the payment itself is confirmed later, by webhook, against `reference`.
+export async function initializeTransaction(secretKey, { email, amountKobo, reference, callbackUrl, metadata }) {
+  const res = await fetch('https://api.paystack.co/transaction/initialize', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      amount: amountKobo,
+      reference,
+      currency: 'NGN',
+      callback_url: callbackUrl,
+      metadata,
+    }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.status || !body?.data?.authorization_url) {
+    throw new Error(`Paystack initialize ${res.status}: ${body?.message ?? 'no checkout URL'}`);
+  }
+  return body.data;
+}

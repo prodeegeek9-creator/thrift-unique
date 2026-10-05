@@ -120,7 +120,7 @@ export default function Team() {
 function InviteLink({ invited, onDismiss }) {
   const toast = useToast();
 
-  const share = `You've been added to our store on Unique Thrift. Set your password here:\n${invited.link}`;
+  const share = `You've been added to our store on Vendwyze. Set your password here:\n${invited.link}`;
 
   return (
     <div className="mb-4 rounded-card border border-green/30 bg-green-lt p-4">

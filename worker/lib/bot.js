@@ -14,6 +14,8 @@
 // four HTTP calls in lib/waha.js and nothing else.
 
 import { EMAIL } from './accounts.js';
+import { normalizeNumber } from './phone.js';
+import { PLAN_PRICES, TRIAL_DAYS, GRACE_DAYS, COMMISSION, CONFIRM_WINDOW_DAYS } from './plans.js';
 
 export const MAX_IMAGES = 4;
 export const MAX_TITLE = 120;
@@ -36,10 +38,15 @@ const CONDITIONS = [
 
 // Checked in this order, and the order matters. The dashboard's deep link
 // opens WhatsApp with "Hi! I want to list a new item." pre-typed — which would
-// match a greeting as readily as an intent, so intent is tested first.
+// read as a greeting as readily as an intent, so intent is tested before the
+// menu, which answers greetings and anything else.
 export const CANCEL = /^(cancel|stop|quit|abort|never ?mind)\b/i;
 const START = /\b(list|sell|add|new item|post)\b/i;
-const GREETING = /^(help|menu|hi|hey|hello|start|\?)\b/i;
+
+// Somebody who has lost track of a listing in progress: a greeting, the menu,
+// or the homepage's "Hi! I want to set up my store." Never taken as the answer
+// to whatever was being asked (see step()).
+const LOST = /^(hi|hello|hey|hiya|good (morning|afternoon|evening)|menu|help)\b|set ?up (my|a) store|open (my|a) store/i;
 
 // Words a seller types to mean "that is all the photos", which must not become
 // the item's name.
@@ -102,7 +109,7 @@ const SAY = {
   askPrice: 'How much? (e.g. 35000 or 35k)',
   askCondition:
     'What condition is it in?\n\n1 Brand new\n2 Excellent\n3 Good\n4 Fair\n\nReply with the number.',
-  badPrice: "I didn't catch a price there. Send the amount on its own — 35000, or 35k.",
+  badPrice: "I didn't catch a price there. Send the amount on its own — 35000, or 35k. (Reply *CANCEL* to stop.)",
   badCondition: 'Reply with 1, 2, 3 or 4.',
   cancelled: 'Cancelled. Nothing was posted.',
   nothingToCancel: "Nothing in progress. Say *list* when you're ready to add an item.",
@@ -130,13 +137,10 @@ export const MAX_BUSINESS_NAME = 60;
 
 // Bumped whenever the wording of TERMS changes, so the version stored against
 // a store always names the text its owner actually said YES to.
-export const DISCLAIMER_VERSION = 'commission-v1';
+export const DISCLAIMER_VERSION = 'terms-v3';
 
-// Commission per plan, from the pricing table: the top of each range, since
-// the operator can lower a rate but raising one after acceptance would be
-// charging for something nobody agreed to. Business is negotiable, so it
-// starts at Growth's rate until the operator agrees another.
-export const COMMISSION = { starter: 8, growth: 7, business: 7 };
+// Commission per plan: see lib/plans.js.
+export { COMMISSION };
 
 const STORE_TYPES = [
   { value: 'consignment', words: ['1', 'thrift', 'thrift store', 'consignment', 'middleman'] },
@@ -194,8 +198,13 @@ export function categoryLabel(value) {
 
 const SIGNUP = {
   welcome:
-    "Hi 👋 This number isn't linked to a store on Unique Thrift yet.\n\n" +
+    "Hi 👋 This number isn't linked to a store on Vendwyze yet.\n\n" +
     'Want to open one? Reply with your *business name*.\n\n' +
+    '(Reply *cancel* any time.)',
+  // Sent with a web account's code: the account is already there.
+  welcomeWeb: (email) =>
+    `Hi 👋 Let's open your store on Vendwyze.\n\n${linkedNote(email)}\n\n` +
+    'Reply with your *business name*.\n\n' +
     '(Reply *cancel* any time.)',
   badName: `Reply with your business name — 2 to ${MAX_BUSINESS_NAME} characters.`,
   askType: (name) =>
@@ -211,15 +220,15 @@ const SIGNUP = {
   badCategory: `Reply with a number from 1 to ${CATEGORIES.length}.`,
   askPlan:
     'Pick a plan:\n\n' +
-    `1 *Starter* — ₦10,000–15,000/mo. Listings shared to your WhatsApp Status. ${COMMISSION.starter}% per sale, paid out the same day.\n\n` +
-    `2 *Growth* — ₦25,000–35,000/mo. Adds Instagram & Facebook, buyer protection and checkout in WhatsApp. ${COMMISSION.growth}% per sale, released when the buyer confirms delivery.\n\n` +
-    '3 *Business* — from ₦75,000/mo. Adds TikTok, staff logins, analytics and dedicated support. Commission agreed with you.\n\n' +
-    "Reply 1, 2 or 3. We'll confirm pricing with you before anything is charged, and you can change plan later.",
+    `1 *Starter* — ${formatNaira(PLAN_PRICES.starter)}/month. Listings shared to your WhatsApp Status and your own store page. ${COMMISSION.starter}% per sale, paid out the same day. Because you're paid straight away, a buyer with a problem sorts it out with you.\n\n` +
+    `2 *Growth* — ${formatNaira(PLAN_PRICES.growth)}/month. Adds buyer protection, your buyer list and dispute handling (Instagram & Facebook posting coming soon). ${COMMISSION.growth}% per sale. Each payment is held until the buyer confirms it arrived, or ${CONFIRM_WINDOW_DAYS} days pass, and can be refunded to them until then.\n\n` +
+    `3 *Business* — ${formatNaira(PLAN_PRICES.business)}/month. Adds sales analytics, staff logins and priority support (TikTok posting coming soon). Commission agreed with you.\n\n` +
+    `Your first ${TRIAL_DAYS} days are free, and you can change plan later. Reply 1, 2 or 3.`,
   badPlan: 'Reply 1 for Starter, 2 for Growth or 3 for Business.',
   askEmail: 'What email should your dashboard login use?',
   badEmail: "That doesn't look like an email address. Try again, e.g. ada@example.com",
   declined:
-    "Understood — the store can't open without agreeing to these terms, because every sale on Unique Thrift is paid through us. " +
+    "Understood — the store can't open without agreeing to these terms, because every sale on Vendwyze is paid through us. " +
     'Reply *YES* if you change your mind, or *CANCEL* to stop.',
   cancelled: 'No problem, nothing was set up. Message us any time to open a store.',
 };
@@ -232,17 +241,25 @@ export function termsMessage(tier) {
     tier === 'starter'
       ? "You're paid the same day the buyer pays."
       : "The buyer's payment is held until they confirm they've received the item, then released to you.";
+  // What a buyer can get back, and until when (lib/refunds.js). Starter is
+  // paid at once, so there is nothing held to refund from for long.
+  const refunds =
+    tier === 'starter'
+      ? "Refunds: you're paid the same day, so Vendwyze can only refund a buyer before your payout has gone. After that, a complaint is between you and the buyer."
+      : `Refunds: a buyer's payment is held until they confirm it arrived, or for ${CONFIRM_WINDOW_DAYS} days. Until then it can be refunded to them, less Paystack's fee. After that, a complaint is between you and the buyer.`;
   const rate =
     tier === 'business'
-      ? `A ${pct}% commission applies to every sale paid through Unique Thrift until we agree a different rate with you.`
-      : `Every sale paid through Unique Thrift has a ${pct}% commission deducted before you're paid.`;
+      ? `A ${pct}% commission applies to every sale paid through Vendwyze until we agree a different rate with you.`
+      : `Every sale paid through Vendwyze has a ${pct}% commission deducted before you're paid.`;
 
   return (
-    '*Before we set you up — our commission terms*\n\n' +
+    '*Before we set you up — our terms*\n\n' +
     `• ${rate}\n` +
     `• ${payout}\n` +
-    '• Buyers always pay through Unique Thrift. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
-    '• Your monthly plan fee is separate from commission, and is confirmed with you before anything is charged.\n\n' +
+    `• ${refunds}\n` +
+    "• If a buyer pays for an item that has already sold, Vendwyze refunds them in full and you're not charged.\n" +
+    '• Buyers always pay through Vendwyze. Taking payment directly from a buyer for an item listed here is not allowed, and can get the store suspended.\n' +
+    `• Your plan is free for ${TRIAL_DAYS} days after your store is approved, then ${formatNaira(PLAN_PRICES[tier] ?? PLAN_PRICES.starter)} a month, paid in advance. If it isn't paid within ${GRACE_DAYS} days of the due date, your store is paused until it is.\n\n` +
     'Reply *YES* to accept, or *CANCEL*.'
   );
 }
@@ -280,6 +297,34 @@ export function approvedMessage({ name, link, email, origin, slug }) {
 
 const SIGNUP_STATES = ['name', 'type', 'category', 'plan', 'email', 'terms'];
 
+// The code a web account's "Set up your store on WhatsApp" button types into
+// the chat (routes/signup.js): VW- and six characters. The Worker looks it up
+// and hands signupStep the account's email as ctx.webEmail, so the store is
+// opened for that account and the bot doesn't ask for an email at all.
+export const WEB_CODE = /\bVW-([A-HJ-NP-Z2-9]{6})\b/i;
+export function webCodeIn(text) {
+  return WEB_CODE.exec(String(text ?? ''))?.[1]?.toUpperCase() ?? null;
+}
+
+const linkedNote = (email) => `✅ Linked to your Vendwyze account (*${email}*). That's your dashboard login.`;
+
+// The question a sign-up is waiting on, asked again after a web code arrives
+// mid-conversation.
+function questionFor(signup) {
+  switch (signup.state) {
+    case 'type':
+      return SIGNUP.askType(signup.business_name ?? 'Your store');
+    case 'category':
+      return SIGNUP.askCategory;
+    case 'plan':
+      return SIGNUP.askPlan;
+    case 'terms':
+      return termsMessage(signup.tier);
+    default:
+      return 'Reply with your *business name*.';
+  }
+}
+
 // signupStep(signup, message, ctx) → { state, patch, replies, action }
 //
 //   signup   { state, business_name, store_type, category, tier, email,
@@ -288,6 +333,8 @@ const SIGNUP_STATES = ['name', 'type', 'category', 'plan', 'email', 'terms'];
 //   patch    columns to store alongside it
 //   action   { type: 'provision', name, email, storeType, category, tier }
 //            once the terms are accepted
+//   ctx.webEmail  the email of the web account whose code this message
+//            carried (WEB_CODE): stored, and the email question skipped
 //
 // Only reached for a number with no store, so a 'pending' row here means the
 // store it was waiting on has gone — rejected and deleted — and the sign-up
@@ -300,6 +347,14 @@ export function signupStep(signup, message, ctx = {}) {
 
   if (live && CANCEL.test(text)) {
     return { state: null, patch: {}, replies: [SIGNUP.cancelled], action: null };
+  }
+
+  // A web account's code, part way through: the message is the code, not an
+  // answer. Link the account and carry on where the sign-up was.
+  if (live && ctx.webEmail) {
+    const email = ctx.webEmail;
+    if (live.state === 'email') return ask('terms', `${linkedNote(email)}\n\n${termsMessage(live.tier)}`, { email });
+    return ask(live.state, `${linkedNote(email)}\n\n${questionFor(live)}`, { email });
   }
 
   switch (live?.state) {
@@ -326,6 +381,8 @@ export function signupStep(signup, message, ctx = {}) {
     case 'plan': {
       const tier = parsePlan(text);
       if (!tier) return ask('plan', SIGNUP.badPlan);
+      // Linked to a web account already: its email is the login.
+      if (live.email) return ask('terms', termsMessage(tier), { tier });
       return ask('email', SIGNUP.askEmail, { tier });
     }
 
@@ -356,12 +413,12 @@ export function signupStep(signup, message, ctx = {}) {
     }
 
     default:
-      return ask('name', SIGNUP.welcome, {
+      return ask('name', ctx.webEmail ? SIGNUP.welcomeWeb(ctx.webEmail) : SIGNUP.welcome, {
         business_name: null,
         store_type: null,
         category: null,
         tier: null,
-        email: null,
+        email: ctx.webEmail ?? null,
       });
   }
 }
@@ -385,7 +442,7 @@ function summary(draft, tenant) {
 // What the bot says once the product actually exists. Written here rather than
 // in the route so that the whole conversation, including its last line, can be
 // read in one file.
-export function listedMessage(product, { origin, posted } = {}) {
+export function listedMessage(product, { origin, posted, needsBank = false } = {}) {
   const link = origin ? `${origin}/p/${product.public_code}` : `/p/${product.public_code}`;
 
   const lines = [
@@ -403,8 +460,52 @@ export function listedMessage(product, { origin, posted } = {}) {
     lines.push('', 'Link your WhatsApp in the dashboard to post listings to your Status automatically.');
   }
 
-  lines.push('', 'Send another photo to list the next one.');
+  // Sent after every listing until it's done: a sale with nowhere to pay it
+  // waits, and the store owner may not know why.
+  if (needsBank) {
+    const where = origin ? `${origin}/dashboard/payouts` : '/dashboard/payouts';
+    lines.push(
+      '',
+      `💳 You haven't added the bank account we pay your sales into. Until you do, money from sales waits with us. Add it here:\n${where}`
+    );
+  }
+
+  lines.push(
+    '',
+    'Reply *SHARE* for the photo and a caption to post on Instagram, TikTok or Facebook.',
+    '',
+    'Send another photo to list the next one.'
+  );
   return lines.join('\n');
+}
+
+// ── THE SHARE KIT ────────────────────────────────────────────────────────────
+//
+// Instagram, TikTok and Facebook can't be posted to from here yet (each needs
+// its own approval), so the seller posts, and this hands them everything to
+// post with: the photos, and a caption that sells. Keep the caption in step
+// with shareCaption() in src/lib/shareKit.js.
+
+export function shareCaption(product, { origin } = {}) {
+  const link = origin ? `${origin}/p/${product.public_code}` : `/p/${product.public_code}`;
+  return [
+    product.title,
+    `${formatNaira(product.price)} · ${conditionLabel(product.condition)}`,
+    product.description ? `\n${String(product.description).trim()}\n` : null,
+    `Order here 👉 ${link}`,
+  ]
+    .filter((l) => l != null)
+    .join('\n');
+}
+
+export function shareKitIntro(product) {
+  return (
+    `📣 Here's *${product.title}*, ready to post.\n\n` +
+    '1. Save the photo (open it, then ⋮ or the share button → Save)\n' +
+    '2. Post it on Instagram, TikTok or Facebook\n' +
+    '3. Copy the caption below (press and hold it → Copy) and paste it in\n\n' +
+    'The link in the caption takes buyers straight to the item.'
+  );
 }
 
 // A listing from a store still waiting for approval: saved, not yet public.
@@ -413,6 +514,14 @@ export function savedMessage(product) {
     `✅ *${product.title}* is saved — ${formatNaira(product.price)}\n\n` +
     "It goes live, with its own link, as soon as your store is approved.\n\n" +
     'Send another photo to add the next one.'
+  );
+}
+
+export function paymentLinkMessage({ title, price, url, phone }) {
+  return (
+    `💳 Payment link for *${title}* — ${formatNaira(price)}:\n${url}\n\n` +
+    (phone ? `Only the buyer on the number ending ${String(phone).slice(-4)} can pay it. ` : '') +
+    'Send it to them. It works for 3 days, and the item comes off sale as soon as it is paid.'
   );
 }
 
@@ -446,6 +555,16 @@ export function step(conversation, message, ctx = {}) {
     return done(state === 'idle' ? SAY.nothingToCancel : SAY.cancelled);
   }
 
+  // A greeting mid-listing is somebody who has lost their place, not an item
+  // name or a price. With nothing entered yet there is nothing to lose: back
+  // to the menu (or a fresh start, for "I want to list a new item"). Otherwise
+  // say where they are. The title question is left alone: a name like
+  // "Hi-top sneakers" is a real answer there.
+  if (state !== 'idle' && state !== 'title' && !image && LOST.test(text)) {
+    if (!draft.title && !draft.images?.length) return idleStep(text, null, ctx);
+    return { state, draft, replies: [whereWeAre(state, draft)], action: null };
+  }
+
   switch (state) {
     case 'photo':
       return photoStep(draft, text, image, ctx);
@@ -458,11 +577,19 @@ export function step(conversation, message, ctx = {}) {
     case 'review':
       return reviewStep(draft, text, ctx);
     default:
-      return idleStep(text, image);
+      return idleStep(text, image, ctx);
   }
 }
 
-function idleStep(text, image) {
+function whereWeAre(state, draft) {
+  const ask = { photo: SAY.askPhoto, price: SAY.askPrice, condition: SAY.askCondition }[state] ?? 'Reply *YES* to post it.';
+  return (
+    `You're in the middle of listing${draft.title ? ` *${draft.title}*` : ' an item'}. ${ask}\n\n` +
+    'Reply *CANCEL* to stop and go back to the menu.'
+  );
+}
+
+function idleStep(text, image, ctx = {}) {
   // A photo with no preamble is the most common way a listing actually
   // starts. Treating it as an opening move saves a round trip and matches
   // what sellers already do with each other.
@@ -475,15 +602,143 @@ function idleStep(text, image) {
     };
   }
 
+  // "LINK JBU4PE 30k 08031234567": a payment link for a price agreed in chat,
+  // for that buyer's number alone (lib/paylinks.js). Before the menu words,
+  // since a bare "link" is the store page.
+  const pay = MENU_PAYLINK.exec(text);
+  if (pay) {
+    const { phone, rest } = linkArgs(pay[2] ?? '');
+    if (!phone) {
+      return done(
+        "Add the buyer's WhatsApp number, so only they can pay it: e.g. *LINK JBU4PE 30k 08031234567*. Leave the price out to use the listed one."
+      );
+    }
+    const price = rest ? parsePrice(rest) : null;
+    if (rest && price == null) {
+      return done("I didn't catch that price. Try e.g. *LINK JBU4PE 30k 08031234567*, or leave the price out to use the listed one.");
+    }
+    return {
+      state: 'idle',
+      draft: {},
+      replies: [],
+      action: { type: 'payment_link', code: pay[1].toUpperCase(), price, phone },
+    };
+  }
+
+  // The menu's own words, before START: "review items" is not a listing.
+  if (MENU_STORE.test(text)) return done(storeLinkMessage(ctx));
+  if (MENU_REVIEW.test(text)) return done(reviewMessage(ctx));
+  if (MENU_PASSWORD.test(text)) return { state: 'idle', draft: {}, replies: [], action: { type: 'password_link' } };
+  const share = MENU_SHARE.exec(text);
+  if (share) return { state: 'idle', draft: {}, replies: [], action: { type: 'share_kit', code: share[1]?.toUpperCase() ?? null } };
+  if (MENU_DASHBOARD.test(text)) return done(dashboardMessage(ctx));
+
   if (START.test(text)) {
     return { state: 'photo', draft: { images: [] }, replies: [SAY.askPhoto], action: null };
   }
 
-  if (GREETING.test(text) || !text) {
-    return { state: 'idle', draft: {}, replies: [SAY.help], action: null };
-  }
+  // A greeting, "menu", "help", or anything the bot does not understand.
+  return done(menuMessage(ctx));
+}
 
-  return { state: 'idle', draft: {}, replies: [SAY.help], action: null };
+// ── THE OWNER'S MENU ─────────────────────────────────────────────────────────
+//
+// What a store owner gets for "hi", "menu" or anything the bot does not
+// follow: the few things this number does, each one word away. Anchored at the
+// start of the message, so a sentence that merely contains "store" is not
+// mistaken for a request.
+
+const MENU_STORE = /^(store|shop|link|my store|my shop|store link|my link)\b/i;
+// What follows LINK and the code: a phone number, however it is spaced, and
+// perhaps a price. A number has at least ten digits, which no price here has.
+export function linkArgs(text) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i += 1) {
+    for (let j = words.length; j > i; j -= 1) {
+      const joined = words.slice(i, j).join('');
+      if (!/^\+?[\d-]+$/.test(joined) || joined.replace(/\D/g, '').length < 10) continue;
+      const phone = normalizeNumber(joined);
+      if (phone) return { phone, rest: [...words.slice(0, i), ...words.slice(j)].join(' ') };
+    }
+  }
+  return { phone: null, rest: words.join(' ') };
+}
+
+const MENU_PAYLINK = /^(?:link|pay|paylink|payment link)\s+([a-z0-9]{4,10})(?:\s+(.+))?$/i;
+const MENU_REVIEW = /^(review|reviews|submissions|pending|items to review)\b/i;
+const MENU_DASHBOARD = /^(dashboard|login|log ?in|sign ?in)\b/i;
+const MENU_PASSWORD = /^(password|reset password|forgot password|forgot my password|new password|set password)\b/i;
+// SHARE, or SHARE <code>: the photo and a caption, ready to post elsewhere.
+const MENU_SHARE = /^share(?:\s+([a-z0-9]{4,10}))?\s*[.!]*$/i;
+
+const isBrand = (ctx) => ctx.tenant?.store_type === 'brand';
+
+export function menuMessage(ctx = {}) {
+  const pending = Number.isInteger(ctx.pendingItems) ? ctx.pendingItems : null;
+  const lines = [
+    `👋 Hi${ctx.tenant?.name ? ` ${ctx.tenant.name}` : ''}! Here's what you can do here:`,
+    '',
+    '📸 *Send a photo* to list a new item',
+    '🏪 *STORE* for your store page link',
+  ];
+  if (!isBrand(ctx)) {
+    lines.push(`📥 *REVIEW* for items people sent you${pending ? ` (${pending} waiting)` : ''}`);
+  }
+  lines.push(
+    "💳 *LINK code price number* for a payment link only that buyer can pay (e.g. LINK JBU4PE 30k 08031234567)",
+    '📣 *SHARE code* for a photo and caption to post on Instagram, TikTok or Facebook',
+    '💻 *DASHBOARD* to manage listings, orders and payouts',
+    '🔑 *PASSWORD* for a link to set a new dashboard password',
+    '',
+    'Reply *cancel* any time to stop.'
+  );
+  return lines.join('\n');
+}
+
+export function storeLinkMessage(ctx = {}) {
+  const slug = ctx.tenant?.slug;
+  const link = ctx.origin && slug ? `${ctx.origin}/s/${slug}` : slug ? `/s/${slug}` : null;
+  if (!link) return 'Your store page is not set up yet.';
+  if (ctx.tenant?.status !== 'active') {
+    return `🏪 Your store page will be live here once your store is approved:\n${link}`;
+  }
+  return `🏪 Your store page:\n${link}\n\nShare it anywhere: your bio, your Status, any chat.`;
+}
+
+export function reviewMessage(ctx = {}) {
+  if (isBrand(ctx)) {
+    return "Brand stores list their own stock, so there's nothing to review. Send a photo to list an item.";
+  }
+  const pending = Number.isInteger(ctx.pendingItems) ? ctx.pendingItems : 0;
+  const where = ctx.origin ? `${ctx.origin}/dashboard/submissions` : '/dashboard/submissions';
+  const lines = [
+    pending
+      ? `📥 ${pending} item${pending === 1 ? '' : 's'} waiting for you to review:`
+      : '📥 Nothing waiting for review right now.',
+    where,
+  ];
+  const sell = sellLinkFor(ctx.tenant);
+  if (sell) {
+    lines.push('', 'People can send you items to sell with this link:', sell);
+  }
+  return lines.join('\n');
+}
+
+export function dashboardMessage(ctx = {}) {
+  const where = ctx.origin ? `${ctx.origin}/dashboard` : '/dashboard';
+  return (
+    `💻 Your dashboard:\n${where}\n\nSign in with the email you signed up with.` +
+    '\n\nNo password yet, or forgotten it? Reply *PASSWORD* for a link to set one.'
+  );
+}
+
+// The store's "Sell with us" link: its own number, with SELL typed. Keep the
+// text in step with sellLink() in src/lib/submissions.js.
+export function sellLinkFor(tenant) {
+  const number = String(tenant?.whatsapp_number ?? '').replace(/\D/g, '');
+  if (!number) return null;
+  const text = `SELL — I'd like ${tenant.name ?? 'you'} to sell an item for me`;
+  return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
 }
 
 // Collecting photos, and leaving on the first thing that is not one.
@@ -664,4 +919,14 @@ export function staleness(conversation, ctx) {
   const then = new Date(conversation.updated_at).getTime();
   if (!Number.isFinite(then)) return false;
   return now - then > STALE_AFTER_HOURS * 3_600_000;
+}
+
+// The reply to PASSWORD: a one-time link to set a dashboard password, sent to
+// the store's own WhatsApp number, which is how the store is known here. It
+// opens our /welcome page and is only used when they press Continue there.
+export function passwordLinkMessage({ link, email }) {
+  return (
+    `🔑 Here's your link to set a new dashboard password${email ? ` for ${email}` : ''}:\n${link}\n\n` +
+    "It works once. Open it, press Continue, then choose your password. Don't share it with anyone."
+  );
 }

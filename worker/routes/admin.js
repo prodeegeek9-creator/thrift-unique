@@ -1,12 +1,22 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { approveStore } from '../lib/provision.js';
 import { approvedMessage } from '../lib/bot.js';
-import { sendText } from '../lib/waha.js';
-import { db } from '../lib/supabase.js';
+import { sendText, getSession, phoneFromChatId } from '../lib/waha.js';
+import { TIERS, FLAG_MIN_TIER, planIncludes } from '../lib/plans.js';
+import { normalizeNumber } from '../lib/phone.js';
+import { sendPayout, MAX_ATTEMPTS } from '../lib/transfers.js';
+import { startTrial, ensureInvoice, settleInvoice, priceFor } from '../lib/billing.js';
+import { ownerSay } from './billing.js';
+import { db, SupabaseError } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireOperator, refuse, audit, NotOperator } from '../lib/operator.js';
+import { reconcile } from '../lib/reconcile.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
+import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
+import { generateInvite } from '../lib/accounts.js';
+import { refundOrder, refundPreview, retryRefund, RefundError } from '../lib/refunds.js';
 
 // The platform-operator console's API.
 //
@@ -33,10 +43,23 @@ export async function handleAdmin(request, env, path) {
   const rest = path.slice('/api/admin'.length) || '/';
 
   if (rest === '/me' && method === 'GET') {
-    return json({ level: op.level, email: op.email });
+    return json({ level: op.level, email: op.email, user_id: op.userId });
   }
 
-  if (rest === '/overview' && method === 'GET') return overview(cfg);
+  if (rest === '/team' && method === 'GET') return listTeam(cfg, op);
+  if (rest === '/team' && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return addToTeam(request, cfg, op);
+  }
+  const teamMember = rest.match(/^\/team\/([0-9a-f-]{36})$/i);
+  if (teamMember && method === 'POST') return changeTeam(request, cfg, op, teamMember[1]);
+  const teamLinkFor = rest.match(/^\/team\/([0-9a-f-]{36})\/link$/i);
+  if (teamLinkFor && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return teamLink(cfg, op, teamLinkFor[1]);
+  }
+
+  if (rest === '/overview' && method === 'GET') return overview(cfg, request);
   if (rest === '/tenants' && method === 'GET') return listTenants(cfg);
   if (rest === '/escrow' && method === 'GET') return releaseQueue(cfg);
   if (rest === '/disputes' && method === 'GET') return listDisputes(cfg);
@@ -51,8 +74,40 @@ export async function handleAdmin(request, env, path) {
   const status = rest.match(/^\/tenants\/([0-9a-f-]{36})\/status$/i);
   if (status && method === 'POST') return setStatus(request, cfg, op, status[1]);
 
+  const plan = rest.match(/^\/tenants\/([0-9a-f-]{36})\/plan$/i);
+  if (plan && method === 'POST') return setPlan(request, cfg, op, plan[1]);
+
+  const details = rest.match(/^\/tenants\/([0-9a-f-]{36})\/details$/i);
+  if (details && method === 'POST') return setDetails(request, cfg, op, details[1]);
+
+  const recorded = rest.match(/^\/tenants\/([0-9a-f-]{36})\/billing\/record$/i);
+  if (recorded && method === 'POST') return recordPlanPayment(request, cfg, op, recorded[1]);
+
+  const memberLink = rest.match(/^\/tenants\/([0-9a-f-]{36})\/members\/([0-9a-f-]{36})\/link$/i);
+  if (memberLink && method === 'POST') {
+    cfg.publicOrigin = originOf(request, cfg);
+    return storeMemberLink(cfg, op, memberLink[1], memberLink[2]);
+  }
+
+  const paused = rest.match(/^\/tenants\/([0-9a-f-]{36})\/payouts-paused$/i);
+  if (paused && method === 'POST') return setPayoutsPaused(request, cfg, op, paused[1]);
+
+  const retry = rest.match(/^\/payouts\/([0-9a-f-]{36})\/retry$/i);
+  if (retry && method === 'POST') return retryPayout(cfg, op, retry[1]);
+
   const release = rest.match(/^\/escrow\/([0-9a-f-]{36})\/release$/i);
   if (release && method === 'POST') return forceRelease(request, cfg, op, release[1]);
+
+  if (rest === '/money' && method === 'GET') return moneyProblems(cfg);
+  if (rest === '/reconcile' && method === 'POST') return reconcileNow(cfg, op);
+  const problem = rest.match(/^\/problems\/([0-9a-f-]{36})\/resolve$/i);
+  if (problem && method === 'POST') return resolveProblem(request, cfg, op, problem[1]);
+
+  if (rest === '/refunds' && method === 'GET') return listRefunds(cfg);
+  const refundRetry = rest.match(/^\/refunds\/([0-9a-f-]{36})\/retry$/i);
+  if (refundRetry && method === 'POST') return retryRefundRoute(cfg, op, refundRetry[1]);
+  const orderRefund = rest.match(/^\/orders\/([0-9a-f-]{36})\/refund$/i);
+  if (orderRefund && method === 'POST') return refundFromConsole(request, cfg, op, orderRefund[1]);
 
   const resolve = rest.match(/^\/disputes\/([0-9a-f-]{36})\/resolve$/i);
   if (resolve && method === 'POST') return resolveDispute(request, cfg, op, resolve[1]);
@@ -62,13 +117,18 @@ export async function handleAdmin(request, env, path) {
 
 // ── READS ────────────────────────────────────────────────────────────────────
 
-async function overview(cfg) {
-  const [tenants, orders, held, disputes] = await Promise.all([
-    db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status'),
+async function overview(cfg, request) {
+  const [tenants, orders, held, disputes, platform, owed, problems, refundsFailed] = await Promise.all([
+    db(cfg).select('tenants', 'select=id,tier,status,waha_session,waha_status,billing_status'),
     db(cfg).select('orders', 'status=in.(paid,completed)&select=amount,commission'),
     db(cfg).select('orders', 'escrow_status=eq.held&select=amount,confirm_deadline'),
     db(cfg).select('disputes', 'status=in.(open,under_review)&select=id'),
+    platformHealth(cfg, request),
+    db(cfg).select('payouts', 'status=in.(pending,sending)&select=amount,status,failure_reason,attempts,sent_at'),
+    db(cfg).select('payment_problems', 'resolved_at=is.null&select=kind'),
+    db(cfg).select('refunds', 'status=eq.failed&select=id'),
   ]);
+  const lastRun = await db(cfg).one('reconciliation_runs', 'select=ran_at,error&order=ran_at.desc').catch(() => null);
 
   const gross = sum(orders, (o) => Number(o.amount));
   const now = Date.now();
@@ -77,6 +137,9 @@ async function overview(cfg) {
     tenants: {
       total: tenants.length,
       active: tenants.filter((t) => t.status === 'active').length,
+      awaiting: tenants.filter((t) => t.status === 'onboarding').length,
+      pastDue: tenants.filter((t) => t.status === 'active' && t.billing_status === 'past_due').length,
+      paused: tenants.filter((t) => t.status === 'active' && t.billing_status === 'paused').length,
       byTier: countBy(tenants, (t) => t.tier),
     },
     gmv: gross,
@@ -102,6 +165,28 @@ async function overview(cfg) {
       overdue: held.filter((o) => o.confirm_deadline && new Date(o.confirm_deadline) < now).length,
     },
     openDisputes: disputes.length,
+    platform,
+    // Money the platform owes stores and has not yet got to them. `stuck` is
+    // the number to act on: Paystack refused, or it ran out of attempts.
+    payouts: {
+      owed: owed.length,
+      amount: sum(owed, (p) => Number(p.amount)),
+      stuck: owed.filter(stuckPayout).length,
+    },
+
+    // Money that arrived or was due and did not get where it should (the
+    // console's Money page): a payment nobody can match or apply, a refund
+    // Paystack refused, calls to the Paystack webhook it did not sign.
+    money: {
+      unmatched: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)).length,
+      transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)).length,
+      refundsFailed: refundsFailed.length,
+      badSignatureDays: problems.filter((p) => p.kind === 'bad_signature').length,
+      // When the books were last checked against Paystack. Older than a day
+      // and a bit means the daily check has stopped running.
+      lastCheckAt: lastRun?.ran_at ?? null,
+      lastCheckFailed: Boolean(lastRun?.error),
+    },
 
     // WhatsApp, across the platform.
     //
@@ -120,11 +205,70 @@ async function overview(cfg) {
   });
 }
 
+// The platform number, which every store signs up and lists through. Two
+// views of it, because either can be wrong while the other looks fine:
+//
+//   what WAHA says    the session's state, the number it is logged in as,
+//                     and where it sends messages
+//   what we saw       when a webhook last actually reached this Worker
+//
+// WAHA can say WORKING while every message it sends is turned away before
+// the Worker runs; only the second view shows that.
+async function platformHealth(cfg, request) {
+  const session = cfg.wahaSession || null;
+  const out = {
+    session,
+    configured: Boolean(cfg.wahaUrl && session),
+    status: null,
+    number: null,
+    name: null,
+    webhooks: [],
+    expectedWebhook: null,
+    webhookOk: null,
+    lastEventAt: null,
+    lastMessageAt: null,
+    error: null,
+  };
+  if (!out.configured) return out;
+
+  const origin = originOf(request, cfg);
+  out.expectedWebhook = origin ? `${origin}/api/waha/webhook` : null;
+
+  const [live, activity] = await Promise.all([
+    withTimeout(getSession(cfg, session), 5000).catch((err) => ({ error: err?.message ?? 'unreachable' })),
+    db(cfg).one('webhook_activity', `session=eq.${encodeURIComponent(session)}&select=${COLUMNS.webhook_activity}`).catch(() => null),
+  ]);
+
+  if (live?.error) {
+    out.status = 'UNREACHABLE';
+    out.error = String(live.error).slice(0, 200);
+  } else if (!live) {
+    out.status = 'MISSING';
+  } else {
+    out.status = live.status ?? null;
+    out.number = phoneFromChatId(live.me?.id) ?? null;
+    out.name = live.me?.pushName ?? null;
+    out.webhooks = (live.config?.webhooks ?? []).map((w) => w.url).filter(Boolean);
+    out.webhookOk = out.expectedWebhook ? out.webhooks.includes(out.expectedWebhook) : null;
+  }
+
+  out.lastEventAt = activity?.last_event_at ?? null;
+  out.lastMessageAt = activity?.last_message_at ?? null;
+  return out;
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer in ${ms / 1000}s`)), ms)),
+  ]);
+}
+
 async function listTenants(cfg) {
   const tenants = await db(cfg).select(
     'tenants',
     'select=id,slug,name,tier,status,commission_pct,whatsapp_number,waha_session,' +
-      'waha_status,created_at' +
+      'waha_status,store_type,category,billing_status,paid_until,plan_price,created_at' +
       '&order=created_at.desc&limit=200'
   );
 
@@ -143,11 +287,41 @@ async function listTenants(cfg) {
 }
 
 async function tenantView(cfg, tenantId) {
-  const [tenant, flags, members, orders] = await Promise.all([
-    db(cfg).one('tenants', `id=eq.${tenantId}&select=*`),
+  const [tenant, flags, members, orders, products, submissions, payoutAccount, payouts, planInvoices] = await Promise.all([
+    db(cfg).one('tenants', `id=eq.${tenantId}&select=${COLUMNS.tenant}`),
     db(cfg).select('tenant_features', `tenant_id=eq.${tenantId}&select=flag,enabled&order=flag.asc`),
-    db(cfg).select('tenant_members', `tenant_id=eq.${tenantId}&select=user_id,role,created_at`),
+    db(cfg).select(
+      'tenant_members',
+      `tenant_id=eq.${tenantId}&select=user_id,role,email,display_name,accepted_at,created_at`
+    ),
     db(cfg).select('orders', `tenant_id=eq.${tenantId}&select=amount,commission,status,escrow_status`),
+    // What the store has up, and what is waiting on it. Capped: this is a look
+    // inside, not a second copy of the store's own dashboard.
+    db(cfg).select(
+      'products',
+      `tenant_id=eq.${tenantId}&select=id,public_code,title,price,status,images,created_at` +
+        '&order=created_at.desc&limit=500'
+    ),
+    db(cfg).select(
+      'submissions',
+      `tenant_id=eq.${tenantId}&select=id,title,asking_price,seller_name,status,images,created_at` +
+        '&order=created_at.desc&limit=200'
+    ),
+    // Never the recipient code: it is what a transfer is sent with.
+    db(cfg).one(
+      'payout_accounts',
+      `tenant_id=eq.${tenantId}&select=bank_name,account_last4,account_name,updated_at`
+    ),
+    db(cfg).select(
+      'payouts',
+      `tenant_id=eq.${tenantId}&select=id,amount,commission,status,reference,failure_reason,attempts,sent_at,paid_at,created_at` +
+        '&order=created_at.desc&limit=20'
+    ),
+    db(cfg).select(
+      'plan_invoices',
+      `tenant_id=eq.${tenantId}&select=id,tier,amount,period_start,period_end,status,paid_at,paid_via` +
+        '&order=period_start.desc&limit=12'
+    ),
   ]);
 
   if (!tenant) return json({ error: 'No such tenant' }, 404);
@@ -166,11 +340,37 @@ async function tenantView(cfg, tenantId) {
         )
       : null;
 
+  // Who the owner is: the name, phone and address their account was made
+  // with (migration 0037). For a store waiting on approval, that's the
+  // account its sign-up email belongs to, if one exists yet: a web sign-up
+  // does, a WhatsApp one gets its account when approved.
+  const ownerId =
+    members.find((m) => m.role === 'owner')?.user_id ??
+    (signup?.email ? await db(cfg).rpc('user_id_for_email', { addr: signup.email }) : null);
+  const owner =
+    typeof ownerId === 'string'
+      ? await db(cfg).one('account_profiles', `user_id=eq.${ownerId}&select=${COLUMNS.account_profile}`)
+      : null;
+
+  const countStatus = (rows) => countBy(rows, (r) => r.status);
+
   return json({
     tenant,
     signup,
+    owner,
     flags,
     members,
+    listings: {
+      counts: countStatus(products),
+      recent: products.slice(0, 24),
+    },
+    payoutAccount,
+    payouts,
+    billing: { price: priceFor(tenant), invoices: planInvoices },
+    submissions: {
+      counts: countStatus(submissions),
+      pending: submissions.filter((x) => x.status === 'pending').slice(0, 20),
+    },
     stats: {
       orders: orders.length,
       gmv: sum(orders.filter((o) => ['paid', 'completed'].includes(o.status)), (o) => Number(o.amount)),
@@ -250,6 +450,194 @@ async function setFlag(request, cfg, op, tenantId) {
   return json({ ok: true, flag, enabled });
 }
 
+// Moving a store to another plan, and what it pays.
+//
+// The features are reset to the new plan's: this is the deliberate "move
+// between tiers" operation seed_tenant_features() leaves to somebody else, so
+// an override set by hand is replaced. Flags can be adjusted again after.
+async function setPlan(request, cfg, op, tenantId) {
+  const body = await request.json().catch(() => ({}));
+  const tier = body?.tier;
+  const commission = Number(body?.commission_pct);
+  // The monthly fee: undefined leaves it, null goes back to the plan's price,
+  // a number (0 for free) is a price agreed with this store.
+  let planPrice;
+  if (body?.plan_price === null || body?.plan_price === '') planPrice = null;
+  else if (body?.plan_price !== undefined) {
+    planPrice = Number(body.plan_price);
+    if (!Number.isFinite(planPrice) || planPrice < 0 || planPrice > 10_000_000) {
+      return json({ error: 'The plan fee is an amount in naira, 0 for free.' }, 400);
+    }
+  }
+
+  if (!TIERS.includes(tier)) return json({ error: 'Pick a plan.' }, 400);
+  if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
+    return json({ error: 'Commission is a percentage between 0 and 100.' }, 400);
+  }
+  const pct = Math.round(commission * 100) / 100;
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,tier,commission_pct,plan_price`);
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+
+  await db(cfg).update(
+    'tenants',
+    `id=eq.${tenantId}`,
+    { tier, commission_pct: pct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
+    { returning: false }
+  );
+
+  for (const flag of Object.keys(FLAG_MIN_TIER)) {
+    await db(cfg).insert(
+      'tenant_features',
+      { tenant_id: tenantId, flag, enabled: planIncludes(tier, flag) },
+      { onConflict: 'tenant_id,flag', merge: true, returning: false }
+    );
+  }
+
+  await audit(cfg, op.userId, 'tenant.plan', {
+    tenantId,
+    detail: {
+      from: { tier: tenant.tier, commission_pct: Number(tenant.commission_pct), plan_price: tenant.plan_price ?? null },
+      to: { tier, commission_pct: pct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
+    },
+  });
+
+  return json({ ok: true, tier, commission_pct: pct });
+}
+
+// A plan fee paid some other way (a transfer to the platform's account, cash):
+// the operator records it, which settles the month and restores a paused
+// store, exactly as a Paystack payment would.
+async function recordPlanPayment(request, cfg, op, tenantId) {
+  const { note } = await request.json().catch(() => ({}));
+  const tenant = await db(cfg).one(
+    'tenants',
+    `id=eq.${tenantId}&select=id,slug,name,tier,status,whatsapp_number,billing_status,paid_until,plan_price,auto_renew`
+  );
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+  if (!priceFor(tenant)) return json({ error: 'This store pays no plan fee.' }, 409);
+  if (!tenant.paid_until) return json({ error: 'This store has not been approved yet.' }, 409);
+
+  const invoice = await ensureInvoice(cfg, tenant, { force: true });
+  const result = await settleInvoice(cfg, invoice, { via: 'manual', say: ownerSay(cfg) });
+  await audit(cfg, op.userId, 'billing.record', {
+    tenantId,
+    subject: invoice.payment_ref,
+    detail: { amount: Number(invoice.amount), period_end: invoice.period_end, note: note ?? null },
+  });
+  return json({ ok: result.settled, paid_until: result.paidUntil ?? null });
+}
+
+// Holding a store's payouts: they keep accruing, and wait. Released by
+// unpausing, which also sends what is owed.
+async function setPayoutsPaused(request, cfg, op, tenantId) {
+  const { paused } = await request.json().catch(() => ({}));
+  if (typeof paused !== 'boolean') return json({ error: 'Need { paused }' }, 400);
+
+  const rows = await db(cfg).update('tenants', `id=eq.${tenantId}`, { payouts_paused: paused });
+  if (!rows.length) return json({ error: 'No such tenant' }, 404);
+
+  await audit(cfg, op.userId, paused ? 'payouts.pause' : 'payouts.resume', { tenantId });
+
+  let sent = 0;
+  if (!paused) {
+    const pending = await db(cfg).select(
+      'payouts',
+      `tenant_id=eq.${tenantId}&status=eq.pending&select=${COLUMNS.payout}&order=created_at.asc&limit=100`
+    );
+    for (const p of pending) if ((await sendPayout(cfg, p).catch(() => null)) === 'sent') sent += 1;
+  }
+  return json({ ok: true, paused, sent });
+}
+
+// One more go at a payout that is stuck: Paystack refused it, or it used up
+// its attempts. The attempt count starts again.
+async function retryPayout(cfg, op, payoutId) {
+  const payout = await db(cfg).one('payouts', `id=eq.${payoutId}&select=${COLUMNS.payout}`);
+  if (!payout) return json({ error: 'No such payout' }, 404);
+  if (payout.status !== 'pending') return json({ error: `This payout is ${payout.status}, not waiting.` }, 409);
+
+  await db(cfg).update('payouts', `id=eq.${payoutId}`, { attempts: 0 }, { returning: false });
+  const result = await sendPayout(cfg, { ...payout, attempts: 0 });
+
+  await audit(cfg, op.userId, 'payouts.retry', {
+    tenantId: payout.tenant_id,
+    subject: payout.reference,
+    detail: { result },
+  });
+  return json({ ok: result === 'sent', result });
+}
+
+const STORE_TYPES = ['consignment', 'brand'];
+const CATEGORIES = ['thrift', 'fashion', 'bags-shoes', 'beauty', 'gadgets', 'home', 'other'];
+
+// Correcting a store's details: its name, number, type and category. The slug
+// stays: it is inside every link the store has already shared.
+async function setDetails(request, cfg, op, tenantId) {
+  const body = await request.json().catch(() => ({}));
+
+  const tenant = await db(cfg).one(
+    'tenants',
+    `id=eq.${tenantId}&select=id,name,status,whatsapp_number,store_type,category`
+  );
+  if (!tenant) return json({ error: 'No such tenant' }, 404);
+
+  const patch = {};
+
+  if (body.name !== undefined) {
+    const name = String(body.name ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 60) return json({ error: 'A name is 2 to 60 characters.' }, 400);
+    patch.name = name;
+  }
+
+  if (body.whatsapp_number !== undefined) {
+    const number = normalizeNumber(body.whatsapp_number);
+    if (number === undefined) {
+      return json({ error: "That isn't a WhatsApp number. Use e.g. 08012345678 or 2348012345678." }, 400);
+    }
+    patch.whatsapp_number = number;
+  }
+
+  if (body.store_type !== undefined) {
+    if (body.store_type !== null && !STORE_TYPES.includes(body.store_type)) {
+      return json({ error: 'Bad store type' }, 400);
+    }
+    patch.store_type = body.store_type;
+  }
+
+  if (body.category !== undefined) {
+    if (body.category !== null && !CATEGORIES.includes(body.category)) {
+      return json({ error: 'Bad category' }, 400);
+    }
+    patch.category = body.category;
+  }
+
+  if (!Object.keys(patch).length) return json({ error: 'Nothing to change.' }, 400);
+
+  try {
+    await db(cfg).update('tenants', `id=eq.${tenantId}`, patch, { returning: false });
+  } catch (err) {
+    if (err instanceof SupabaseError && err.status === 409) {
+      return json({ error: 'That number already belongs to another store.' }, 409);
+    }
+    throw err;
+  }
+
+  // A store still waiting for approval finds its sign-up by number, which is
+  // how approval knows whom to create and where to send the news.
+  const moved = patch.whatsapp_number && patch.whatsapp_number !== tenant.whatsapp_number;
+  if (moved && tenant.status === 'onboarding' && tenant.whatsapp_number) {
+    await db(cfg)
+      .update('signups', `phone=eq.${tenant.whatsapp_number}`, { phone: patch.whatsapp_number }, { returning: false })
+      .catch((err) => console.warn('signup not moved:', err?.message ?? err));
+  }
+
+  const from = Object.fromEntries(Object.keys(patch).map((k) => [k, tenant[k] ?? null]));
+  await audit(cfg, op.userId, 'tenant.details', { tenantId, detail: { from, to: patch } });
+
+  return json({ ok: true, ...patch });
+}
+
 async function setStatus(request, cfg, op, tenantId) {
   const { status } = await request.json().catch(() => ({}));
   if (!['onboarding', 'active', 'suspended'].includes(status)) {
@@ -277,6 +665,9 @@ async function setStatus(request, cfg, op, tenantId) {
   }
 
   await db(cfg).update('tenants', `id=eq.${tenantId}`, { status }, { returning: false });
+
+  // Approval starts the free period (once; see startTrial).
+  if (approval) await startTrial(cfg, tenantId).catch((err) => console.error('trial not started:', err?.message ?? err));
 
   let notified = null;
   if (approval) {
@@ -374,7 +765,7 @@ async function resolveDispute(request, cfg, op, disputeId) {
 
   const order = await db(cfg).one(
     'orders',
-    `id=eq.${dispute.order_id}&select=id,tenant_id,order_code,amount,commission,escrow_status,confirmed_at,payment_ref`
+    `id=eq.${dispute.order_id}&select=id,tenant_id,order_code,product_id,buyer_id,amount,commission,status,escrow_status,confirmed_at,payment_ref,paid_at`
   );
 
   let moved = null;
@@ -384,20 +775,25 @@ async function resolveDispute(request, cfg, op, disputeId) {
     moved = released ? 'released' : null;
   }
 
-  if (outcome === 'refunded' && order?.escrow_status === 'held') {
-    // Only the hold is reversed here. Returning the money to the buyer's card
-    // is a Paystack refund and deliberately NOT fired automatically from a
-    // console click — a refund is irreversible and belongs behind its own
-    // deliberate step. The state change records the decision; the transfer is
-    // made against payment_ref, which is carried in the audit row so whoever
-    // does it has the reference to hand.
-    await db(cfg).update(
-      'orders',
-      `id=eq.${order.id}&escrow_status=eq.held`,
-      { escrow_status: 'refunded', status: 'refunded' },
-      { returning: false }
-    );
-    moved = 'refunded';
+  // A refund goes back to the buyer's card through Paystack (lib/refunds.js),
+  // and only while Vendwyze still holds the payment. Once it has been released
+  // to the store, deciding for the buyer records the decision and the store
+  // and buyer settle it between them. Moving money that cannot be pulled back
+  // takes an owner.
+  if (outcome === 'refunded' && order && order.status !== 'refunded') {
+    const preview = await refundPreview(cfg, order);
+    if (!preview.refundable) {
+      moved = 'recorded';
+    } else {
+      if (op.level !== 'owner') return json({ error: 'A refund needs an owner on the admin team.' }, 403);
+      try {
+        const refund = await refundOrder(cfg, order, { reason: resolution ?? 'Dispute resolved for the buyer', via: 'dispute', by: op.userId });
+        moved = refund.status === 'failed' ? 'refund_failed' : 'refunded';
+      } catch (err) {
+        if (err instanceof RefundError) return json({ error: err.message }, err.status);
+        throw err;
+      }
+    }
   }
 
   await db(cfg).update(
@@ -423,6 +819,166 @@ async function resolveDispute(request, cfg, op, disputeId) {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// POST /api/admin/tenants/:id/members/:userId/link
+//
+// A fresh set-password link for somebody on a store's team: an invitation that
+// never worked, or a forgotten password. Shown to copy or send; it lands on
+// /welcome, which only redeems it when they press Continue.
+async function storeMemberLink(cfg, op, tenantId, userId) {
+  const member = await db(cfg).one(
+    'tenant_members',
+    `tenant_id=eq.${tenantId}&user_id=eq.${userId}&select=user_id,email,role`
+  );
+  if (!member) return json({ error: 'Not on this store’s team.' }, 404);
+  if (!member.email) return json({ error: 'No email on file for them.' }, 409);
+
+  let link = null;
+  try {
+    ({ link } = await generateInvite(cfg, member.email, { type: 'recovery', origin: cfg.publicOrigin ?? null, landing: '/welcome' }));
+  } catch (err) {
+    console.error('member link failed:', err?.message ?? err);
+  }
+  if (!link) return json({ error: 'Could not make a link just now. Try again shortly.' }, 502);
+
+  await audit(cfg, op.userId, 'member.link', { tenantId, subject: member.email, detail: { role: member.role } });
+  return json({ ok: true, link });
+}
+
+// ── REFUNDS ──────────────────────────────────────────────────────────────────
+
+// Payment problems by what they are about: money coming in, or money going
+// out to stores (lib/problems.js, lib/reconcile.js).
+const PAYMENT_KINDS = ['unmatched_payment', 'unsettled_payment', 'amount_mismatch', 'missing_payment'];
+const TRANSFER_KINDS = ['payout_mismatch', 'unknown_transfer'];
+
+// A payout the platform owes and is not getting to the store: Paystack
+// refused it, it ran out of attempts, or it went to Paystack over a day ago
+// and Paystack never said it arrived.
+const SENDING_TOO_LONG_MS = 86_400_000;
+function stuckPayout(p) {
+  if (p.status === 'pending') return Boolean(p.failure_reason) || p.attempts >= MAX_ATTEMPTS;
+  if (p.status === 'sending') return Boolean(p.sent_at) && Date.now() - new Date(p.sent_at).getTime() > SENDING_TOO_LONG_MS;
+  return false;
+}
+
+// GET /api/admin/money: everything about money that needs a person, in one
+// place. Failed payouts and refunds are read from their own rows; payments
+// nobody could match, and webhooks Paystack did not sign, from
+// payment_problems (lib/problems.js).
+async function moneyProblems(cfg) {
+  const [problems, payouts, refunds, lastRun] = await Promise.all([
+    db(cfg).select(
+      'payment_problems',
+      'resolved_at=is.null&select=id,kind,reference,amount,detail,first_seen,last_seen&order=last_seen.desc&limit=200'
+    ),
+    db(cfg).select(
+      'payouts',
+      'status=in.(pending,sending)&select=id,tenant_id,amount,status,reference,failure_reason,attempts,sent_at,created_at' +
+        '&order=created_at.asc&limit=500'
+    ),
+    db(cfg).select(
+      'refunds',
+      'status=eq.failed&select=id,tenant_id,paid,amount,platform_fee,reason,failure_reason,requested_via,created_at,' +
+        'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
+    ),
+    db(cfg).one('reconciliation_runs', `select=${COLUMNS.reconciliation_run}&order=ran_at.desc`),
+  ]);
+  const stuck = payouts.filter(stuckPayout);
+  const names = await tenantNames(cfg, [...stuck, ...refunds].map((r) => r.tenant_id));
+  const named = (r) => ({ ...r, tenant_name: names[r.tenant_id] ?? null });
+
+  return json({
+    payments: problems.filter((p) => PAYMENT_KINDS.includes(p.kind)),
+    transfers: problems.filter((p) => TRANSFER_KINDS.includes(p.kind)),
+    badSignatures: problems.filter((p) => p.kind === 'bad_signature'),
+    payouts: stuck.map(named),
+    refunds: refunds.map(named),
+    // The last daily check against Paystack (lib/reconcile.js).
+    lastRun: lastRun ?? null,
+  });
+}
+
+// POST /api/admin/reconcile: the daily check, now. Settles what Paystack's
+// record settles, like the scheduled run, so it is an owner's, and audited.
+async function reconcileNow(cfg, op) {
+  if (!cfg.paystackKey) return json({ error: 'Paystack is not set up on the platform yet.' }, 503);
+  const run = await reconcile(cfg);
+  await audit(cfg, op.userId, 'reconcile.run', {
+    detail: { payments: run.payments, transfers: run.transfers, settled_late: run.settled_late, problems: run.problems, error: run.error },
+  });
+  return json({ ok: !run.error, run });
+}
+
+// POST /api/admin/problems/:id/resolve { note }: an owner has dealt with it
+// (found the order, refunded the payment by hand, fixed the key) and says how.
+async function resolveProblem(request, cfg, op, problemId) {
+  const body = await request.json().catch(() => ({}));
+  const note = String(body?.note ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+  if (note.length < 3) return json({ error: 'Say what was done about it.' }, 400);
+
+  const rows = await db(cfg).update(
+    'payment_problems',
+    `id=eq.${problemId}&resolved_at=is.null`,
+    { resolved_at: new Date().toISOString(), resolved_by: op.userId, resolution: note }
+  );
+  if (!rows.length) return json({ error: 'Already sorted, or no such problem.' }, 409);
+
+  await audit(cfg, op.userId, 'problem.resolve', {
+    subject: rows[0].reference ?? rows[0].key,
+    detail: { kind: rows[0].kind, amount: rows[0].amount, note },
+  });
+  return json({ ok: true });
+}
+
+async function listRefunds(cfg) {
+  const rows = await db(cfg).select(
+    'refunds',
+    'select=id,tenant_id,order_id,paid,fee,platform_fee,amount,reason,status,failure_reason,requested_via,created_at,processed_at,' +
+      'order:orders(order_code,payment_ref)&order=created_at.desc&limit=200'
+  );
+  const names = await tenantNames(cfg, rows.map((r) => r.tenant_id));
+  return json(rows.map((r) => ({ ...r, tenant_name: names[r.tenant_id] ?? null })));
+}
+
+async function retryRefundRoute(cfg, op, refundId) {
+  try {
+    const refund = await retryRefund(cfg, refundId);
+    await audit(cfg, op.userId, 'refund.retry', { tenantId: refund.tenant_id, subject: refundId, detail: { status: refund.status } });
+    return json({ ok: true, status: refund.status, failure_reason: refund.failure_reason ?? null });
+  } catch (err) {
+    if (err instanceof RefundError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
+// POST /api/admin/orders/:id/refund { reason, relist? }: from the release
+// queue, for a held payment that should go back to the buyer rather than on
+// to the store.
+async function refundFromConsole(request, cfg, op, orderId) {
+  const body = await request.json().catch(() => ({}));
+  const reason = String(body?.reason ?? '').trim();
+  if (!reason) return json({ error: 'Say why, for the audit log and the buyer.' }, 400);
+
+  const order = await db(cfg).one(
+    'orders',
+    `id=eq.${orderId}&select=id,tenant_id,order_code,product_id,buyer_id,amount,status,escrow_status,payment_ref,paid_at`
+  );
+  if (!order) return json({ error: 'No such order' }, 404);
+
+  try {
+    const refund = await refundOrder(cfg, order, { reason, via: 'operator', by: op.userId, relist: body?.relist === true });
+    await audit(cfg, op.userId, 'refund.create', {
+      tenantId: order.tenant_id,
+      subject: order.order_code,
+      detail: { paid: refund.paid, fee: refund.fee, amount: refund.amount, status: refund.status, reason },
+    });
+    return json({ ok: true, status: refund.status, amount: refund.amount, fee: refund.fee });
+  } catch (err) {
+    if (err instanceof RefundError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
 
 async function tenantNames(cfg, ids) {
   const unique = [...new Set(ids.filter(Boolean))];

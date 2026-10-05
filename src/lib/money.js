@@ -20,6 +20,23 @@ export function formatNaira(amount) {
   return NGN.format(Math.round(Number(amount)));
 }
 
+// A price as a seller types it: "35000", "35,000", "₦35000", "35k", "1.5m".
+// The same rules as the WhatsApp bot's parsePrice(), so the form and the bot
+// accept the same things. Null for anything that is not a sensible price.
+export function parseNaira(text) {
+  const raw = String(text ?? '')
+    .toLowerCase()
+    .replace(/[₦,\s]/g, '')
+    .replace(/^(ngn|naira)/, '');
+  const m = /^(\d+(?:\.\d{1,2})?)(k|m)?$/.exec(raw);
+  if (!m) return null;
+  let n = Number(m[1]);
+  if (m[2] === 'k') n *= 1_000;
+  if (m[2] === 'm') n *= 1_000_000;
+  if (!Number.isFinite(n) || n <= 0 || n > 100_000_000) return null;
+  return Math.round(n * 100) / 100;
+}
+
 // For stat tiles, where ₦1,284,000 needs to fit beside two others.
 export function formatCompact(amount) {
   if (amount == null || Number.isNaN(Number(amount))) return '—';

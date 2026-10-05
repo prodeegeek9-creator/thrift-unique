@@ -3,6 +3,7 @@ import PageHeader from '../../components/ui/PageHeader.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import TierBadge from '../../components/ui/TierBadge.jsx';
 import WhatsappLink from '../../components/WhatsappLink.jsx';
+import BotHolds from '../../components/BotHolds.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
 import { fetchChannels, whatsappState } from '../../lib/channels.js';
 import { keys } from '../../lib/queryKeys.js';
@@ -32,11 +33,12 @@ export default function Channels() {
 
       {/* First, above everything: on Starter this is the only channel there
           is, and on every tier it is the one that can break silently. */}
-      <div className="mb-4">
+      <div className="mb-4 space-y-4">
         <WhatsappLink />
+        <BotHolds />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card divide-y divide-line">
           <h2 className="px-4 py-3 text-sm font-semibold text-ink">Your connected channels</h2>
 

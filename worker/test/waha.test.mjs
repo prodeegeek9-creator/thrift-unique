@@ -87,6 +87,12 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
       return new Response('{}', { status: 200 });
     }
 
+    if (path === '/api/sendImage') {
+      sent.push({ ...body, image: body.file?.url });
+      events.push({ sent: body.chatId });
+      return new Response(JSON.stringify({ id: { id: `out-${sent.length}` } }), { status: 200 });
+    }
+
     if (path === '/api/sendText') {
       sent.push(body);
       events.push({ sent: body.chatId });
@@ -308,7 +314,7 @@ test('a business opens a store over WhatsApp, and it waits for approval', async 
     // The acceptance the whole commercial relationship rests on: when, and
     // which wording.
     assert.ok(store.disclaimer_accepted_at);
-    assert.equal(store.disclaimer_version, 'commission-v1');
+    assert.equal(store.disclaimer_version, 'terms-v3');
 
     const seeded = supabase.calls.find((c) => c.rpc === 'seed_tenant_features');
     assert.deepEqual(seeded?.args, { target: store.id, plan: 'growth' });
@@ -324,7 +330,8 @@ test('a business opens a store over WhatsApp, and it waits for approval', async 
     const said = waha.sent.map((m) => m.text);
     assert.match(said[1], /business name/i);
     assert.ok(said.some((t) => /doesn't look like an email/i.test(t)));
-    assert.match(said.at(-2), /commission terms/i);
+    assert.match(said.at(-2), /our terms/i);
+    assert.match(said.at(-2), /₦25,000 a month/);
     assert.match(said.at(-1), /reviewing your store/i);
     assert.ok(waha.sent.every((m) => m.chatId === NEWCOMER_CHAT));
   } finally {
@@ -822,7 +829,7 @@ test('an owner links a session, and the webhook it registers carries a secret', 
     assert.equal(res.status, 200);
     assert.equal(waha.created.length, 1);
     assert.equal(waha.created[0].name, 'ut-store');
-    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message', 'session.status']);
+    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status']);
     assert.equal(
       waha.created[0].config.webhooks[0].url,
       'https://uniquethrift.ng/api/waha/webhook'
@@ -1081,7 +1088,9 @@ test("somebody offers an item on the store's own number, and it waits for review
     const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
     assert.ok(toSeller.length >= 7);
     assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
-    assert.match(toSeller.at(-1).text, /Sent!/);
+    assert.match(toSeller.at(-2).text, /Sent!/);
+    // Then, since it's their first item: where to pay them, with the rules.
+    assert.match(toSeller.at(-1).text, /bank\* and \*account number[\s\S]*2 times in 6 months[\s\S]*same name/);
 
     // And the owner heard about it on the platform number.
     const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
@@ -1315,4 +1324,393 @@ test('a store whose WhatsApp is unlinked can still decide, and is told the selle
   } finally {
     restore();
   }
+});
+
+// ── POSTING TO STATUS FROM THE DASHBOARD ─────────────────────────────────────
+
+function statusCall(token, body) {
+  return new Request('https://uniquethrift.ng/api/listings/status', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+const LISTING = {
+  id: 'dddddddd-0000-0000-0000-00000000000d',
+  tenant_id: TENANT,
+  public_code: 'AB12CD',
+  title: 'Linen shirt',
+  price: 9500,
+  condition: 'good',
+  images: [`${TENANT}/shirt.jpg`],
+  status: 'active',
+};
+
+test('a listing added in the dashboard can be posted to Status, and the post is recorded', async () => {
+  const supabase = makeFakeSupabase({ ...storeSeed(), products: [LISTING] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(statusCall('tok-staff', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(res.status, 200);
+
+    assert.equal(waha.statuses.length, 1);
+    assert.equal(waha.statuses[0].session, STORE_SESSION);
+    assert.match(waha.statuses[0].caption, /Linen shirt/);
+    assert.match(waha.statuses[0].caption, /\/p\/AB12CD/);
+
+    const row = supabase.tables.listing_channel_posts[0];
+    assert.equal(row.product_id, LISTING.id);
+    assert.equal(row.channel, 'whatsapp');
+    assert.equal(row.status, 'posted');
+
+    // Posting again updates the same row rather than adding one.
+    await worker.fetch(statusCall('tok-owner', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(supabase.tables.listing_channel_posts.length, 1);
+    assert.equal(waha.statuses.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('posting to Status says why it cannot, and posts nothing', async () => {
+  const cases = [
+    [{ tenant: { waha_status: 'FAILED' } }, /Link your WhatsApp/],
+    [{ tenant: { status: 'onboarding' } }, /waiting for approval/],
+    [{ product: { status: 'sold' } }, /Only live listings/],
+    [{ product: { images: [] } }, /Add a photo/],
+  ];
+
+  for (const [change, message] of cases) {
+    const supabase = makeFakeSupabase({
+      ...storeSeed(change.tenant ?? {}),
+      products: [{ ...LISTING, ...(change.product ?? {}) }],
+    });
+    const waha = makeFakeWaha();
+    const restore = installFetch({ supabase, waha, tokens: TOKENS });
+    try {
+      const res = await worker.fetch(statusCall('tok-owner', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+      assert.equal(res.status, 409, String(message));
+      assert.match((await res.json()).error, message);
+      assert.equal(waha.statuses.length, 0);
+    } finally {
+      restore();
+    }
+  }
+
+  const supabase = makeFakeSupabase({ ...storeSeed(), products: [LISTING] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    const res = await worker.fetch(statusCall('tok-stranger', { tenant: TENANT, id: LISTING.id }), wahaEnv(), {});
+    assert.equal(res.status, 403);
+    assert.equal(waha.statuses.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("a bot listing's Status post lights its WhatsApp icon too", async () => {
+  const supabase = makeFakeSupabase(storeSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/jacket.jpg` }),
+        incoming('Jacket'),
+        incoming('35k'),
+        incoming('3'),
+        incoming('yes'),
+      ],
+      wahaEnv()
+    );
+    const product = supabase.tables.products[0];
+    const row = supabase.tables.listing_channel_posts.find((r) => r.product_id === product.id);
+    assert.equal(row?.status, 'posted');
+  } finally {
+    restore();
+  }
+});
+
+test('an owner saying hi gets the menu, with the items waiting for them', async () => {
+  const supabase = makeFakeSupabase({ ...seed(), submissions: [queued(), queued({ id: 'x2', status: 'approved' })] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('hi')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].session, PLATFORM);
+    assert.match(waha.sent[0].text, /Hi Thrift Store!/);
+    assert.match(waha.sent[0].text, /\(1 waiting\)/);
+  } finally {
+    restore();
+  }
+});
+
+// PASSWORD: a new set-password link for the owner, sent back to the store's
+// own number, pointing at our welcome page rather than Supabase's one-time
+// link (WAHA fetches every URL it sends for a preview, which would spend it).
+test('an owner who replies PASSWORD gets a fresh set-password link for their own account', async () => {
+  const supabase = makeFakeSupabase({
+    ...seed(),
+    tenant_members: [
+      { tenant_id: TENANT, user_id: OWNER.id, role: 'owner', email: 'owner@store.test', invited_at: '2026-09-01T00:00:00Z' },
+      { tenant_id: TENANT, user_id: STAFF.id, role: 'staff', email: 'staff@store.test', invited_at: '2026-09-02T00:00:00Z' },
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const routed = globalThis.fetch;
+  const generated = [];
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/auth/v1/admin/generate_link')) {
+      const body = JSON.parse(init.body);
+      generated.push({ ...body, url });
+      return new Response(
+        JSON.stringify({
+          user: { id: OWNER.id, email: body.email },
+          properties: { action_link: 'https://x.supabase.co/auth/v1/verify?token=t', hashed_token: 'hashed-t', verification_type: body.type },
+        }),
+        { status: 200 }
+      );
+    }
+    return routed(input, init);
+  };
+  try {
+    await converse([incoming('PASSWORD')], wahaEnv());
+    assert.equal(generated.length, 1);
+    assert.equal(generated[0].type, 'recovery');
+    assert.equal(generated[0].email, 'owner@store.test');
+
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].chatId, SELLER_CHAT);
+    assert.match(waha.sent[0].text, /https:\/\/uniquethrift\.ng\/welcome#token_hash=hashed-t&type=recovery/);
+    assert.doesNotMatch(waha.sent[0].text, /auth\/v1\/verify/);
+  } finally {
+    globalThis.fetch = routed;
+    restore();
+  }
+});
+
+test('PASSWORD before approval explains there is no account yet', async () => {
+  const supabase = makeFakeSupabase({ ...seed({ tenant: { status: 'onboarding' } }), tenant_members: [] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('forgot password')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.match(waha.sent[0].text, /created when your store is approved/);
+  } finally {
+    restore();
+  }
+});
+
+test('every webhook that gets through records when WhatsApp last reached us', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('hi')], wahaEnv());
+    const row = supabase.tables.webhook_activity.find((r) => r.session === PLATFORM);
+    assert.ok(row?.last_message_at, 'message time recorded');
+
+    await worker.fetch(hook({ event: 'session.status', session: PLATFORM, payload: { status: 'FAILED' } }), wahaEnv(), {});
+    assert.equal(supabase.tables.webhook_activity.length, 1);
+    assert.equal(row.last_status, 'FAILED');
+    // A status event keeps the last message time.
+    assert.ok(row.last_message_at);
+
+    // A refused webhook is not activity.
+    await worker.fetch(hook(incoming('hi', { session: 'ut-nobody' }), { secret: 'wrong' }), wahaEnv(), {});
+    assert.equal(supabase.tables.webhook_activity.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+// SHARE: the photos and a caption for Instagram, TikTok or Facebook, sent
+// back to the owner on the platform number.
+test('SHARE sends the latest item\'s photos and a caption with its link; SHARE <code> picks the item', async () => {
+  const supabase = makeFakeSupabase({
+    ...seed(),
+    products: [
+      { id: 'p-old', tenant_id: TENANT, public_code: 'OLD001', title: 'Denim jacket', price: 18000, condition: 'good', status: 'active', images: ['t/a.jpg', 't/b.jpg'], created_at: '2026-09-01T00:00:00Z' },
+      { id: 'p-new', tenant_id: TENANT, public_code: 'NEW002', title: 'Leather boots', price: 25000, condition: 'excellent', description: 'Size 42, barely worn.', status: 'active', images: ['t/c.jpg'], created_at: '2026-09-20T00:00:00Z' },
+      { id: 'p-sold', tenant_id: TENANT, public_code: 'SLD003', title: 'Sold bag', price: 5000, condition: 'good', status: 'sold', images: ['t/d.jpg'], created_at: '2026-09-25T00:00:00Z' },
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse([incoming('share')], wahaEnv());
+    const [intro, photo, caption] = waha.sent;
+    assert.match(intro.text, /Leather boots\*, ready to post/);
+    assert.match(photo.image, /t\/c\.jpg$/);
+    assert.equal(caption.text, 'Leather boots\n₦25,000 · Excellent\n\nSize 42, barely worn.\n\nOrder here 👉 https://uniquethrift.ng/p/NEW002');
+
+    waha.sent.length = 0;
+    await converse([incoming('SHARE old001')], wahaEnv());
+    assert.equal(waha.sent.filter((m) => m.image).length, 2);
+    assert.match(waha.sent.at(-1).text, /Denim jacket[\s\S]*\/p\/OLD001/);
+
+    waha.sent.length = 0;
+    await converse([incoming('share SLD003')], wahaEnv());
+    assert.equal(waha.sent.length, 1);
+    assert.match(waha.sent[0].text, /can't find an item for sale with the code \*SLD003\*/);
+  } finally {
+    restore();
+  }
+});
+
+// A store with no payout account is reminded with every listing, until it
+// adds one.
+test('every listing reminds a store with no payout account to add one, and stops once it has', async () => {
+  const supabase = makeFakeSupabase({ ...seed(), payout_accounts: [] });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const list = (name) =>
+    converse(
+      [
+        incoming('', { media: `${WAHA_URL}/api/files/ut-platform/${name}.jpg` }),
+        incoming(name),
+        incoming('35k'),
+        incoming('2'),
+        incoming('yes'),
+      ],
+      wahaEnv()
+    );
+  try {
+    await list('Jacket');
+    assert.match(waha.sent.at(-1).text, /haven't added the bank account we pay your sales into[\s\S]*\/dashboard\/payouts/);
+    await list('Boots');
+    assert.match(waha.sent.at(-1).text, /haven't added the bank account/, 'every listing, not just the first');
+
+    supabase.tables.payout_accounts.push({ tenant_id: TENANT, bank_name: 'GTBank', account_last4: '6789' });
+    await list('Bag');
+    assert.doesNotMatch(waha.sent.at(-1).text, /haven't added the bank account/);
+  } finally {
+    restore();
+  }
+});
+
+// ── SIGNING UP ON THE WEB, OPENING THE STORE ON WHATSAPP ────────────────────
+
+const WEB_USER = { id: 'web-user-1', email: 'Ada@Web.ng' };
+
+function webSeed(code = {}) {
+  const s = seed();
+  s.web_signup_codes = [{ user_id: WEB_USER.id, code: '7K3P9Q', email: 'ada@web.ng', ...code }];
+  return s;
+}
+
+test('a web account’s code opens the store for that account, without asking for an email', async () => {
+  const supabase = makeFakeSupabase(webSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('Hi! I want to set up my store. My Vendwyze code is VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('2', { from: NEWCOMER_CHAT }), // brand
+        incoming('1', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }), // starter
+        incoming('yes', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    const said = waha.sent.map((m) => m.text);
+    assert.match(said[0], /Linked to your Vendwyze account \(\*ada@web\.ng\*\)/);
+    assert.ok(!said.some((t) => /What email should/.test(t)), 'never asked for an email');
+
+    const signup = supabase.tables.signups.find((s) => s.phone === NEWCOMER);
+    assert.equal(signup.state, 'pending');
+    assert.equal(signup.email, 'ada@web.ng');
+    assert.ok(supabase.tables.tenants.find((t) => t.whatsapp_number === NEWCOMER));
+
+    const code = supabase.tables.web_signup_codes[0];
+    assert.equal(code.used_phone, NEWCOMER);
+    assert.ok(code.used_at);
+  } finally { restore(); }
+});
+
+test('a code sent part way through a sign-up links the account and asks the same question again', async () => {
+  const supabase = makeFakeSupabase(webSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('hello', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    const last = waha.sent.at(-1).text;
+    assert.match(last, /Linked to your Vendwyze account/);
+    assert.match(last, /What kind of store is it/, 'still on the store type question');
+    const signup = supabase.tables.signups.find((s) => s.phone === NEWCOMER);
+    assert.equal(signup.state, 'type');
+    assert.equal(signup.email, 'ada@web.ng');
+    assert.equal(signup.business_name, "Ada's Shop", 'the code was not taken as the business name');
+  } finally { restore(); }
+});
+
+test('a code another number has used is ignored: the email is asked for as usual', async () => {
+  const supabase = makeFakeSupabase(webSeed({ used_phone: '2348000000001', used_at: new Date().toISOString() }));
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await converse(
+      [
+        incoming('Hi! My Vendwyze code is VW-7K3P9Q', { from: NEWCOMER_CHAT }),
+        incoming("Ada's Shop", { from: NEWCOMER_CHAT }),
+        incoming('2', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }),
+        incoming('1', { from: NEWCOMER_CHAT }),
+      ],
+      wahaEnv()
+    );
+    assert.match(waha.sent[0].text, /isn't linked to a store/);
+    assert.match(waha.sent.at(-1).text, /What email should/);
+    assert.equal(supabase.tables.signups.find((s) => s.phone === NEWCOMER).email, null);
+    assert.equal(supabase.tables.web_signup_codes[0].used_phone, '2348000000001');
+  } finally { restore(); }
+});
+
+test('a web account gets one code, and sees its store waiting for approval once opened', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const restore = installFetch({ supabase, tokens: { ...TOKENS, 'tok-web': WEB_USER } });
+  const me = async (token) => {
+    const res = await worker.fetch(
+      new Request('https://vendwyze.test/api/signup/me', { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
+      wahaEnv(),
+      {}
+    );
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    assert.equal((await me(null)).status, 401);
+
+    const first = await me('tok-web');
+    assert.equal(first.status, 200);
+    assert.match(first.body.code, /^VW-[A-HJ-NP-Z2-9]{6}$/);
+    assert.equal(first.body.hasStore, false);
+    assert.equal(first.body.signup, null);
+    assert.equal(supabase.tables.web_signup_codes[0].email, 'ada@web.ng', 'kept lower-case');
+
+    assert.equal((await me('tok-web')).body.code, first.body.code, 'the same code every time');
+    assert.equal(supabase.tables.web_signup_codes.length, 1);
+
+    supabase.tables.signups.push({ phone: NEWCOMER, state: 'pending', business_name: "Ada's Shop", email: 'ada@web.ng', updated_at: new Date().toISOString() });
+    assert.deepEqual((await me('tok-web')).body.signup, { state: 'waiting_approval', business_name: "Ada's Shop" });
+
+    supabase.tables.tenant_members.push({ tenant_id: 'x', user_id: WEB_USER.id, role: 'owner' });
+    assert.equal((await me('tok-web')).body.hasStore, true);
+  } finally { restore(); }
 });

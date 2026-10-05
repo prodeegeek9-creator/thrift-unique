@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import Icon from '../../components/ui/Icon.jsx';
 import StatTile from '../../components/ui/StatTile.jsx';
 import StatusPill from '../../components/ui/StatusPill.jsx';
+import OrderRows from '../../components/OrderRows.jsx';
 import EmptyState, { LoadingRows } from '../../components/ui/EmptyState.jsx';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { fetchOverview, upgradeNudge, snoozeNudge } from '../../lib/dashboard.js';
-import { fetchUsage } from '../../lib/billing.js';
+import { fetchOverview, snoozeNudge, nudgeSnoozed } from '../../lib/dashboard.js';
+import { fetchNudge } from '../../lib/billing.js';
 import { listingDeepLink, botConfigured } from '../../lib/whatsapp.js';
 import { formatNaira, formatDelta } from '../../lib/money.js';
 import { maskPhone, shortName } from '../../lib/privacy.js';
@@ -29,13 +30,14 @@ export default function Overview() {
     enabled: Boolean(tenantId),
   });
 
-  const { data: usage } = useQuery({
-    queryKey: keys.usage(tenantId),
-    queryFn: () => fetchUsage(tenantId),
-    enabled: Boolean(tenantId),
+  const { data: nudgeData } = useQuery({
+    queryKey: [...keys.usage(tenantId), 'nudge'],
+    queryFn: () => fetchNudge(tenantId),
+    enabled: Boolean(tenantId) && !nudgeSnoozed(tenantId),
+    staleTime: 10 * 60 * 1000,
   });
 
-  const nudge = nudgeDismissed ? null : upgradeNudge(tenant, usage);
+  const nudge = nudgeDismissed ? null : nudgeData?.nudge ?? null;
   const name = user?.user_metadata?.name || user?.email?.split('@')[0] || 'there';
 
   return (
@@ -49,8 +51,11 @@ export default function Overview() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+      {/* grid-cols-1 and min-w-0: a grid column otherwise grows to its
+          widest child, and the orders table made a phone's page 720px wide.
+          With them the table scrolls inside its card instead. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="min-w-0 space-y-4 lg:col-span-2">
           <StoreCard tenant={tenant} />
 
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -88,7 +93,7 @@ export default function Overview() {
           <RecentOrders orders={data?.recentOrders} loading={isLoading} />
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <QuickActions tenant={tenant} />
           {nudge ? (
             <UpgradeNudge
@@ -206,11 +211,14 @@ function UpgradeNudge({ nudge, onSnooze }) {
       <p className="mt-3 text-sm font-semibold text-ink">{nudge.headline}</p>
       <p className="mt-1 text-xs leading-relaxed text-text">{nudge.body}</p>
       <Link
-        to="/dashboard/billing"
+        to={`/dashboard/billing?plan=${nudge.tier}`}
         className="mt-3 block rounded-pill bg-green py-2 text-center text-xs font-semibold text-white"
       >
-        See {nudge.tier === 'growth' ? 'Growth' : 'Business'} Plan
+        See {nudge.tier === 'growth' ? 'Growth' : 'Business'} plan
       </Link>
+      <p className="mt-2 text-center text-[11px] text-muted">
+        You only pay the difference for the rest of this month.
+      </p>
       <button
         type="button"
         onClick={onSnooze}
@@ -239,7 +247,9 @@ function RecentOrders({ orders, loading }) {
           No orders yet. They'll appear here as buyers pay.
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <OrderRows orders={orders} nameLength={14} />
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
@@ -274,6 +284,7 @@ function RecentOrders({ orders, loading }) {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

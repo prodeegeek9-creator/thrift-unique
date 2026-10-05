@@ -85,12 +85,24 @@
  * <html>, and no component touched. Until then there is nothing to toggle. */
 
 @layer base {
+  /* No elastic overscroll. On an iPad, scrolling past the top or bottom
+     dragged the whole app, sidebar and top bar included, and sprang back:
+     the dashboard looked as if nothing was fixed. The page still scrolls;
+     it just stops at its ends. (iPadOS/Safari 16 and later; older ones
+     keep the bounce and nothing else changes.) */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
   }
 
   body {
     @apply bg-bg text-text font-sans antialiased;
+    /* 100vh first for browsers without dvh (iPadOS before 15.4). */
+    min-height: 100vh;
     min-height: 100dvh;
   }
 
@@ -122,5 +134,26 @@
      naming once rather than repeating four utilities everywhere. */
   .card {
     @apply bg-surface border border-line rounded-card shadow-card;
+  }
+
+  /* The dashboard's and the console's frame: fixed to the window, which
+     itself never scrolls. Only .app-scroll, the content area, does. On an
+     iPad the page's elastic bounce otherwise dragged the whole app, sidebar
+     and top bar included, whatever the sidebar's own positioning; with no
+     page scroll there is nothing for it to drag, and the content area's own
+     bounce stays inside it (overscroll-behavior: contain). */
+  .app-shell {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .app-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 }

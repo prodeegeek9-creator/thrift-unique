@@ -1,6 +1,10 @@
 import { config } from '../lib/env.js';
 import { db } from '../lib/supabase.js';
 import { releaseEscrow } from '../lib/orders.js';
+import { sendAllPending } from '../lib/transfers.js';
+import { billingSweep } from '../lib/billing.js';
+import { nudgeSweep } from '../lib/nudges.js';
+import { ownerSay } from './billing.js';
 
 // The sweep that makes escrow safe to sell.
 //
@@ -8,6 +12,8 @@ import { releaseEscrow } from '../lib/orders.js';
 // indefinitely, and a seller who has experienced that once goes back to asking
 // for bank transfers — which is the behaviour this whole platform exists to
 // replace. So the hold has a deadline, and this is what enforces it.
+//
+// An order with an open dispute waits for the dispute instead.
 //
 // Runs from the scheduled handler. The partial index on
 // (confirm_deadline) WHERE escrow_status = 'held' is what keeps this cheap as
@@ -21,9 +27,18 @@ export async function releaseExpiredHolds(env, { limit = 100 } = {}) {
 
   const now = new Date().toISOString();
 
+  // Not while a dispute is open: the buyer has said something is wrong, and
+  // releasing would put the money beyond a refund. It releases, or goes back
+  // to the buyer, when the dispute is resolved; one resolved without either
+  // is picked up by the next run. Left out in the query rather than skipped
+  // after it, so disputed orders can never fill a batch and hold up the rest.
+  const disputed = await db(cfg).select('disputes', 'status=in.(open,under_review)&select=order_id');
+  const held = [...new Set(disputed.map((d) => d.order_id).filter(Boolean))];
+
   const due = await db(cfg).select(
     'orders',
     `escrow_status=eq.held&confirm_deadline=lt.${now}` +
+      (held.length ? `&id=not.in.(${held.join(',')})` : '') +
       `&select=id,tenant_id,order_code,amount,commission,confirmed_at` +
       `&order=confirm_deadline.asc&limit=${limit}`
   );
@@ -42,4 +57,24 @@ export async function releaseExpiredHolds(env, { limit = 100 } = {}) {
   }
 
   return { checked: due?.length ?? 0, released };
+}
+
+// Payouts that could not go when they were created. See lib/transfers.js.
+export async function sendOwedPayouts(env) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey || !cfg.paystackKey) return null;
+  return sendAllPending(cfg);
+}
+
+// Plan fees (lib/billing.js), and once a day, at 9am Lagos time, the upgrade
+// nudges on WhatsApp (lib/nudges.js).
+export const NUDGE_HOUR_UTC = 8;
+
+export async function runBilling(env, { now } = {}) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey) return null;
+  const at = now ?? new Date();
+  const billing = await billingSweep(cfg, { now: at, say: ownerSay(cfg) });
+  const nudges = at.getUTCHours() === NUDGE_HOUR_UTC ? await nudgeSweep(cfg, { now: at, say: ownerSay(cfg) }) : null;
+  return { ...billing, nudges };
 }

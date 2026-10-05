@@ -20,9 +20,22 @@ export function checkStoreWhatsapp(raw) {
 
 // For somebody with an account but no store yet: the bot is where a store
 // gets set up, so this is the way forward rather than a support ticket.
-export function setupDeepLink() {
+// The platform number as a person reads it: 2348154765611 → +234 815 476 5611.
+// Where businesses message to open a store, so the homepage prints it as well
+// as linking it, for somebody who wants to save it or dial it.
+export function botNumberDisplay() {
+  const n = String(BOT_NUMBER ?? '').replace(/\D/g, '');
+  if (!n) return null;
+  const m = /^(234)(\d{3})(\d{3})(\d{4})$/.exec(n);
+  return m ? `+${m[1]} ${m[2]} ${m[3]} ${m[4]}` : `+${n}`;
+}
+
+// With a web account's code (VW-…), the bot opens the store for that account
+// and doesn't ask for an email (worker/routes/signup.js).
+export function setupDeepLink(code = null) {
   if (!BOT_NUMBER) return null;
-  return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent('Hi! I want to set up my store.')}`;
+  const text = code ? `Hi! I want to set up my store. My Vendwyze code is ${code}` : 'Hi! I want to set up my store.';
+  return `https://wa.me/${BOT_NUMBER}?text=${encodeURIComponent(text)}`;
 }
 
 // The bot answers one number for every tenant, so the opening message has to

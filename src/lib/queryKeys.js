@@ -17,18 +17,24 @@ export const keys = {
 
   submissions: (t, status = 'pending') => ['tenant', t, 'submissions', status],
   submissionCounts: (t) => ['tenant', t, 'submissions', 'counts'],
+  consignorAccounts: (t) => ['tenant', t, 'submissions', 'accounts'],
+  accountChanges: (t) => ['tenant', t, 'submissions', 'account-changes'],
 
   orders: (t, filter = 'all') => ['tenant', t, 'orders', filter],
   order: (t, id) => ['tenant', t, 'order', id],
+  orderRefund: (t, id) => ['tenant', t, 'order', id, 'refund'],
 
   payouts: (t) => ['tenant', t, 'payouts'],
   balance: (t) => ['tenant', t, 'balance'],
+  payoutAccount: (t) => ['tenant', t, 'payout-account'],
+  banks: (t) => ['tenant', t, 'banks'],
 
   contacts: (t, search = '') => ['tenant', t, 'contacts', search],
   disputes: (t) => ['tenant', t, 'disputes'],
 
   analytics: (t, from, to) => ['tenant', t, 'analytics', from, to],
   usage: (t) => ['tenant', t, 'usage'],
+  billingSummary: (t) => ['tenant', t, 'billing-summary'],
 
   staff: (t) => ['tenant', t, 'staff'],
   channels: (t) => ['tenant', t, 'channels'],

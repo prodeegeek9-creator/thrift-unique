@@ -9,6 +9,7 @@ import { maskPhone } from '../../lib/privacy.js';
 import { dateTime } from '../../lib/time.js';
 import { keys } from '../../lib/queryKeys.js';
 import { firstImage } from '../../lib/images.js';
+import RefundCard from '../../components/RefundCard.jsx';
 
 const CONDITION = {
   brand_new: 'Brand new',
@@ -19,7 +20,7 @@ const CONDITION = {
 
 export default function OrderDetail() {
   const { orderId } = useParams();
-  const { tenant } = useTenant();
+  const { tenant, role } = useTenant();
   const tenantId = tenant?.id;
 
   const { data: order, isLoading } = useQuery({
@@ -67,7 +68,7 @@ export default function OrderDetail() {
         <StatusPill status={order.status} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
         <div className="space-y-4 md:col-span-3">
           <div className="card p-4">
             <div className="flex items-center gap-3">
@@ -113,7 +114,7 @@ export default function OrderDetail() {
           </div>
         </div>
 
-        <div className="md:col-span-2">
+        <div className="space-y-4 md:col-span-2">
           <div className="card p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-ink">Progress</h2>
@@ -174,6 +175,10 @@ export default function OrderDetail() {
               ))}
             </ol>
           </div>
+
+          {/* Owners and managers: the same people who see payouts, since a
+              refund can come out of them. */}
+          <RefundCard tenantId={tenantId} order={order} canRefund={role === 'owner' || role === 'manager'} />
         </div>
       </div>
     </div>

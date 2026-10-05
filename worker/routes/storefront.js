@@ -3,6 +3,25 @@ import { db } from '../lib/supabase.js';
 import { escapeHtml, summarise } from '../lib/http.js';
 import { publicUrl } from '../lib/media.js';
 
+// The app's document, to add link-preview tags to.
+//
+// Asked for as "/", fresh: not "/index.html", which Cloudflare's asset layer
+// answers with a redirect to "/" and no body, and not with the browser's own
+// headers, whose If-None-Match can get a 304 with no body. Either one, wrapped
+// in a 200, is a blank page. null when the document isn't what we expect, and
+// the caller then serves the request exactly as the asset layer would.
+async function appShell(request, env) {
+  const res = await env.ASSETS.fetch(new Request(new URL('/', request.url), { method: 'GET' }));
+  if (res.status !== 200) return null;
+  const html = await res.text();
+  return html.includes('id="root"') && html.includes('</head>') ? html : null;
+}
+
+// Whatever the asset layer would have served for this request unchanged.
+function plain(request, env) {
+  return env.ASSETS.fetch(request);
+}
+
 // GET /p/:code — the shared product link, rendered at the edge.
 //
 // The page itself is the same React bundle everyone else gets. What has to
@@ -15,12 +34,11 @@ import { publicUrl } from '../lib/media.js';
 // These tags are an enhancement; the listing still has to render if Supabase
 // is slow or the code is wrong.
 export async function renderProductPage(request, env, code) {
-  const asset = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
-
   const product = await lookup(env, code).catch(() => null);
-  if (!product) return asset;
+  if (!product) return plain(request, env);
 
-  const html = await asset.text();
+  const html = await appShell(request, env);
+  if (!html) return plain(request, env);
   const origin = new URL(request.url).origin;
 
   const title = `${product.title} — ${product.tenant_name}`;
@@ -76,23 +94,57 @@ export async function renderProductPage(request, env, code) {
   });
 }
 
+// GET / — the platform's homepage, the one page besides product and store
+// pages that should be found by search and preview well when shared. The
+// document ships noindex for the dashboard's sake; here it is flipped.
+export async function renderHomePage(request, env) {
+  const html = await appShell(request, env);
+  if (!html) return plain(request, env);
+  const origin = new URL(request.url).origin;
+
+  const title = 'Vendwyze: run your thrift store or brand from WhatsApp';
+  const description =
+    'List items from WhatsApp, auto-post to your Status, get your own store page and protected payments. For thrift stores and brands.';
+
+  const tags = [
+    `<title>${escapeHtml(title)}</title>`,
+    `<meta name="description" content="${escapeHtml(description)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:title" content="${escapeHtml(title)}">`,
+    `<meta property="og:description" content="${escapeHtml(description)}">`,
+    `<meta property="og:url" content="${escapeHtml(`${origin}/`)}">`,
+    `<meta property="og:site_name" content="Vendwyze">`,
+    `<meta name="twitter:card" content="summary">`,
+  ];
+
+  const body = html
+    .replace(/<meta\s+name="robots"[^>]*>/i, '<meta name="robots" content="index, follow">')
+    .replace(/<title>[^<]*<\/title>/i, '')
+    .replace('</head>', `${tags.join('\n    ')}\n  </head>`);
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' },
+  });
+}
+
 // GET /s/:slug — a store's own page, rendered at the edge for the same
 // reason: the link a store shares in its bio or a group chat should arrive as
 // its name and a photo, not a bare URL.
 export async function renderStorePage(request, env, slug) {
-  const asset = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
-
   const store = await lookupStore(env, slug).catch(() => null);
-  if (!store) return asset;
+  // A paused store answers { paused: true } with no name: nothing to preview.
+  if (!store?.name) return plain(request, env);
 
-  const html = await asset.text();
+  const html = await appShell(request, env);
+  if (!html) return plain(request, env);
   const origin = new URL(request.url).origin;
   const cfg = config(env);
 
   const count = store.products?.length ?? 0;
   const description = count
-    ? `${count} item${count === 1 ? '' : 's'} for sale. Order on WhatsApp, payment protected by Unique Thrift.`
-    : 'Order on WhatsApp, payment protected by Unique Thrift.';
+    ? `${count} item${count === 1 ? '' : 's'} for sale. Order on WhatsApp, payment protected by Vendwyze.`
+    : 'Order on WhatsApp, payment protected by Vendwyze.';
   const image = publicUrl(cfg, store.logo_url) ?? publicUrl(cfg, store.products?.[0]?.image);
 
   const tags = [

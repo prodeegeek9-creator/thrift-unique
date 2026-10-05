@@ -1,4 +1,4 @@
-import { supabase } from './supabase.js';
+import { consoleSupabase } from './supabase.js';
 
 // The operator console's data layer.
 //
@@ -11,8 +11,10 @@ import { supabase } from './supabase.js';
 // with Supabase rather than decoding it — the browser is never asked whether
 // it is an admin, it is told what it may see.
 
+// The token is the console's own session (src/lib/adminAuth.jsx), never a
+// store's: being signed in to a store opens nothing here.
 async function call(path, { method = 'GET', body } = {}) {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await consoleSupabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Not signed in');
 
@@ -62,8 +64,57 @@ export const setFlag = (tenantId, flag, enabled) =>
 export const setTenantStatus = (tenantId, status) =>
   call(`/tenants/${tenantId}/status`, { method: 'POST', body: { status } });
 
+// planPrice: undefined leaves the monthly fee alone, null returns it to the
+// plan's price, a number (0 for free) sets this store's own.
+export const setPlan = (tenantId, tier, commissionPct, planPrice) =>
+  call(`/tenants/${tenantId}/plan`, {
+    method: 'POST',
+    body: { tier, commission_pct: commissionPct, ...(planPrice !== undefined ? { plan_price: planPrice } : {}) },
+  });
+
+export const recordPlanPayment = (tenantId, note) =>
+  call(`/tenants/${tenantId}/billing/record`, { method: 'POST', body: { note } });
+
+export const setDetails = (tenantId, details) =>
+  call(`/tenants/${tenantId}/details`, { method: 'POST', body: details });
+
+// Each plan's standard commission, to prefill the plan editor. The sign-up
+// terms quote these (COMMISSION in worker/lib/bot.js); keep them in step.
+export const DEFAULT_COMMISSION = { starter: 8, growth: 7, business: 7 };
+
+// The admin team. Adding somebody new returns a one-time sign-in link to pass
+// on to them; somebody who already has an account just signs in.
+export const fetchTeam = () => call('/team');
+export const addToTeam = (email, level) => call('/team', { method: 'POST', body: { email, level } });
+export const setTeamLevel = (userId, level) => call(`/team/${userId}`, { method: 'POST', body: { level } });
+export const removeFromTeam = (userId) => call(`/team/${userId}`, { method: 'POST', body: { remove: true } });
+export const newTeamLink = (userId) => call(`/team/${userId}/link`, { method: 'POST', body: {} });
+
+// A new set-password link for somebody on a store's team.
+export const newMemberLink = (tenantId, userId) =>
+  call(`/tenants/${tenantId}/members/${userId}/link`, { method: 'POST', body: {} });
+
+export const setPayoutsPaused = (tenantId, paused) =>
+  call(`/tenants/${tenantId}/payouts-paused`, { method: 'POST', body: { paused } });
+
+export const retryPayout = (payoutId) => call(`/payouts/${payoutId}/retry`, { method: 'POST', body: {} });
+
 export const forceRelease = (orderId, reason) =>
   call(`/escrow/${orderId}/release`, { method: 'POST', body: { reason } });
+
+// Refunds: the list, retrying one Paystack refused, and refunding a held
+// payment from the release queue.
+// Money that needs a person: payments nobody can match, payouts and refunds
+// that aren't getting through, webhooks Paystack did not sign.
+export const fetchMoney = () => call('/money');
+export const resolveProblem = (id, note) => call(`/problems/${id}/resolve`, { method: 'POST', body: { note } });
+// The daily check against Paystack, now (worker/lib/reconcile.js).
+export const runReconcile = () => call('/reconcile', { method: 'POST', body: {} });
+
+export const fetchRefunds = () => call('/refunds');
+export const retryRefund = (id) => call(`/refunds/${id}/retry`, { method: 'POST', body: {} });
+export const refundFromConsole = (orderId, reason) =>
+  call(`/orders/${orderId}/refund`, { method: 'POST', body: { reason } });
 
 export const resolveDispute = (disputeId, outcome, resolution) =>
   call(`/disputes/${disputeId}/resolve`, { method: 'POST', body: { outcome, resolution } });
@@ -75,6 +126,21 @@ export const AUDIT_LABELS = {
   'flag.set': 'Changed a feature flag',
   'tenant.status': 'Changed a store’s status',
   'tenant.approve': 'Approved a new store',
+  'tenant.plan': 'Changed a store’s plan or commission',
+  'tenant.details': 'Edited a store’s details',
+  'payouts.pause': 'Paused a store’s payouts',
+  'payouts.resume': 'Resumed a store’s payouts',
+  'payouts.retry': 'Retried a payout',
+  'billing.record': 'Recorded a plan fee paid another way',
   'escrow.release': 'Released held funds',
   'dispute.resolve': 'Resolved a dispute',
+  'team.add': 'Added somebody to the admin team',
+  'team.level': 'Changed an admin’s level',
+  'team.remove': 'Removed somebody from the admin team',
+  'team.link': 'Made a new sign-in link for an admin',
+  'member.link': 'Made a new sign-in link for a store member',
+  'refund.create': 'Refunded a buyer',
+  'refund.retry': 'Retried a refund',
+  'problem.resolve': 'Marked a money problem sorted',
+  'reconcile.run': 'Checked the books against Paystack',
 };

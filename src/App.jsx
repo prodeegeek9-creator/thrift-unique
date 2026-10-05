@@ -1,18 +1,28 @@
 import { Suspense, lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import RequireAuth from './components/RequireAuth.jsx';
 import RequireFeature from './components/RequireFeature.jsx';
 import RequireStaffRole from './components/RequireStaffRole.jsx';
-import RequireOperator from './components/RequireOperator.jsx';
 import SellerShell from './components/layout/SellerShell.jsx';
 
 import Login from './pages/Login.jsx';
+import Signup from './pages/Signup.jsx';
+import Welcome from './pages/Welcome.jsx';
 import Onboarding from './pages/Onboarding.jsx';
 import ConnectChannels from './pages/ConnectChannels.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Product from './pages/public/Product.jsx';
 import Store from './pages/public/Store.jsx';
+import Home from './pages/public/Home.jsx';
+import PayLink from './pages/public/PayLink.jsx';
+import OrderStatus from './pages/public/OrderStatus.jsx';
+import PlanPay from './pages/public/PlanPay.jsx';
 import ConfirmReceipt from './pages/public/ConfirmReceipt.jsx';
+import About from './pages/legal/About.jsx';
+import Contact from './pages/legal/Contact.jsx';
+import Privacy from './pages/legal/Privacy.jsx';
+import Terms from './pages/legal/Terms.jsx';
+import Refunds from './pages/legal/Refunds.jsx';
 
 import Overview from './pages/seller/Overview.jsx';
 import Listings from './pages/seller/Listings.jsx';
@@ -35,9 +45,8 @@ import More from './pages/seller/More.jsx';
 // downloads the chunk at all.
 const Analytics = lazy(() => import('./pages/seller/Analytics.jsx'));
 
-// Same reasoning, stronger: the platform console is six screens that exactly
-// one person on the platform can open. RequireOperator resolves before this
-// does, so a seller who types /admin never downloads the chunk at all.
+// Same reasoning, stronger: the platform console is a handful of screens only
+// the admin team can open, so a seller never downloads them.
 const AdminRoutes = lazy(() => import('./pages/admin/AdminRoutes.jsx'));
 
 // Note the shape of the guarded routes: RequireFeature wraps the *element*,
@@ -53,9 +62,21 @@ export default function App() {
           store alone. See pages/public/Product.jsx and Store.jsx. */}
       <Route path="/p/:code" element={<Product />} />
       <Route path="/s/:slug" element={<Store />} />
+      <Route path="/pay/:token" element={<PayLink />} />
+      <Route path="/order/:reference" element={<OrderStatus />} />
+      <Route path="/billing/pay/:ref" element={<PlanPay />} />
       <Route path="/confirm/:token" element={<ConfirmReceipt />} />
 
+      {/* The platform's own pages, linked from the footer (SiteFooter.jsx). */}
+      <Route path="/about" element={<About />} />
+      <Route path="/contact" element={<Contact />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/refunds" element={<Refunds />} />
+
       <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+      <Route path="/welcome" element={<Welcome />} />
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/connect" element={<ConnectChannels />} />
 
@@ -121,22 +142,21 @@ export default function App() {
         <Route path="more" element={<More />} />
       </Route>
 
-      {/* The platform side. Every route under here reads across tenants,
-          which nothing else in the system may do — the actual boundary is in
-          the Worker, and this only avoids drawing a console to somebody whose
-          every request would 403. */}
+      {/* The platform console: the admin team's, not a room inside a store.
+          It has its own login at /admin/login and its own session (see
+          lib/adminAuth.jsx), and nothing in a store's dashboard links here.
+          Every route under it reads across tenants, which nothing else in the
+          system may do; the actual boundary is in the Worker. */}
       <Route
         path="/admin/*"
         element={
-          <RequireOperator>
-            <Suspense fallback={<div className="min-h-dvh bg-bg" />}>
-              <AdminRoutes />
-            </Suspense>
-          </RequireOperator>
+          <Suspense fallback={<div className="min-h-dvh bg-sidebar" />}>
+            <AdminRoutes />
+          </Suspense>
         }
       />
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Home />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

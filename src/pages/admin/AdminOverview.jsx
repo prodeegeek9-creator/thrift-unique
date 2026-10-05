@@ -5,6 +5,7 @@ import StatTile from '../../components/ui/StatTile.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import { fetchOverview } from '../../lib/admin.js';
 import { formatNaira } from '../../lib/money.js';
+import { dateTime } from '../../lib/time.js';
 
 export default function AdminOverview() {
   const { data, isLoading } = useQuery({ queryKey: ['admin', 'overview'], queryFn: fetchOverview });
@@ -30,6 +31,24 @@ export default function AdminOverview() {
               : 'holds are past their deadline and have not released'}
             . The hourly sweep may not be running.
           </span>
+        </Link>
+      ) : null}
+
+      <PlatformCard platform={data?.platform} loading={isLoading} />
+
+      {/* The daily check against Paystack stopping is silent otherwise: the
+          books just stop being checked. */}
+      {data?.money && (data.money.lastCheckFailed || checkIsStale(data.money.lastCheckAt)) ? (
+        <Link
+          to="/admin/money"
+          className="mb-4 flex items-center gap-3 rounded-card border border-amber/30 bg-amber-lt p-4 text-sm text-amber"
+        >
+          <Icon name="payouts" className="h-5 w-5 shrink-0" />
+          {data.money.lastCheckFailed
+            ? 'The last check of the books against Paystack failed. See the Money page.'
+            : data.money.lastCheckAt
+              ? `The books were last checked against Paystack ${dateTime(data.money.lastCheckAt)}. The daily check may have stopped.`
+              : 'The books have not been checked against Paystack yet. It runs every morning at 4am, or from the Money page.'}
         </Link>
       ) : null}
 
@@ -84,6 +103,52 @@ export default function AdminOverview() {
           <h2 className="text-sm font-semibold text-ink">Needs attention</h2>
           <div className="mt-3 space-y-2">
             <Attention
+              to="/admin/tenants?filter=onboarding"
+              label="Stores awaiting approval"
+              value={data?.tenants?.awaiting ?? 0}
+              tone={data?.tenants?.awaiting ? 'amber' : 'ok'}
+            />
+            <Attention
+              to="/admin/tenants?filter=unpaid"
+              label="Plan fees overdue or paused"
+              value={(data?.tenants?.pastDue ?? 0) + (data?.tenants?.paused ?? 0)}
+              tone={data?.tenants?.paused ? 'red' : data?.tenants?.pastDue ? 'amber' : 'ok'}
+            />
+            {/* Money that arrived or was owed and didn't get where it should.
+                All of it is listed, with what to do, on the Money page. */}
+            <Attention
+              to="/admin/money"
+              label="Payments that don't match"
+              value={data?.money?.unmatched ?? 0}
+              tone={data?.money?.unmatched ? 'red' : 'ok'}
+            />
+            <Attention
+              to="/admin/money"
+              label="Transfers that don't match"
+              value={data?.money?.transfers ?? 0}
+              tone={data?.money?.transfers ? 'red' : 'ok'}
+            />
+            <Attention
+              to="/admin/money"
+              label="Payouts not getting through"
+              value={data?.payouts?.stuck ?? 0}
+              tone={data?.payouts?.stuck ? 'red' : 'ok'}
+            />
+            <Attention
+              to="/admin/money"
+              label="Refunds that failed"
+              value={data?.money?.refundsFailed ?? 0}
+              tone={data?.money?.refundsFailed ? 'red' : 'ok'}
+            />
+            {data?.money?.badSignatureDays ? (
+              <Attention
+                to="/admin/money"
+                label="Unsigned calls to the Paystack webhook"
+                value={data.money.badSignatureDays}
+                tone="amber"
+              />
+            ) : null}
+            <Attention
               to="/admin/disputes"
               label="Open disputes"
               value={data?.openDisputes ?? 0}
@@ -99,7 +164,7 @@ export default function AdminOverview() {
                 They will not report it as an outage — they will report, weeks
                 later, that things went quiet. */}
             <Attention
-              to="/admin/tenants"
+              to="/admin/tenants?filter=whatsapp"
               label="WhatsApp disconnected"
               value={data?.whatsapp?.broken ?? 0}
               tone={data?.whatsapp?.broken ? 'red' : 'ok'}
@@ -111,6 +176,8 @@ export default function AdminOverview() {
   );
 }
 
+const checkIsStale = (at) => !at || Date.now() - new Date(at).getTime() > 26 * 3_600_000;
+
 function Attention({ to, label, value, tone }) {
   return (
     <Link
@@ -120,11 +187,98 @@ function Attention({ to, label, value, tone }) {
       <span className="text-text">{label}</span>
       <span
         className={`rounded-pill px-2 py-0.5 text-xs font-semibold tabular-nums ${
-          tone === 'red' ? 'bg-red-lt text-red' : 'bg-green-lt text-green'
+          tone === 'red'
+            ? 'bg-red-lt text-red'
+            : tone === 'amber'
+              ? 'bg-amber-lt text-amber'
+              : 'bg-green-lt text-green'
         }`}
       >
         {value}
       </span>
     </Link>
+  );
+}
+
+// The platform number: every store signs up and lists through it, so when it
+// stops, everything stops. Two views, because either can look fine while the
+// other is wrong — WAHA once reported WORKING all day while every message it
+// forwarded was being turned away before the Worker ran.
+function PlatformCard({ platform, loading }) {
+  if (loading || !platform) return null;
+
+  if (!platform.configured) {
+    return (
+      <section className="mb-4 rounded-card border border-red/30 bg-red-lt p-4 text-sm text-red">
+        <p className="font-semibold">The platform WhatsApp number is not configured</p>
+        <p className="mt-1">WAHA_URL or WAHA_SESSION is missing from the Worker's settings.</p>
+      </section>
+    );
+  }
+
+  const working = platform.status === 'WORKING';
+  const problems = [];
+  if (!working) {
+    problems.push(
+      platform.status === 'UNREACHABLE'
+        ? `The WAHA server did not answer (${platform.error ?? 'no response'}).`
+        : platform.status === 'MISSING'
+          ? `WAHA has no session called ${platform.session}. Run pair.sh on the server.`
+          : `WAHA reports the session as ${platform.status}. Relink it with pair.sh on the server.`
+    );
+  }
+  if (working && platform.webhookOk === false) {
+    problems.push(
+      `WAHA sends messages to ${platform.webhooks.join(', ') || 'nowhere'}, not ${platform.expectedWebhook}. Re-run pair.sh to point it here.`
+    );
+  }
+
+  return (
+    <section
+      className={`mb-4 rounded-card border p-4 ${problems.length ? 'border-red/30 bg-red-lt' : 'border-line bg-surface'}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon name="whatsapp" className={`h-5 w-5 ${problems.length ? 'text-red' : 'text-green'}`} />
+          <h2 className="text-sm font-semibold text-ink">Platform WhatsApp</h2>
+          <span
+            className={`rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
+              problems.length ? 'bg-red text-white' : 'bg-green-lt text-green'
+            }`}
+          >
+            {working ? (problems.length ? 'Needs attention' : 'Working') : platform.status ?? 'Unknown'}
+          </span>
+        </div>
+        <span className="text-xs text-muted">
+          {platform.number ? `+${platform.number}` : platform.session}
+          {platform.name ? ` · ${platform.name}` : ''}
+        </span>
+      </div>
+
+      {problems.map((p) => (
+        <p key={p} className="mt-2 text-sm text-red">
+          {p}
+        </p>
+      ))}
+
+      <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+        <div>
+          <dt className="text-muted">Last message received</dt>
+          <dd className="font-medium text-ink">
+            {platform.lastMessageAt ? dateTime(platform.lastMessageAt) : 'None recorded yet'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted">Last event of any kind</dt>
+          <dd className="font-medium text-ink">
+            {platform.lastEventAt ? dateTime(platform.lastEventAt) : 'None recorded yet'}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-[11px] text-muted">
+        If you message the platform number and this time doesn't change within a minute, messages aren't
+        reaching the Worker.
+      </p>
+    </section>
   );
 }

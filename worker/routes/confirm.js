@@ -17,6 +17,12 @@ const TOKEN_TTL_SECONDS = 7 * 24 * 3600;
 
 export async function mintConfirmToken(env, order) {
   const cfg = require_(env, 'tokenSecret');
+  return confirmToken(cfg, order);
+}
+
+// The same, from a config already resolved: the buyer's "it arrived" link,
+// sent to them when an escrow order is paid.
+export async function confirmToken(cfg, order) {
   return sign(cfg.tokenSecret, { t: order.tenant_id, o: order.id }, TOKEN_TTL_SECONDS);
 }
 

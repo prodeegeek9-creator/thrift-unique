@@ -10,11 +10,18 @@ import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
 import { handleAdmin } from './routes/admin.js';
 import { getConfirmable, confirmReceipt } from './routes/confirm.js';
-import { renderProductPage, renderStorePage } from './routes/storefront.js';
-import { releaseExpiredHolds } from './routes/escrow.js';
-import { handleWaha } from './routes/waha.js';
+import { renderHomePage, renderProductPage, renderStorePage } from './routes/storefront.js';
+import { releaseExpiredHolds, sendOwedPayouts, runBilling } from './routes/escrow.js';
+import { handlePayouts } from './routes/payouts.js';
+import { handleBilling } from './routes/billing.js';
+import { handleWaha, consignorBankSweep } from './routes/waha.js';
+import { reconcileSweep } from './lib/reconcile.js';
 import { handleTeam } from './routes/team.js';
+import { handleSignup } from './routes/signup.js';
 import { handleSubmissions } from './routes/submissions.js';
+import { handleListings } from './routes/listings.js';
+import { handleCheckout } from './routes/checkout.js';
+import { handleOrders } from './routes/orders.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -24,6 +31,11 @@ export default {
     try {
       if (path.startsWith('/api/')) {
         return await api(request, env, path);
+      }
+
+      // The homepage, indexable and with a proper preview.
+      if (path === '/' && request.method === 'GET') {
+        return await renderHomePage(request, env);
       }
 
       // A shared product link. The document is the same bundle everyone else
@@ -59,9 +71,21 @@ export default {
   // buyer who may never come back.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      releaseExpiredHolds(env).then((r) =>
-        console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`)
-      )
+      releaseExpiredHolds(env)
+        .then((r) => console.log(`escrow sweep: checked ${r.checked}, released ${r.released}`))
+        // Then anything still owed: a store that has since added its bank
+        // account, a transfer Paystack refused because the balance was short.
+        .then(() => sendOwedPayouts(env))
+        .then((r) => r && console.log(`payout sweep: checked ${r.checked}, sent ${r.sent}`))
+        // And plan fees: invoices, reminders, auto-renew, pausing.
+        .then(() => runBilling(env))
+        .then((r) => r && console.log(`billing sweep: ${JSON.stringify(r)}`))
+        // Payout account changes: the 2-hour confirmation, and expiry.
+        .then(() => consignorBankSweep(env))
+        .then((r) => r && console.log(`consignor bank sweep: ${JSON.stringify(r)}`))
+        // Once a day: our books against Paystack's (lib/reconcile.js).
+        .then(() => reconcileSweep(env, { now: new Date(event.scheduledTime ?? Date.now()) }))
+        .then((r) => r && console.log(`reconciliation: ${JSON.stringify(r)}`))
     );
   },
 };
@@ -98,6 +122,11 @@ async function api(request, env, path) {
 
   // Adding a colleague. Here rather than in the browser because a membership
   // needs a user_id, and resolving an email to one means reading auth.users.
+  // A web account with no store yet: its WhatsApp code and progress.
+  if (path.startsWith('/api/signup')) {
+    return handleSignup(request, env, path);
+  }
+
   if (path.startsWith('/api/team')) {
     return handleTeam(request, env, path);
   }
@@ -106,6 +135,31 @@ async function api(request, env, path) {
   // both end in a WhatsApp message from the store's own session.
   if (path.startsWith('/api/submissions')) {
     return handleSubmissions(request, env, path);
+  }
+
+  // The monthly plan fee: the Billing page and the pay page.
+  if (path.startsWith('/api/billing')) {
+    return handleBilling(request, env, path);
+  }
+
+  // A store's bank account, for its payouts.
+  if (path.startsWith('/api/payouts')) {
+    return handlePayouts(request, env, path);
+  }
+
+  // Buying: starting a Paystack payment, payment links, the return page.
+  if (path.startsWith('/api/checkout')) {
+    return handleCheckout(request, env, path);
+  }
+
+  // A store refunding one of its orders.
+  if (path.startsWith('/api/orders')) {
+    return handleOrders(request, env, path);
+  }
+
+  // Posting a listing to the store's WhatsApp Status from the dashboard.
+  if (path.startsWith('/api/listings')) {
+    return handleListings(request, env, path);
   }
 
   // Not built yet, and saying so is better than a 404 that reads like a typo.

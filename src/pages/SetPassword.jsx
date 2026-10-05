@@ -8,6 +8,19 @@ import { BrandLockup } from '../components/ui/BrandMark.jsx';
 // one the next sign-in is impossible.
 export default function SetPassword() {
   const { user, setRecovering } = useAuth();
+  return (
+    <SetPasswordScreen
+      client={supabase}
+      email={user?.email}
+      fallback="Choose a password for your dashboard."
+      onDone={() => setRecovering(false)}
+    />
+  );
+}
+
+// The same screen for any session: the store's, or the platform console's
+// (src/lib/adminAuth.jsx), which keeps its own.
+export function SetPasswordScreen({ client, email, fallback, onDone, badge = null }) {
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
   const [error, setError] = useState(null);
@@ -20,11 +33,11 @@ export default function SetPassword() {
 
     setBusy(true);
     setError(null);
-    const { error: err } = await supabase.auth.updateUser({ password });
+    const { error: err } = await client.auth.updateUser({ password });
     setBusy(false);
 
     if (err) return setError(err.message || 'Could not save that password. Try again.');
-    setRecovering(false);
+    onDone();
   }
 
   return (
@@ -33,12 +46,13 @@ export default function SetPassword() {
         <div className="mb-6 flex justify-center">
           <BrandLockup tone="dark" />
         </div>
+        {badge}
 
         <form onSubmit={submit} className="card space-y-4 p-6">
           <div>
             <h1 className="font-display text-lg font-semibold">Set your password</h1>
             <p className="mt-1 text-sm text-muted">
-              {user?.email ? `You'll sign in with ${user.email} and this password.` : 'Choose a password for your dashboard.'}
+              {email ? `You'll sign in with ${email} and this password.` : fallback}
             </p>
           </div>
 

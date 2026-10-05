@@ -36,7 +36,9 @@ function NavRow({ item }) {
 export default function Sidebar() {
   const { tenant } = useTenant();
   return (
-    <aside className="hidden w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
+    // The frame's full height (SellerShell); its own list scrolls inside it
+    // on a short screen.
+    <aside className="hidden h-full w-[232px] shrink-0 flex-col bg-sidebar lg:flex">
       <div className="px-5 py-5">
         <BrandLockup />
       </div>

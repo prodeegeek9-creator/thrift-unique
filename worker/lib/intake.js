@@ -36,7 +36,8 @@ export const SELL = /^\s*sell\b/i;
 // States this flow owns in bot_conversations. The table is shared with the
 // listing flow, keyed by store and chat; the chats never overlap, because the
 // listing flow runs on the platform number and this one on the store's own.
-const STATES = ['photo', 'title', 'price', 'condition', 'name', 'review'];
+export const INTAKE_STATES = ['photo', 'title', 'price', 'condition', 'name', 'review'];
+const STATES = INTAKE_STATES;
 
 const SAY = {
   start: (store) =>
@@ -89,6 +90,26 @@ export function declinedSellerMessage({ store, title, reason }) {
   if (reason) lines.push('', `Reason: ${reason}`);
   lines.push('', 'Send *SELL* any time to offer something else.');
   return lines.join('\n');
+}
+
+// To the consignor, from the store's number, when their item sells.
+export function soldConsignorMessage({ store, title, owed, needsBank = false }) {
+  return (
+    `🎉 Your *${title}* has sold!\n\n` +
+    `${store} owes you ${formatNaira(owed)} and will message you when it's paid.` +
+    (needsBank
+      ? `\n\nWe don't have your bank details yet. Send *BANK* to add them, so ${store} can pay you.`
+      : '')
+  );
+}
+
+// To the consignor when the store marks them paid.
+export function paidConsignorMessage({ store, title, amount, note }) {
+  return (
+    `💸 ${store} has paid you ${formatNaira(amount)} for your *${title}*.` +
+    (note ? `\n\n${note}` : '') +
+    '\n\nThank you for selling with us! Send *SELL* any time to offer something else.'
+  );
 }
 
 // For the store owner, on the platform number, when an item arrives.

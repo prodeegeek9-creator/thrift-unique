@@ -1,4 +1,5 @@
-import { require_, originOf } from '../lib/env.js';
+import { require_, originOf, config } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
@@ -10,20 +11,47 @@ import {
   formatNaira,
   conditionLabel,
   signupStep,
+  webCodeIn,
   submittedMessage,
   savedMessage,
+  paymentLinkMessage,
+  passwordLinkMessage,
+  shareCaption,
+  shareKitIntro,
 } from '../lib/bot.js';
+import { makePaymentLink } from '../lib/paylinks.js';
+import { generateInvite } from '../lib/accounts.js';
+import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
-import { intakeStep, receivedMessage, newSubmissionMessage } from '../lib/intake.js';
+import { accountForCode } from './signup.js';
+import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
+import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
+import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
+import { reservedMinutes } from '../lib/reservations.js';
+import {
+  BANK,
+  INTAKE_BUSY,
+  SAY as BANK_SAY,
+  VERIFY_AFTER_HOURS,
+  VERIFY_EXPIRES_HOURS,
+  accountFor,
+  bankTurn,
+  firstAsk,
+  wantsBank,
+  ownerChangeMessage,
+  ownerNotYouMessage,
+} from '../lib/consignorBank.js';
 import {
   parseEvent,
   phoneFor,
+  phoneFromChatId,
   sessionName,
   chatId,
   sendText,
   startTyping,
   typingDelay,
   postImageStatus,
+  sendImage,
   createSession,
   getSession,
   startSession,
@@ -31,6 +59,7 @@ import {
   deleteSession,
   getQR,
   WahaError,
+  ensureStoreWebhook,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -72,6 +101,9 @@ export async function handleWaha(request, env, path) {
     return json({ error: 'Method not allowed' }, 405);
   }
 
+  if (rest === '/holds' && method === 'GET') return listHolds(request, env);
+  if (rest === '/holds/resume' && method === 'POST') return resumeHolds(request, env);
+
   return json({ error: 'Not found' }, 404);
 }
 
@@ -103,13 +135,17 @@ async function webhook(request, env) {
     return json({ error: 'Not authorised' }, 403);
   }
 
+  await touchActivity(cfg, event);
+
   if (event.kind === 'status') return recordStatus(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
-  // top of this file. A store's own session runs the item intake, if asked.
+  // top of this file. A store's own session runs the item intake and the
+  // WhatsApp checkout, when asked.
   if (event.session !== cfg.wahaSession) {
-    return intake(cfg, event);
+    return storeSession(cfg, event);
   }
+  if (event.kind === 'outgoing') return json({ ok: true, ignored: 'our own message' });
 
   return message(cfg, event);
 }
@@ -143,6 +179,27 @@ async function checkSecret(request, cfg, session) {
   return timingSafeEqual(presented, row.webhook_secret);
 }
 
+// That WhatsApp reached us, for the operator console's health check. See
+// migration 0020. Best-effort: a missed heartbeat is not worth a retry.
+async function touchActivity(cfg, event) {
+  if (!event.session) return;
+  const now = new Date().toISOString();
+  try {
+    await db(cfg).insert(
+      'webhook_activity',
+      {
+        session: event.session,
+        last_event_at: now,
+        ...(event.kind === 'message' ? { last_message_at: now } : {}),
+        ...(event.kind === 'status' && event.status ? { last_status: event.status } : {}),
+      },
+      { onConflict: 'session', merge: true, returning: false }
+    );
+  } catch (err) {
+    console.warn('webhook activity not recorded:', err?.message ?? err);
+  }
+}
+
 // A session changed state: starting, waiting for a scan, working, dead.
 //
 // Worth storing because it is the only way anyone finds out that a seller's
@@ -173,7 +230,7 @@ async function message(cfg, event) {
 
   const tenant = await db(cfg).one(
     'tenants',
-    `whatsapp_number=eq.${phone}&select=id,slug,name,status,whatsapp_number,waha_session,waha_status`
+    `whatsapp_number=eq.${phone}&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status,paid_until,plan_price,auto_renew`
   );
 
   // A number no store is registered to: the sign-up conversation.
@@ -182,6 +239,13 @@ async function message(cfg, event) {
   if (tenant.status === 'suspended') {
     await say(cfg, tenant, event.from, 'This store is suspended. Please get in touch with support.');
     return json({ ok: true, ignored: 'suspended' });
+  }
+
+  // Paused for an unpaid plan fee: every message gets the way back.
+  if (tenant.status === 'active' && tenant.billing_status === 'paused') {
+    const invoice = await ensureInvoice(cfg, tenant, { force: true }).catch(() => null);
+    await say(cfg, tenant, event.from, pausedMessage(cfg, tenant, invoice));
+    return json({ ok: true, ignored: 'paused' });
   }
 
   // Signed up and not yet approved is no reason to stop listing: the store
@@ -214,7 +278,17 @@ async function message(cfg, event) {
       '&select=state,draft,updated_at'
   );
 
-  const result = step(conversation, event, { tenant, origin: cfg.publicOrigin });
+  // How many items wait for review, for the menu. Only between listings,
+  // where the menu can appear.
+  let pendingItems = null;
+  if (!conversation || conversation.state === 'idle') {
+    const waiting = await db(cfg)
+      .select('submissions', `tenant_id=eq.${tenant.id}&status=eq.pending&select=id&limit=100`)
+      .catch(() => null);
+    pendingItems = Array.isArray(waiting) ? waiting.length : null;
+  }
+
+  const result = step(conversation, event, { tenant, origin: cfg.publicOrigin, pendingItems });
 
   // The conversation is saved before anything is sent. If sending fails, the
   // seller has to repeat themselves once; if saving failed after sending, they
@@ -229,7 +303,119 @@ async function message(cfg, event) {
     await listItem(cfg, tenant, event.from, result.action);
   }
 
+  if (result.action?.type === 'payment_link') {
+    await sendPaymentLink(cfg, tenant, event.from, result.action);
+  }
+
+  if (result.action?.type === 'password_link') {
+    await sendPasswordLink(cfg, tenant, event.from);
+  }
+
+  if (result.action?.type === 'share_kit') {
+    await sendShareKit(cfg, tenant, event.from, result.action);
+  }
+
   return json({ ok: true });
+}
+
+// SHARE, or SHARE <code>: the item's photos and a caption, for the owner to
+// post on Instagram, TikTok or Facebook themselves. Without a code, the item
+// listed most recently. The caption goes on its own, last, so it is one
+// press-and-hold to copy.
+const SHARE_PHOTOS = 4;
+
+async function sendShareKit(cfg, tenant, chat, { code }) {
+  const product = await db(cfg).one(
+    'products',
+    `tenant_id=eq.${tenant.id}&status=eq.active` +
+      (code ? `&public_code=eq.${encodeURIComponent(code)}` : '') +
+      '&select=id,public_code,title,description,price,condition,images&order=created_at.desc'
+  );
+  if (!product) {
+    await say(
+      cfg,
+      tenant,
+      chat,
+      code
+        ? `I can't find an item for sale with the code *${code}*. The code is at the end of the item's link.`
+        : "You don't have anything for sale yet. Send a photo to list your first item."
+    );
+    return;
+  }
+  if (tenant.status !== 'active') {
+    await say(cfg, tenant, chat, 'Your items get their own links once your store is approved. SHARE works from then on.');
+    return;
+  }
+
+  await say(cfg, tenant, chat, shareKitIntro(product));
+  let sent = 0;
+  for (const path of (product.images ?? []).slice(0, SHARE_PHOTOS)) {
+    try {
+      await sendImage(cfg, cfg.wahaSession, chat, { url: publicUrl(cfg, path) });
+      sent += 1;
+    } catch (err) {
+      console.warn('share kit photo failed:', err?.message ?? err);
+    }
+  }
+  // Photos that wouldn't send are still one tap away on the item's page.
+  if (!sent && product.images?.length) {
+    await say(cfg, tenant, chat, `The photos are on the item's page: ${cfg.publicOrigin ?? ''}/p/${product.public_code}`);
+  }
+  await say(cfg, tenant, chat, shareCaption(product, { origin: cfg.publicOrigin }));
+}
+
+// PASSWORD from a store owner: a new set-password link for the store's owner
+// account, sent back to the store's own number. The number is the store's
+// identity on this channel; the link goes nowhere else.
+async function sendPasswordLink(cfg, tenant, chat) {
+  const owner = await db(cfg).one(
+    'tenant_members',
+    `tenant_id=eq.${tenant.id}&role=eq.owner&select=email&order=invited_at.asc.nullslast`
+  );
+  if (!owner?.email) {
+    await say(cfg, tenant, chat, 'Your dashboard account is created when your store is approved. We will send you the link then.');
+    return;
+  }
+  let link = null;
+  try {
+    ({ link } = await generateInvite(cfg, owner.email, { type: 'recovery', origin: cfg.publicOrigin ?? null, landing: '/welcome' }));
+  } catch (err) {
+    console.error('password link failed:', err?.message ?? err);
+  }
+  await say(
+    cfg,
+    tenant,
+    chat,
+    link ? passwordLinkMessage({ link, email: owner.email }) : "I couldn't make a link just now. Please try again in a few minutes."
+  );
+}
+
+// "LINK JBU4PE 30k 08031234567" from a store owner: a checkout link for one
+// of their items, at the agreed price or the listed one, for that buyer.
+async function sendPaymentLink(cfg, tenant, chat, { code, price, phone }) {
+  if (!cfg.tokenSecret || !cfg.paystackKey) {
+    await say(cfg, tenant, chat, "Online payment isn't set up yet, so I can't make payment links. We'll let you know when it is.");
+    return;
+  }
+  if (tenant.status !== 'active') {
+    await say(cfg, tenant, chat, 'Payment links open once your store is approved.');
+    return;
+  }
+  const product = await db(cfg).one(
+    'products',
+    `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,title,price,status`
+  );
+  if (!product) {
+    await say(cfg, tenant, chat, `I can't find an item with the code *${code}* in your store. The code is under each listing, and at the end of its link.`);
+    return;
+  }
+  if (product.status !== 'active') {
+    await say(cfg, tenant, chat, `*${product.title}* isn't for sale any more (${product.status}).`);
+    return;
+  }
+  const amount = price ?? Number(product.price);
+  const url = await makePaymentLink(cfg, product, amount, { phone });
+  await say(cfg, tenant, chat, paymentLinkMessage({ title: product.title, price: amount, url, phone }));
 }
 
 // What the product actually becomes.
@@ -279,7 +465,11 @@ async function listItem(cfg, tenant, chatId, action) {
   }
 
   const posted = await postToStatus(cfg, tenant, product);
-  await say(cfg, tenant, chatId, listedMessage(product, { origin: cfg.publicOrigin, posted }));
+  // No payout account yet: reminded with every listing (only once payments
+  // are on, since there's nothing to pay out before that).
+  const needsBank = Boolean(cfg.paystackKey) &&
+    !(await db(cfg).one('payout_accounts', `tenant_id=eq.${tenant.id}&select=tenant_id`).catch(() => true));
+  await say(cfg, tenant, chatId, listedMessage(product, { origin: cfg.publicOrigin, posted, needsBank }));
 }
 
 export async function uploadAll(cfg, tenantId, images) {
@@ -300,30 +490,98 @@ export async function uploadAll(cfg, tenantId, images) {
 //
 // Returns true, false or null: posted, could not post, or nothing to post to.
 // The seller is told which, because believing your listings are reaching your
-// contacts when they are not is the worst way for this to fail.
+// contacts when they are not is the worst way for this to fail. The outcome is
+// also recorded against the listing, which is what lights (or reddens) the
+// WhatsApp icon on its dashboard card.
 export async function postToStatus(cfg, tenant, product) {
-  if (!tenant.waha_session || tenant.waha_status !== 'WORKING') return false;
   if (!product.images?.length) return null;
-  if (!cfg.wahaUrl) return false;
+  if (!tenant.waha_session || tenant.waha_status !== 'WORKING' || !cfg.wahaUrl) {
+    await recordPost(cfg, tenant, product, false, 'WhatsApp is not linked');
+    return false;
+  }
 
   const link = cfg.publicOrigin ? `${cfg.publicOrigin}/p/${product.public_code}` : null;
+  // With checkout inside WhatsApp, the post says how to buy it: a reply with
+  // this line quoted is how the bot knows which item (lib/cart.js).
+  const buy = product.public_code && (await checkoutOn(cfg, tenant)) ? `Reply BUY ${product.public_code} to order` : null;
   const caption = [
     product.title,
     `${formatNaira(product.price)} · ${conditionLabel(product.condition)}`,
+    buy,
     link,
   ]
     .filter(Boolean)
     .join('\n');
 
+  let messageId;
   try {
-    await postImageStatus(cfg, tenant.waha_session, {
+    messageId = await postImageStatus(cfg, tenant.waha_session, {
       url: publicUrl(cfg, product.images[0]),
       caption,
     });
-    return true;
   } catch (err) {
     console.error('status post failed:', err?.message ?? err);
+    await recordPost(cfg, tenant, product, false, String(err?.message ?? 'failed').slice(0, 200));
     return false;
+  }
+
+  await recordPost(cfg, tenant, product, true, null);
+  await rememberStatus(cfg, tenant, product, messageId);
+  return true;
+}
+
+// Which item a Status post was, by its WhatsApp ID, so a reply to it names the
+// item even without the caption (lib/cart.js). Every post is kept, not just
+// the latest: a buyer can reply to yesterday's. Best-effort, like recordPost.
+async function rememberStatus(cfg, tenant, product, messageId) {
+  if (!messageId || !product.id) return;
+  try {
+    await db(cfg).insert(
+      'status_posts',
+      { tenant_id: tenant.id, product_id: product.id, message_id: messageId },
+      { onConflict: 'tenant_id,message_id', returning: false }
+    );
+  } catch (err) {
+    console.warn('status post not remembered:', err?.message ?? err);
+  }
+}
+
+// The item a reply is about, from the saved post it quotes.
+async function productForPost(cfg, tenant, messageId) {
+  if (!messageId) return null;
+  const post = await db(cfg).one(
+    'status_posts',
+    `tenant_id=eq.${tenant.id}&message_id=eq.${encodeURIComponent(messageId)}&select=product_id`
+  );
+  if (!post) return null;
+  return db(cfg).one('products', `id=eq.${post.product_id}&tenant_id=eq.${tenant.id}&select=id,public_code,title,price,status,held_by_ref,held_until`);
+}
+
+// One row per listing and channel (the table's unique key), updated in place
+// when a listing is posted again. Best-effort: a post that went out is not
+// undone by a failed write here.
+async function recordPost(cfg, tenant, product, posted, error) {
+  if (!product.id) return;
+  const row = {
+    status: posted ? 'posted' : 'failed',
+    error,
+    ...(posted ? { posted_at: new Date().toISOString() } : {}),
+  };
+  try {
+    const hit = await db(cfg).update(
+      'listing_channel_posts',
+      `product_id=eq.${product.id}&channel=eq.whatsapp`,
+      row
+    );
+    if (!hit.length) {
+      await db(cfg).insert(
+        'listing_channel_posts',
+        { tenant_id: tenant.id, product_id: product.id, channel: 'whatsapp', ...row },
+        { onConflict: 'product_id,channel', returning: false }
+      );
+    }
+  } catch (err) {
+    console.warn('channel post record failed:', err?.message ?? err);
   }
 }
 
@@ -368,29 +626,33 @@ export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession
     await new Promise((resolve) => setTimeout(resolve, pause));
   }
 
+  // Logged before it is sent, not after. On a store's own number WhatsApp
+  // echoes every sent message back as the store's, and this log is how the
+  // bot's own are told apart from the owner typing (ownerTyped()); logging
+  // after the send raced that echo.
+  if (tenant) {
+    try {
+      await db(cfg).insert(
+        'bot_messages',
+        {
+          tenant_id: tenant.id,
+          chat_id: chatId,
+          external_id: `out:${crypto.randomUUID()}`,
+          direction: 'out',
+          body: text,
+        },
+        { returning: false }
+      );
+    } catch (err) {
+      console.warn('outbound log failed:', err?.message ?? err);
+    }
+  }
+
   try {
     await sendText(cfg, session, chatId, text);
   } catch (err) {
     console.error('send failed:', err?.message ?? err);
     return false;
-  }
-
-  if (!tenant) return true;
-
-  try {
-    await db(cfg).insert(
-      'bot_messages',
-      {
-        tenant_id: tenant.id,
-        chat_id: chatId,
-        external_id: `out:${crypto.randomUUID()}`,
-        direction: 'out',
-        body: text,
-      },
-      { returning: false }
-    );
-  } catch (err) {
-    console.warn('outbound log failed:', err?.message ?? err);
   }
   return true;
 }
@@ -411,21 +673,310 @@ function inboundId(event) {
 //
 // Nothing is written for a message the intake does not claim: that is a
 // customer talking to the store, and not ours to log.
-async function intake(cfg, event) {
+// A message on a store's own number: the owner stepping into a chat, the
+// item intake (thrift stores, SELL), or the WhatsApp checkout (Growth and
+// Business, BUY). Everything else is a customer talking to the store and is
+// left alone, unlogged.
+async function storeSession(cfg, event) {
   const tenant = await db(cfg).one(
     'tenants',
     `waha_session=eq.${encodeURIComponent(event.session)}` +
-      '&select=id,slug,name,status,store_type,whatsapp_number,waha_session,waha_status'
+      '&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status'
   );
-  if (!tenant || tenant.status === 'suspended' || tenant.store_type === 'brand') {
+  if (!tenant || tenant.status === 'suspended' || tenant.billing_status === 'paused') {
     return json({ ok: true, ignored: 'tenant session' });
   }
+
+  if (event.kind === 'outgoing') return ownerTyped(cfg, tenant, event);
 
   const conversation = await db(cfg).one(
     'bot_conversations',
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}` +
-      '&select=state,draft,updated_at'
+      '&select=state,draft,updated_at,paused_until'
   );
+
+  // The owner is answering this chat themselves: the bot keeps out of it,
+  // unless it is asked for by name. SELL or BUY <code> is somebody wanting the
+  // bot (often because the owner just told them to send it), so that lifts
+  // the pause.
+  const body = String(event.body ?? '');
+  const asked =
+    SELL.test(body) ||
+    isBuy(event.body) ||
+    (tenant.store_type !== 'brand' && BANK.test(body)) ||
+    // Confirming a payout account change: the bot asked, and this answers it.
+    (conversation?.state === 'bank_verify' && /^\s*(yes|no|y|n)\b/i.test(body));
+  if (conversation?.paused_until && new Date(conversation.paused_until) > new Date()) {
+    if (!asked) return json({ ok: true, ignored: 'owner is handling this chat' });
+    await db(cfg).update(
+      'bot_conversations',
+      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}`,
+      { paused_until: null }
+    );
+  }
+
+  // Where a consignor is paid (lib/consignorBank.js). SELL always starts an
+  // item, even halfway through giving bank details.
+  if (tenant.store_type !== 'brand' && !SELL.test(body) && wantsBank(conversation, body)) {
+    return bankChat(cfg, event, tenant, conversation);
+  }
+
+  const selling = INTAKE_STATES.includes(conversation?.state) || SELL.test(body);
+  if (tenant.store_type !== 'brand' && selling) return intake(cfg, event, tenant, conversation);
+
+  if (await checkoutOn(cfg, tenant)) {
+    const handled = await checkout(cfg, event, tenant, conversation);
+    if (handled) return handled;
+  }
+
+  return json({ ok: true, ignored: 'not for the bot' });
+}
+
+async function checkoutOn(cfg, tenant) {
+  if (!cfg.paystackKey) return false;
+  const row = await db(cfg).one(
+    'tenant_features',
+    `tenant_id=eq.${tenant.id}&flag=eq.whatsapp_checkout&select=enabled`
+  );
+  return Boolean(row?.enabled);
+}
+
+// The store sent a message. If it isn't one the bot just sent (logged before
+// sending, see say()), the owner has stepped into this chat, and the bot stays
+// out of it for OWNER_PAUSE_HOURS.
+const OWNER_PAUSE_HOURS = 12;
+
+async function ownerTyped(cfg, tenant, event) {
+  if (event.source === 'api') return json({ ok: true, ignored: 'our own message' });
+  const since = new Date(Date.now() - 10 * 60_000).toISOString();
+  const ours = await db(cfg).one(
+    'bot_messages',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.to)}&direction=eq.out` +
+      `&body=eq.${encodeURIComponent(event.body ?? '')}&created_at=gte.${since}&select=id`
+  );
+  if (ours) return json({ ok: true, ignored: 'our own message' });
+
+  const until = new Date(Date.now() + OWNER_PAUSE_HOURS * 3_600_000).toISOString();
+  // What the owner typed, so the dashboard can say which chat is on hold
+  // (a chat id is WhatsApp's privacy id, which names nobody).
+  const note = String(event.body ?? '').trim().slice(0, 120) || null;
+  const hit = await db(cfg).update(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.to)}`,
+    { paused_until: until, paused_note: note }
+  );
+  if (!hit.length) {
+    await db(cfg).insert(
+      'bot_conversations',
+      { tenant_id: tenant.id, chat_id: event.to, state: 'idle', draft: {}, paused_until: until, paused_note: note },
+      { onConflict: 'tenant_id,chat_id', returning: false }
+    );
+  }
+  return json({ ok: true, paused: until });
+}
+
+// ── HOLDS, FROM THE DASHBOARD ────────────────────────────────────────────────
+
+// GET /api/waha/holds?tenant=<id>
+//
+// The chats the bot is keeping out of because the owner typed in them, with
+// enough to tell which chat is which: the number where WhatsApp will give it,
+// a name the person gave the bot before, and what the owner last typed.
+// Chats with the store's own number (messaging yourself, a Status post) are
+// left out: nobody there is waiting on the bot.
+async function listHolds(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  let member;
+  try {
+    member = await requireMember(request, cfg, new URL(request.url).searchParams.get('tenant'));
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  const tenant = await db(cfg).one('tenants', `id=eq.${member.tenantId}&select=id,whatsapp_number,waha_session`);
+  if (!tenant) return json({ error: 'No such store' }, 404);
+
+  const rows = await db(cfg).select(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&paused_until=gt.${new Date().toISOString()}` +
+      '&select=chat_id,paused_until,paused_note&order=paused_until.desc&limit=30'
+  );
+
+  const holds = [];
+  for (const row of rows) {
+    const phone = tenant.waha_session && cfg.wahaUrl
+      ? await phoneFor(cfg, tenant.waha_session, row.chat_id).catch(() => null)
+      : phoneFromChatId(row.chat_id);
+    if (phone && phone === tenant.whatsapp_number) continue;
+    holds.push({
+      chat_id: row.chat_id,
+      until: row.paused_until,
+      note: row.paused_note ?? null,
+      phone: phone ?? null,
+      name: await nameFor(cfg, tenant.id, row.chat_id),
+    });
+  }
+  return json({ holds });
+}
+
+async function nameFor(cfg, tenantId, chat) {
+  const q = encodeURIComponent(chat);
+  const cart = await db(cfg)
+    .one('carts', `tenant_id=eq.${tenantId}&chat_id=eq.${q}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`)
+    .catch(() => null);
+  if (cart?.buyer_name) return cart.buyer_name;
+  const sub = await db(cfg)
+    .one('submissions', `tenant_id=eq.${tenantId}&seller_chat_id=eq.${q}&seller_name=not.is.null&select=seller_name&order=created_at.desc`)
+    .catch(() => null);
+  return sub?.seller_name ?? null;
+}
+
+// POST /api/waha/holds/resume { tenant, chat? }
+//
+// The bot answers in that chat again straight away, or in every chat when no
+// chat is named. Any member can: whoever is answering the store's WhatsApp.
+async function resumeHolds(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  const body = await request.json().catch(() => ({}));
+  let member;
+  try {
+    member = await requireMember(request, cfg, body?.tenant);
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  const chat = typeof body?.chat === 'string' && body.chat ? body.chat : null;
+  const cleared = await db(cfg).update(
+    'bot_conversations',
+    `tenant_id=eq.${member.tenantId}&paused_until=not.is.null` + (chat ? `&chat_id=eq.${encodeURIComponent(chat)}` : ''),
+    { paused_until: null, paused_note: null }
+  );
+  return json({ ok: true, resumed: cleared.length });
+}
+
+// ── CHECKOUT INSIDE WHATSAPP ─────────────────────────────────────────────────
+
+// See lib/cart.js for the conversation and lib/cartCheckout.js for the money.
+async function checkout(cfg, event, tenant, conversation) {
+  const { own: typed, quoted: captioned } = codesIn(event);
+  const products = {};
+  // A reply to a post Vendwyze made: its saved ID names the item, and wins
+  // over anything in the caption.
+  const posted = await productForPost(cfg, tenant, event.quotedId);
+  if (posted?.public_code) products[posted.public_code] = posted;
+  const quoted = posted?.public_code ?? captioned;
+  for (const code of new Set([typed, quoted].filter(Boolean))) {
+    if (code in products) continue;
+    products[code] = await db(cfg).one(
+      'products',
+      `tenant_id=eq.${tenant.id}&public_code=eq.${encodeURIComponent(code)}&select=id,public_code,title,price,status,held_by_ref,held_until`
+    );
+  }
+  // Minutes somebody else is paying for each, if they are: not this chat's
+  // own cart, whose link a new BUY replaces (lib/reservations.js).
+  for (const p of Object.values(products)) {
+    if (p) p.busy_minutes = p.held_by_ref && p.held_by_ref === conversation?.draft?.cart_ref ? null : reservedMinutes(p);
+  }
+  const known = await db(cfg).one(
+    'carts',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&buyer_name=not.is.null&select=buyer_name&order=created_at.desc`
+  );
+
+  // A real code to show somebody who sent "buy" alone: the store's newest.
+  const example = BARE_BUY.test(String(event.body ?? ''))
+    ? await db(cfg)
+        .one('products', `tenant_id=eq.${tenant.id}&status=eq.active&select=public_code&order=created_at.desc`)
+        .catch(() => null)
+    : null;
+
+  const result = cartStep(conversation, event, {
+    store: tenant.name,
+    exampleCode: example?.public_code ?? null,
+    storeUrl: cfg.publicOrigin && tenant.slug ? `${cfg.publicOrigin}/s/${tenant.slug}` : null,
+    products,
+    quotedCode: quoted,
+    knownName: known?.buyer_name ?? null,
+  });
+  if (!result) return null;
+
+  // The same replay guard as everywhere else, now that this is ours.
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  const own = { session: tenant.waha_session };
+  let next = result;
+
+  if (result.action?.type === 'abandon') {
+    await abandonCart(cfg, tenant.id, conversation?.draft?.cart_ref).catch(() => {});
+  }
+
+  if (result.action?.type === 'resend') {
+    const url = conversation?.draft?.pay_url;
+    // Only while the link still has everything in it: an item that sold, or
+    // that somebody else took over once this link's hold ran out, means a new
+    // link for the rest.
+    const lost = url ? await cartLost(cfg, tenant.id, conversation?.draft?.cart_ref) : [];
+    if (lost.length) {
+      await abandonCart(cfg, tenant.id, conversation.draft.cart_ref).catch(() => {});
+      const { cart_ref: _r, pay_url: _u, ...draft } = result.draft;
+      next = {
+        state: 'cart_confirm',
+        draft,
+        replies: [
+          `Sorry, ${lost.join(', ')} ${lost.length === 1 ? 'is' : 'are'} no longer available on that link. Reply *PAY* for a new link for the rest.`,
+        ],
+        action: null,
+      };
+    } else {
+      next = { ...result, replies: [url ? `Here's your payment link again:\n${url}` : 'Reply *PAY* to get your payment link.'] };
+    }
+  }
+
+  if (result.action?.type === 'checkout') {
+    const phone = result.action.phone ?? (await phoneFor(cfg, event.session, event.from).catch(() => null));
+    let made;
+    try {
+      made = await createCartCheckout(cfg, tenant, {
+        chat: event.from,
+        phone,
+        items: result.action.items,
+        name: result.action.name,
+        address: result.action.address,
+      });
+    } catch (err) {
+      console.error('cart checkout failed:', err?.message ?? err);
+      made = { error: "I couldn't make the payment link just now. Reply *PAY* to try again in a minute." };
+    }
+    if (made.needPhone) {
+      next = { state: 'cart_phone', draft: result.draft, replies: [ASK_PHONE], action: null };
+    } else if (made.error) {
+      next = { state: 'cart_confirm', draft: result.draft, replies: [made.error], action: null };
+    } else {
+      const replies = [];
+      if (made.dropped?.length) replies.push(`Sorry, ${made.dropped.join(', ')} sold in the meantime, so I've left ${made.dropped.length === 1 ? 'it' : 'them'} out.`);
+      if (made.busy?.length) replies.push(busyLine(made.busy));
+      replies.push(cartPayMessage({ url: made.url, total: made.total, count: made.count, escrow: made.escrow }));
+      next = { state: 'cart_pay', draft: { ...result.draft, phone, cart_ref: made.ref, pay_url: made.url }, replies, action: null };
+    }
+  }
+
+  await persist(cfg, tenant, event.from, conversation, next);
+  for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
+  return json({ ok: true, checkout: next.state });
+}
+
+async function intake(cfg, event, tenant, conversation) {
 
   const previous = await db(cfg).one(
     'submissions',
@@ -504,6 +1055,16 @@ async function fileSubmission(cfg, tenant, event, action) {
 
   await say(cfg, tenant, event.from, receivedMessage(tenant.name), own);
 
+  // Their first item: where to pay them when it sells.
+  const ask = await firstAsk(cfg, tenant, event.from).catch((err) => {
+    console.warn('bank ask skipped:', err?.message ?? err);
+    return null;
+  });
+  if (ask) {
+    await setConversation(cfg, tenant, event.from, ask);
+    for (const reply of ask.replies) await say(cfg, tenant, event.from, reply, own);
+  }
+
   // And the owner, on the platform number where they already talk to us.
   const owner = chatId(tenant.whatsapp_number);
   if (owner) {
@@ -519,6 +1080,127 @@ async function fileSubmission(cfg, tenant, event, action) {
       })
     );
   }
+}
+
+// ── WHERE CONSIGNORS ARE PAID ────────────────────────────────────────────────
+
+// Bank details on the store's own number: after a first item, on BANK, and
+// the confirmation of a change (lib/consignorBank.js).
+async function bankChat(cfg, event, tenant, conversation) {
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  let result;
+  try {
+    result = await bankTurn(cfg, tenant, event.from, conversation, event.body);
+  } catch (err) {
+    console.error('bank turn failed:', err?.message ?? err);
+    result = { state: conversation?.state ?? 'idle', draft: conversation?.draft ?? {}, replies: ["Something went wrong. Please send that again in a minute."] };
+  }
+  if (!result) return json({ ok: true, ignored: 'not about bank details' });
+
+  await setConversation(cfg, tenant, event.from, result);
+  const own = { session: tenant.waha_session };
+  for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
+
+  if (result.notifyOwner) await tellOwnerAboutChange(cfg, tenant, event.from, result.notifyOwner);
+  return json({ ok: true, bank: result.state });
+}
+
+// The owner hears about a change on the platform number: one to approve, or
+// one the consignor said they never asked for.
+export async function tellOwnerAboutChange(cfg, tenant, chat, { kind, change }) {
+  const owner = chatId(tenant.whatsapp_number);
+  if (!owner) return;
+  const named = await db(cfg)
+    .one('submissions', `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(chat)}&seller_name=not.is.null&select=seller_name&order=created_at.desc`)
+    .catch(() => null);
+  const name = named?.seller_name ?? null;
+  const text =
+    kind === 'not_you'
+      ? ownerNotYouMessage({ name, change })
+      : ownerChangeMessage({ name, change, origin: cfg.publicOrigin });
+  await say(cfg, tenant, owner, text);
+}
+
+// The hourly sweep for payout account changes (index.js scheduled):
+//
+//   * a change asked for VERIFY_AFTER_HOURS ago gets its confirmation message
+//     now, from the store's number, so it reaches the phone after whoever
+//     asked may have put it down. Not while they're halfway through offering
+//     an item; the next hour will do.
+//   * a confirmation unanswered for VERIFY_EXPIRES_HOURS cancels the change.
+export async function consignorBankSweep(env, { now = new Date() } = {}) {
+  const cfg = config(env);
+  if (!cfg.supabaseUrl || !cfg.serviceKey || !cfg.wahaUrl) return null;
+  const due = new Date(now.getTime() - VERIFY_AFTER_HOURS * 3_600_000).toISOString();
+  const lapsed = new Date(now.getTime() - VERIFY_EXPIRES_HOURS * 3_600_000).toISOString();
+  let sent = 0;
+  let expired = 0;
+
+  const toVerify = await db(cfg).select(
+    'consignor_account_changes',
+    `status=eq.pending&verify_sent_at=is.null&requested_at=lte.${due}&select=${COLUMNS.consignor_account_change}&order=requested_at.asc&limit=50`
+  );
+  for (const change of toVerify) {
+    const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status,whatsapp_number`);
+    if (!tenant?.waha_session || tenant.waha_status !== 'WORKING') continue;
+    const conv = await db(cfg).one(
+      'bot_conversations',
+      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(change.seller_chat_id)}&select=state,updated_at`
+    );
+    if (INTAKE_BUSY(conv, now)) continue;
+    const claimed = await db(cfg).update(
+      'consignor_account_changes',
+      `id=eq.${change.id}&status=eq.pending&verify_sent_at=is.null`,
+      { verify_sent_at: now.toISOString() }
+    );
+    if (!claimed.length) continue;
+    await setConversation(cfg, tenant, change.seller_chat_id, { state: 'bank_verify', draft: { change_id: change.id } });
+    await say(cfg, tenant, change.seller_chat_id, BANK_SAY.verify(change), { session: tenant.waha_session });
+    sent += 1;
+  }
+
+  const stale = await db(cfg).select(
+    'consignor_account_changes',
+    `status=eq.pending&verified_at=is.null&verify_sent_at=lte.${lapsed}&select=${COLUMNS.consignor_account_change}&limit=50`
+  );
+  for (const change of stale) {
+    const hit = await db(cfg).update(
+      'consignor_account_changes',
+      `id=eq.${change.id}&status=eq.pending&verified_at=is.null`,
+      { status: 'expired' }
+    );
+    if (!hit.length) continue;
+    expired += 1;
+    const tenant = await db(cfg).one('tenants', `id=eq.${change.tenant_id}&select=id,name,waha_session,waha_status`);
+    if (!tenant?.waha_session) continue;
+    const account = await accountFor(cfg, tenant.id, change.seller_chat_id);
+    await setConversation(cfg, tenant, change.seller_chat_id, { state: 'idle', draft: {} });
+    if (account) await say(cfg, tenant, change.seller_chat_id, BANK_SAY.expired(account), { session: tenant.waha_session });
+  }
+
+  return { sent, expired };
+}
+
+// Upsert: the row may or may not be there, and whatever is there is replaced.
+export async function setConversation(cfg, tenant, chat, { state, draft }) {
+  await db(cfg).insert(
+    'bot_conversations',
+    { tenant_id: tenant.id, chat_id: chat, state, draft: draft ?? {}, updated_at: new Date().toISOString() },
+    { onConflict: 'tenant_id,chat_id', merge: true, returning: false }
+  );
 }
 
 // ── OPENING A STORE ──────────────────────────────────────────────────────────
@@ -539,7 +1221,9 @@ async function signup(cfg, event, phone) {
     return json({ ok: true, replayed: true });
   }
 
-  const result = signupStep(current, event);
+  // A web account's code (routes/signup.js): the store is for that account.
+  const webEmail = await accountForCode(cfg, webCodeIn(event.body), phone).catch(() => null);
+  const result = signupStep(current, event, { webEmail });
 
   if (result.state === null) {
     await db(cfg).del('signups', `phone=eq.${phone}`);
@@ -635,6 +1319,15 @@ async function sessionStatus(request, env) {
 
   const qr =
     status === 'SCAN_QR_CODE' ? await getQR(cfg, tenant.waha_session).catch(() => null) : null;
+
+  // A store linked before checkout-in-WhatsApp: bring its webhook up to date.
+  if (status === 'WORKING' && cfg.publicOrigin) {
+    const held = await db(cfg).one('whatsapp_secrets', `tenant_id=eq.${tenant.id}&select=webhook_secret`).catch(() => null);
+    if (held?.webhook_secret) {
+      await ensureStoreWebhook(cfg, tenant, { webhookUrl: `${cfg.publicOrigin}/api/waha/webhook`, secret: held.webhook_secret })
+        .catch((err) => console.warn('store webhook update failed:', err?.message ?? err));
+    }
+  }
 
   return json({
     linked: Boolean(live),

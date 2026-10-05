@@ -1,10 +1,12 @@
 import { require_, originOf } from '../lib/env.js';
+import { COLUMNS } from '../lib/columns.js';
 import { db } from '../lib/supabase.js';
 import { json } from '../lib/http.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { parsePrice } from '../lib/bot.js';
-import { approvedSellerMessage, declinedSellerMessage } from '../lib/intake.js';
-import { postToStatus, say } from './waha.js';
+import { approvedSellerMessage, declinedSellerMessage, paidConsignorMessage } from '../lib/intake.js';
+import { postToStatus, say, setConversation } from './waha.js';
+import { SAY as BANK_SAY, applyChange, accountFor } from '../lib/consignorBank.js';
 
 // Deciding on an item somebody brought to the store.
 //
@@ -22,6 +24,8 @@ const MAX_REASON = 300;
 export async function handleSubmissions(request, env, path) {
   const rest = path.slice('/api/submissions'.length) || '/';
   if (rest === '/decide' && request.method === 'POST') return decide(request, env);
+  if (rest === '/paid' && request.method === 'POST') return markPaid(request, env);
+  if (rest === '/account-change' && request.method === 'POST') return decideAccountChange(request, env);
   return json({ error: 'Not found' }, 404);
 }
 
@@ -47,7 +51,7 @@ async function decide(request, env) {
 
   const submission = await db(cfg).one(
     'submissions',
-    `id=eq.${id}&tenant_id=eq.${tenantId}&select=*`
+    `id=eq.${id}&tenant_id=eq.${tenantId}&select=${COLUMNS.submission}`
   );
   if (!submission) return json({ error: 'No such item' }, 404);
   if (submission.status !== 'pending') {
@@ -158,4 +162,120 @@ async function decline(cfg, member, tenant, submission, body) {
 async function tellSeller(cfg, tenant, submission, text) {
   if (!tenant.waha_session || tenant.waha_status !== 'WORKING') return false;
   return say(cfg, tenant, submission.seller_chat_id, text, { session: tenant.waha_session });
+}
+
+// POST /api/submissions/paid { tenant, id, note? }
+//
+// The store has paid a consignor for an item that sold. The platform does not
+// move this money: the store pays them the way it always has, and this records
+// it and tells the consignor on WhatsApp. Owner and manager, because it is a
+// statement about money.
+async function markPaid(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  const body = await request.json().catch(() => ({}));
+  const tenantId = body?.tenant;
+  const id = String(body?.id ?? '');
+
+  let member;
+  try {
+    member = await requireMember(request, cfg, tenantId, { roles: ['owner', 'manager'] });
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'Bad item' }, 400);
+
+  const submission = await db(cfg).one('submissions', `id=eq.${id}&tenant_id=eq.${tenantId}&select=${COLUMNS.submission}`);
+  if (!submission) return json({ error: 'No such item' }, 404);
+  if (!submission.sold_at) return json({ error: "This item hasn't sold yet." }, 409);
+  if (submission.consignor_paid_at) return json({ error: 'Already marked as paid.' }, 409);
+
+  const note = String(body?.note ?? '').trim().replace(/\s+/g, ' ').slice(0, 200) || null;
+
+  // Only an unpaid row matches, so two presses record one payment and send
+  // one message.
+  const rows = await db(cfg).update(
+    'submissions',
+    `id=eq.${id}&consignor_paid_at=is.null`,
+    { consignor_paid_at: new Date().toISOString(), consignor_paid_by: member.userId, consignor_paid_note: note }
+  );
+  if (!rows.length) return json({ error: 'Already marked as paid.' }, 409);
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,name,waha_session,waha_status`);
+  const notified = await tellSeller(
+    cfg,
+    tenant,
+    submission,
+    paidConsignorMessage({
+      store: tenant.name,
+      title: submission.title,
+      amount: submission.owed_amount ?? submission.asking_price,
+      note,
+    })
+  );
+
+  return json({ ok: true, notified });
+}
+
+// POST /api/submissions/account-change { tenant, id, decision: 'approve' | 'reject' }
+//
+// The store's half of a consignor changing where they're paid. Their own half
+// is the confirmation the bot sends ~2 hours after they ask; the change
+// happens only when both have said yes, whichever comes second. Owner and
+// manager, like marking a consignor paid.
+async function decideAccountChange(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  const body = await request.json().catch(() => ({}));
+  const tenantId = body?.tenant;
+  const id = String(body?.id ?? '');
+  const decision = body?.decision;
+
+  let member;
+  try {
+    member = await requireMember(request, cfg, tenantId, { roles: ['owner', 'manager'] });
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'Bad change' }, 400);
+  if (!['approve', 'reject'].includes(decision)) return json({ error: 'Bad decision' }, 400);
+
+  const at = new Date().toISOString();
+  const rows = await db(cfg).update(
+    'consignor_account_changes',
+    `id=eq.${id}&tenant_id=eq.${tenantId}&status=eq.pending&store_decision=eq.pending`,
+    {
+      store_decision: decision === 'approve' ? 'approved' : 'rejected',
+      decided_by: member.userId,
+      decided_at: at,
+      ...(decision === 'reject' ? { status: 'rejected' } : {}),
+    }
+  );
+  if (!rows.length) return json({ error: 'This change was already decided, or has lapsed.' }, 409);
+  const change = rows[0];
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${tenantId}&select=id,name,waha_session,waha_status`);
+  const tell = (text) =>
+    tenant?.waha_session && tenant.waha_status === 'WORKING'
+      ? say(cfg, tenant, change.seller_chat_id, text, { session: tenant.waha_session })
+      : false;
+
+  if (decision === 'reject') {
+    const account = await accountFor(cfg, tenantId, change.seller_chat_id);
+    // A confirmation still waiting on them is moot now.
+    const conv = await db(cfg).one(
+      'bot_conversations',
+      `tenant_id=eq.${tenantId}&chat_id=eq.${encodeURIComponent(change.seller_chat_id)}&select=state,draft`
+    );
+    if (conv?.state === 'bank_verify' && conv.draft?.change_id === change.id) {
+      await setConversation(cfg, tenant, change.seller_chat_id, { state: 'idle', draft: {} });
+    }
+    if (account) await tell(BANK_SAY.storeRejected(tenant.name, account));
+    return json({ ok: true, status: 'rejected' });
+  }
+
+  // Approved. Applied now if they've already confirmed; otherwise when they do.
+  const applied = await applyChange(cfg, change);
+  if (applied) await tell(BANK_SAY.applied(change));
+  return json({ ok: true, status: applied ? 'applied' : 'waiting_for_seller' });
 }

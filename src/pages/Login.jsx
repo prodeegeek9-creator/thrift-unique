@@ -1,12 +1,10 @@
 import { useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../lib/AuthContext.jsx';
 import { BrandLockup } from '../components/ui/BrandMark.jsx';
 import LogoLoader from '../components/ui/LogoLoader.jsx';
-import { setupDeepLink } from '../lib/whatsapp.js';
-
-const setupLink = setupDeepLink();
+import GoogleButton from '../components/GoogleButton.jsx';
 
 export default function Login() {
   const { user, loading } = useAuth();
@@ -16,7 +14,7 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  if (loading) return <LogoLoader fullScreen label="Unique Thrift" />;
+  if (loading) return <LogoLoader fullScreen label="Vendwyze" />;
   if (user) return <Navigate to={location.state?.from ?? '/dashboard'} replace />;
 
   async function submit(e) {
@@ -47,6 +45,8 @@ export default function Login() {
               Your store runs on WhatsApp. This is where you check on it.
             </p>
           </div>
+
+          <GoogleButton />
 
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-muted">Email</span>
@@ -88,15 +88,11 @@ export default function Login() {
         </form>
 
         <p className="mt-4 text-center text-xs text-muted">
-          No store yet?{' '}
-          {setupLink ? (
-            <a href={setupLink} className="font-medium text-green underline-offset-2 hover:underline">
-              Message us on WhatsApp
-            </a>
-          ) : (
-            'Message us on WhatsApp'
-          )}{' '}
-          and we'll set one up.
+          New to Vendwyze?{' '}
+          <Link to="/signup" className="font-medium text-green underline-offset-2 hover:underline">
+            Create an account
+          </Link>{' '}
+          and open your store on WhatsApp.
         </p>
       </div>
     </div>

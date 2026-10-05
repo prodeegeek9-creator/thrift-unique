@@ -599,3 +599,118 @@ test('the typing pause is brief, and longer for a longer reply', () => {
   assert.ok(typingDelay(cfg, 'x'.repeat(60)) > typingDelay(cfg, 'x'.repeat(10)));
   assert.equal(typingDelay({ wahaTypingMs: 0 }, 'anything'), 0);
 });
+
+// ── THE OWNER'S MENU ─────────────────────────────────────────────────────────
+
+const OWNER_CTX = {
+  tenant: { name: 'Ada Thrift', slug: 'ada-thrift', status: 'active', whatsapp_number: '2348012345678' },
+  origin: 'https://ut.ng',
+  pendingItems: 2,
+};
+
+test('a greeting or anything unclear gets the menu, with items waiting', () => {
+  for (const body of ['hi', 'Menu', 'help', 'what can you do?', '']) {
+    const r = step(null, text(body), OWNER_CTX);
+    assert.equal(r.state, 'idle', body);
+    assert.match(r.replies[0], /Hi Ada Thrift!/);
+    assert.match(r.replies[0], /\*STORE\*/);
+    assert.match(r.replies[0], /\*REVIEW\* for items people sent you \(2 waiting\)/);
+    assert.match(r.replies[0], /\*DASHBOARD\*/);
+  }
+});
+
+test('the menu words answer, and do not start a listing', () => {
+  const store = step(null, text('store'), OWNER_CTX);
+  assert.equal(store.state, 'idle');
+  assert.match(store.replies[0], /https:\/\/ut\.ng\/s\/ada-thrift/);
+
+  const review = step(null, text('REVIEW'), OWNER_CTX);
+  assert.match(review.replies[0], /2 items waiting/);
+  assert.match(review.replies[0], /https:\/\/ut\.ng\/dashboard\/submissions/);
+  assert.match(review.replies[0], /https:\/\/wa\.me\/2348012345678\?text=SELL/);
+
+  const dash = step(null, text('dashboard'), OWNER_CTX);
+  assert.match(dash.replies[0], /https:\/\/ut\.ng\/dashboard/);
+
+  // "list" is still how a listing starts.
+  assert.equal(step(null, text('list'), OWNER_CTX).state, 'photo');
+});
+
+test('a store waiting for approval is told its page is not live yet', () => {
+  const r = step(null, text('link'), { ...OWNER_CTX, tenant: { ...OWNER_CTX.tenant, status: 'onboarding' } });
+  assert.match(r.replies[0], /once your store is approved/);
+});
+
+test('a brand store has no review queue in its menu', () => {
+  const brand = { ...OWNER_CTX, tenant: { ...OWNER_CTX.tenant, store_type: 'brand' } };
+  assert.doesNotMatch(step(null, text('hi'), brand).replies[0], /REVIEW/);
+  assert.match(step(null, text('review'), brand).replies[0], /nothing to review/);
+});
+
+test('PASSWORD asks for a set-password link, and the menu offers it', async () => {
+  const { step, menuMessage } = await import('../lib/bot.js');
+  for (const text of ['PASSWORD', 'forgot password', 'reset password']) {
+    const r = step(null, { body: text }, { tenant: { name: 'Shop', status: 'active' } });
+    assert.deepEqual(r.action, { type: 'password_link' }, text);
+  }
+  assert.match(menuMessage({ tenant: { name: 'Shop' } }), /PASSWORD/);
+});
+
+// The Oluwafemi case: "list a new item", then the homepage's "Hi! I want to
+// set up my store." That text became the item's name and the bot then asked
+// for a price forever.
+test('a greeting mid-listing is never taken as the item name or a price', async () => {
+  const { step } = await import('../lib/bot.js');
+  const ctx = { tenant: { name: 'Oluwafemi', status: 'active', store_type: 'brand' } };
+
+  // Nothing entered yet: back to the menu, not an item called "Hi! …".
+  let r = step({ state: 'photo', draft: { images: [] }, updated_at: new Date().toISOString() }, { body: 'Hi! I want to set up my store.' }, ctx);
+  assert.equal(r.state, 'idle');
+  assert.equal(r.draft.title, undefined);
+  assert.match(r.replies[0], /Here's what you can do/);
+
+  // The "list a new item" text again just starts over.
+  r = step({ state: 'photo', draft: { images: [] }, updated_at: new Date().toISOString() }, { body: 'Hi! I want to list a new item.\nStore: oluwafemi' }, ctx);
+  assert.equal(r.state, 'photo');
+
+  // Part-way through: kept, and told where they are and how to stop.
+  const draft = { title: 'Oat Biscuit', images: [{ url: 'u', mimetype: 'image/jpeg' }] };
+  r = step({ state: 'price', draft, updated_at: new Date().toISOString() }, { body: 'hello' }, ctx);
+  assert.equal(r.state, 'price');
+  assert.deepEqual(r.draft, draft);
+  assert.match(r.replies[0], /middle of listing \*Oat Biscuit\*/);
+  assert.match(r.replies[0], /CANCEL/);
+
+  // A real price still works, and a name like "Hi-top sneakers" is still a name.
+  r = step({ state: 'price', draft, updated_at: new Date().toISOString() }, { body: '35k' }, ctx);
+  assert.equal(r.state, 'condition');
+  r = step({ state: 'title', draft: { images: draft.images }, updated_at: new Date().toISOString() }, { body: 'Hi-top sneakers' }, ctx);
+  assert.equal(r.draft.title, 'Hi-top sneakers');
+});
+
+test('SHARE asks for the share kit, with or without a code, and the menu and listed message offer it', async () => {
+  const { step, menuMessage, listedMessage } = await import('../lib/bot.js');
+  const ctx = { tenant: { name: 'Shop', status: 'active' } };
+  assert.deepEqual(step(null, { body: 'SHARE' }, ctx).action, { type: 'share_kit', code: null });
+  assert.deepEqual(step(null, { body: 'share jbu4pe' }, ctx).action, { type: 'share_kit', code: 'JBU4PE' });
+  assert.equal(step(null, { body: 'share my store with friends' }, ctx).action?.type === 'share_kit', false);
+  assert.match(menuMessage(ctx), /SHARE code/);
+  assert.match(listedMessage({ title: 'Boots', price: 1000, public_code: 'AB12' }, { origin: 'https://x.test' }), /Reply \*SHARE\*/);
+});
+
+test('LINK finds the buyer’s number however it is typed, and the price around it', async () => {
+  const { linkArgs } = await import('../lib/bot.js');
+  const cases = [
+    ['30k 08031234567', '2348031234567', '30k'],
+    ['08031234567 30k', '2348031234567', '30k'],
+    ['30k 0803 123 4567', '2348031234567', '30k'],
+    ['+234 803 123 4567 35,000', '2348031234567', '35,000'],
+    ['0803-123-4567', '2348031234567', ''],
+    ['35000', null, '35000'],
+    ['1500000 30k', null, '1500000 30k'],
+    ['', null, ''],
+  ];
+  for (const [text, phone, rest] of cases) {
+    assert.deepEqual(linkArgs(text), { phone, rest }, text);
+  }
+});

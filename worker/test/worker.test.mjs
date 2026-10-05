@@ -15,7 +15,7 @@ function seed({ escrow = true, commission_pct = 8, order = {} } = {}) {
   return {
     tenants: [{ id: TENANT, slug: 'store', name: 'Store', commission_pct }],
     tenant_features: [{ tenant_id: TENANT, flag: 'escrow', enabled: escrow }],
-    products: [{ id: 'prod-1', title: 'Jacket', images: [], condition: 'good' }],
+    products: [{ id: 'prod-1', tenant_id: TENANT, title: 'Jacket', images: [], condition: 'good', status: 'active' }],
     orders: [
       {
         id: 'order-1',
@@ -23,7 +23,8 @@ function seed({ escrow = true, commission_pct = 8, order = {} } = {}) {
         order_code: 'UT-1001',
         product_id: 'prod-1',
         buyer_id: 'buyer-1',
-        amount: 0,
+        // The price, as checkout creates it; Paystack's payment must match.
+        amount: 35000,
         commission: 0,
         status: 'awaiting_payment',
         escrow_status: 'none',
@@ -322,6 +323,41 @@ test('the sweep releases only holds past their deadline', async () => {
   } finally { restore(); }
 });
 
+test('the sweep leaves a hold alone while its dispute is open, and releases it once resolved', async () => {
+  const past = new Date(Date.now() - 86_400_000).toISOString();
+  const held = (id) => ({ id, tenant_id: TENANT, order_code: `UT-${id}`, amount: 10000, commission: 800,
+    escrow_status: 'held', status: 'escrow', confirm_deadline: past, confirmed_at: null });
+
+  const sb = makeFakeSupabase({
+    tenants: [{ id: TENANT, commission_pct: 8 }],
+    tenant_features: [],
+    orders: [held('open'), held('review'), held('settled'), held('plain')],
+    disputes: [
+      { id: 'd1', tenant_id: TENANT, order_id: 'open', status: 'open' },
+      { id: 'd2', tenant_id: TENANT, order_id: 'review', status: 'under_review' },
+      { id: 'd3', tenant_id: TENANT, order_id: 'settled', status: 'resolved' },
+    ],
+    payouts: [], payout_items: [],
+  });
+
+  const restore = installFetch({ supabase: sb });
+  try {
+    const first = await releaseExpiredHolds(env());
+    assert.equal(first.released, 2, 'the undisputed one and the one whose dispute is over');
+    const status = (id) => sb.tables.orders.find((o) => o.id === id).escrow_status;
+    assert.equal(status('open'), 'held', 'the buyer can still be refunded');
+    assert.equal(status('review'), 'held');
+    assert.equal(status('settled'), 'released');
+    assert.equal(status('plain'), 'released');
+
+    // Resolved without a release or refund: the next run lets it go.
+    sb.tables.disputes.find((d) => d.id === 'd1').status = 'resolved';
+    await releaseExpiredHolds(env());
+    assert.equal(status('open'), 'released');
+    assert.equal(status('review'), 'held');
+  } finally { restore(); }
+});
+
 // ── the shared product link ──────────────────────────────────────────────────
 
 test('an unconfigured Worker still serves the page rather than failing', async () => {
@@ -335,6 +371,55 @@ test('an unconfigured Worker still serves the page rather than failing', async (
     );
     assert.equal(res.status, 200);
     assert.match(await res.text(), /<div id="root">/);
+  } finally { restore(); }
+});
+
+// ── what reaches the Worker ──────────────────────────────────────────────────
+
+test('every path the Worker answers is routed to it before the asset layer', async () => {
+  // A path missing from run_worker_first never reaches the Worker: the asset
+  // layer answers it, and a POST there is a 405. Listing only "/" once took
+  // the WhatsApp and Paystack webhooks down.
+  const { readFile } = await import('node:fs/promises');
+  const raw = await readFile(new URL('../../wrangler.jsonc', import.meta.url), 'utf8');
+  const config = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ''));
+  const first = config.assets.run_worker_first;
+
+  if (first === true) return;
+  assert.ok(Array.isArray(first), 'run_worker_first is a list or true');
+  for (const pattern of ['/api/*', '/', '/p/*', '/s/*']) {
+    assert.ok(first.includes(pattern), `${pattern} reaches the Worker`);
+  }
+});
+
+// ── the homepage ─────────────────────────────────────────────────────────────
+
+test('the homepage is indexable and previews as the platform', async () => {
+  const restore = installFetch({ supabase: makeFakeSupabase(seed()) });
+  try {
+    const res = await worker.fetch(new Request('https://example.com/'), env(), {});
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /content="index, follow"/);
+    assert.doesNotMatch(html, /noindex/);
+    assert.match(html, /<title>Vendwyze: run your thrift store or brand from WhatsApp<\/title>/);
+    assert.match(html, /og:url" content="https:\/\/example\.com\/"/);
+    assert.match(html, /<div id="root">/);
+  } finally { restore(); }
+});
+
+// The blank-page bug: the Worker must never answer with an empty document,
+// whether the browser is revalidating its cache or not.
+test('the homepage is never an empty page, even when the browser revalidates', async () => {
+  const restore = installFetch({ supabase: makeFakeSupabase(seed()) });
+  try {
+    for (const headers of [{}, { 'if-none-match': '"abc"' }]) {
+      const res = await worker.fetch(new Request('https://example.com/', { headers }), env(), {});
+      assert.equal(res.status, 200);
+      const html = await res.text();
+      assert.match(html, /<div id="root">/, `empty page with ${JSON.stringify(headers)}`);
+      assert.match(html, /<script type="module"/);
+    }
   } finally { restore(); }
 });
 

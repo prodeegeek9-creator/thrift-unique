@@ -1,15 +1,16 @@
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import Icon from '../../components/ui/Icon.jsx';
 import { useTenant } from '../../lib/TenantContext.jsx';
-import { fetchUsage, planFeatures, nextTier, ALWAYS_INCLUDED } from '../../lib/billing.js';
+import { fetchUsage, planFeatures, ALWAYS_INCLUDED } from '../../lib/billing.js';
 import { keys } from '../../lib/queryKeys.js';
+import PlanFeeCard from '../../components/PlanFeeCard.jsx';
+import PlanPicker from '../../components/PlanPicker.jsx';
 
 const TIER_NAME = { starter: 'Starter', growth: 'Growth', business: 'Business' };
 
 export default function Billing() {
-  const { tenant } = useTenant();
+  const { tenant, role } = useTenant();
   const tenantId = tenant?.id;
 
   const { data: usage } = useQuery({
@@ -18,14 +19,14 @@ export default function Billing() {
     enabled: Boolean(tenantId),
   });
 
-  const { included, locked } = planFeatures(tenant);
-  const upgrade = nextTier(tenant);
+  // What else each plan adds is on the plan cards below (PlanPicker).
+  const { included } = planFeatures(tenant);
 
   return (
     <>
       <PageHeader title="Billing & Plan" subtitle="Your plan, your usage, and what else is available." />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <div className="rounded-card bg-sidebar p-5 text-white">
             <p className="text-[11px] uppercase tracking-wider text-white/50">Your plan</p>
@@ -50,7 +51,7 @@ export default function Billing() {
             </div>
           </div>
 
-          <div className="card grid gap-6 p-4 sm:grid-cols-2">
+          <div className="card p-4">
             <div>
               <h2 className="mb-3 text-sm font-semibold text-ink">Your features</h2>
               <ul className="space-y-2">
@@ -63,45 +64,20 @@ export default function Billing() {
               </ul>
             </div>
 
-            {locked.length ? (
-              <div>
-                <h2 className="mb-3 text-sm font-semibold text-muted">
-                  {TIER_NAME[upgrade] ?? 'Higher plan'} features
-                </h2>
-                <ul className="space-y-2">
-                  {locked.map((f) => (
-                    <Feature key={f.flag} label={f.label} />
-                  ))}
-                </ul>
-              </div>
-            ) : null}
           </div>
         </div>
 
-        {upgrade ? (
-          <aside className="card h-fit overflow-hidden">
-            <div className="bg-sidebar px-5 py-6 text-center">
-              <h2 className="font-display text-lg font-semibold text-white">
-                More reach. More sales.
-              </h2>
-              <p className="mt-1 text-sm text-white/60">All from WhatsApp.</p>
-            </div>
-            <div className="p-4">
-              <p className="text-sm leading-relaxed text-text">
-                {upgrade === 'growth'
-                  ? 'Growth adds Instagram and Facebook, buyer protection and buyer tracking.'
-                  : 'Business adds TikTok, staff accounts, full analytics and dedicated support.'}
-              </p>
-              <Link
-                to="/dashboard/help"
-                className="mt-4 block rounded-pill bg-green py-2.5 text-center text-sm font-semibold text-white"
-              >
-                Explore {TIER_NAME[upgrade]}
-              </Link>
-            </div>
-          </aside>
-        ) : null}
+        <div className="space-y-4">
+        <PlanFeeCard tenantId={tenantId} role={role} />
+
+        </div>
       </div>
+
+      {role === 'owner' || role === 'manager' ? (
+        <div className="mt-6">
+          <PlanPicker tenantId={tenantId} />
+        </div>
+      ) : null}
     </>
   );
 }

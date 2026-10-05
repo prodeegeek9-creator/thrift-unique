@@ -91,7 +91,8 @@ async function invite(request, env) {
   let created;
   try {
     created = await generateInvite(cfg, email, {
-      redirectTo: cfg.publicOrigin ? `${cfg.publicOrigin}/dashboard` : null,
+      origin: cfg.publicOrigin ?? null,
+      landing: '/welcome',
       data: { invited_to: member.tenantId, display_name: name },
     });
   } catch (err) {

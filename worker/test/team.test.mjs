@@ -66,7 +66,11 @@ function installAuth({ supabase, accounts = {}, generateStatus = 200 }) {
       return new Response(
         JSON.stringify({
           user: { id, email: body.email },
-          properties: { action_link: `https://project.supabase.co/auth/v1/verify?token=abc-${id}` },
+          properties: {
+            action_link: `https://project.supabase.co/auth/v1/verify?token=abc-${id}`,
+            hashed_token: `hashed-${id}`,
+            verification_type: body.type,
+          },
         }),
         { status: 200 }
       );
@@ -215,13 +219,14 @@ test('somebody without an account gets one, and the owner gets the link', async 
     const payload = await res.json();
     assert.equal(res.status, 200);
     assert.equal(payload.status, 'invited');
-    assert.match(payload.link, /^https:\/\/project\.supabase\.co\/auth\/v1\/verify/);
+    // Our own page, not Supabase's one-time link: a preview fetch of this
+    // changes nothing, where one of Supabase's would spend it.
+    assert.match(payload.link, /^https:\/\/uniquethrift\.ng\/welcome#token_hash=hashed-user-new-1&type=invite$/);
 
     assert.equal(generated.length, 1);
     assert.equal(generated[0].type, 'invite');
     assert.equal(generated[0].email, 'new@example.com');
-    // Where they land after setting a password.
-    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fdashboard/);
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fwelcome/);
 
     const added = supabase.tables.tenant_members.find((m) => m.email === 'new@example.com');
     assert.equal(added.role, 'staff');
@@ -332,7 +337,7 @@ test('an unset PUBLIC_ORIGIN falls back to the host the request came in on', asy
     );
 
     assert.equal(res.status, 200);
-    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Fexample\.com%2Fdashboard/);
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Fexample\.com%2Fwelcome/);
   } finally {
     restore();
   }
@@ -348,12 +353,12 @@ test('a configured PUBLIC_ORIGIN wins over the request host', async () => {
     await worker.fetch(
       call({ token: 'tok-owner', body: { tenant: TENANT, email: 'new@example.com', role: 'staff' } }),
       // A trailing slash is the obvious way to set this by hand, and would
-      // otherwise produce "https://uniquethrift.ng//dashboard".
+      // otherwise produce "https://uniquethrift.ng//welcome".
       env({ PUBLIC_ORIGIN: 'https://uniquethrift.ng/' }),
       {}
     );
 
-    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fdashboard/);
+    assert.match(generated[0].url, /redirect_to=https%3A%2F%2Funiquethrift\.ng%2Fwelcome/);
   } finally {
     restore();
   }
