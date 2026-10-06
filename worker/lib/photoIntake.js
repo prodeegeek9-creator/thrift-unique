@@ -86,7 +86,7 @@ const SAY = {
     `What kind of item is it?\n\n${menu}\n\nReply with the number. Reply *cancel* any time.`,
   badCategory: (menu) => `Reply with one of these numbers:\n\n${menu}`,
   noCategories: "Sorry — we can't take items over WhatsApp right now. Please message the store directly.",
-  askTitle: 'What is the item called? (e.g. "Black Zara blazer, size M")',
+  askTitle: (example) => `What is the item called? (e.g. "${example || 'Black Zara blazer, size M'}")`,
   askPrice: 'How much do you want for it? (e.g. 15000 or 15k)',
   badPrice: "I didn't catch a price. Send the amount on its own — 15000, or 15k.",
   askCondition:
@@ -102,10 +102,14 @@ const SAY = {
       `*${draft.title}*`,
       categoryName,
       `Your price: ${formatNaira(draft.price)}`,
-      conditionLabel(draft.condition),
+      // Not when the category decided it: "Brand new" under a tray of
+      // chin chin reads as a question nobody asked.
+      draft.preset_condition ? null : conditionLabel(draft.condition),
       ...(draft.flags ?? []).map((f) => FLAG_SUMMARY[f] ?? f),
       `From: ${draft.name}`,
-    ].join('\n') +
+    ]
+      .filter(Boolean)
+      .join('\n') +
     '\n\nReply *YES* and I\'ll tell you which photos to send, or *CANCEL*.',
   reviewAgain: "Reply *YES* and I'll tell you which photos to send, or *CANCEL*.",
   cancelled: 'Cancelled. Nothing was sent. Message *SELL* any time to offer an item.',
@@ -250,18 +254,31 @@ export function photoIntakeStep(conversation, message, ctx = {}) {
       if (!picked) return reply('pi_category', draft, SAY.badCategory(menu(categories)));
       return reply(
         'pi_title',
-        { ...draft, category: picked.slug, category_name: picked.name, ask_flags: flagsToAsk(rules, picked.slug), flags: [] },
-        SAY.askTitle
+        {
+          ...draft,
+          category: picked.slug,
+          category_name: picked.name,
+          // What the category already says (migration 0047): an example name
+          // in its own terms, and for food or handmade, the condition.
+          title_example: picked.title_example ?? null,
+          preset_condition: picked.default_condition ?? null,
+          ask_flags: flagsToAsk(rules, picked.slug),
+          flags: [],
+        },
+        SAY.askTitle(picked.title_example)
       );
     }
 
     case 'pi_title':
-      if (!text || SELL.test(text)) return reply('pi_title', draft, SAY.askTitle);
+      if (!text || SELL.test(text)) return reply('pi_title', draft, SAY.askTitle(draft.title_example));
       return reply('pi_price', { ...draft, title: text.slice(0, MAX_TITLE) }, SAY.askPrice);
 
     case 'pi_price': {
       const price = parsePrice(text);
       if (price == null) return reply('pi_price', draft, SAY.badPrice);
+      if (draft.preset_condition) {
+        return afterFlags({ ...draft, price, condition: draft.preset_condition, flag_index: 0 }, ctx, store);
+      }
       return reply('pi_condition', { ...draft, price }, SAY.askCondition);
     }
 
@@ -316,7 +333,7 @@ function ask(state, draft, ctx) {
     case 'pi_category':
       return SAY.badCategory(menu(ctx.categories ?? []));
     case 'pi_title':
-      return SAY.askTitle;
+      return SAY.askTitle(draft.title_example);
     case 'pi_price':
       return SAY.askPrice;
     case 'pi_condition':
@@ -328,7 +345,7 @@ function ask(state, draft, ctx) {
     case 'pi_review':
       return SAY.reviewAgain;
     default:
-      return SAY.askTitle;
+      return SAY.askTitle(draft.title_example);
   }
 }
 

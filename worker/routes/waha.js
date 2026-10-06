@@ -1205,7 +1205,7 @@ async function photoIntake(cfg, event, tenant, conversation) {
       `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(event.from)}` +
         '&seller_name=not.is.null&select=seller_name&order=created_at.desc'
     ),
-    db(cfg).select('photo_categories', 'active=eq.true&select=slug,name&order=name.asc'),
+    db(cfg).select('photo_categories', 'active=eq.true&select=slug,name,default_condition,title_example&order=name.asc'),
     db(cfg).select('store_photo_categories', `tenant_id=eq.${tenant.id}&accepted=eq.false&select=category`),
     db(cfg).rpc('store_shot_rules_for', { p_tenant_id: tenant.id }),
   ]);

@@ -119,6 +119,11 @@ the seller is asked for it "if it has a screen" (`AI_FLAGS` in
 finish. The AI may label a photo as any shot of the category; the database
 alone decides what is still missing.
 
+A category settles what it can (migration 0047): `default_condition` skips
+the condition question and files the item with that one (Food and Handmade:
+brand new), and `title_example` is the example in "What is the item called?",
+so food isn't asked whether it's fairly used or shown a Zara blazer.
+
 One photo can count for several shots (migration 0046): the AI names the
 main one in `shot_type` and any others it clearly shows in
 `listing_photos.also_shot_types` — a phone's front showing a cracked screen
