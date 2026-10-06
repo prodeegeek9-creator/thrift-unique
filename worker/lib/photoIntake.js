@@ -59,7 +59,6 @@ export const MAX_EARLY_PHOTOS = 6;
 // the safe direction to fail in. Add the question when adding the flag.
 export const FLAG_QUESTIONS = {
   has_flaws: 'Does it have any flaws — a stain, tear, scratch, crack or dent? Reply *YES* or *NO*.',
-  is_phone: 'Is it a phone? Reply *YES* or *NO*.',
   packaged: 'Does it come sealed in packaging with a label? Reply *YES* or *NO*.',
 };
 
@@ -68,6 +67,7 @@ export const FLAG_QUESTIONS = {
 // the seller sends it only if it applies.
 export const AI_FLAGS = {
   has_screen: 'if it has a screen',
+  is_phone: "if it's a phone",
 };
 
 const FLAG_SUMMARY = {

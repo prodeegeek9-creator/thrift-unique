@@ -118,23 +118,22 @@ test('no flaws means no flaw close-up', () => {
   assert.doesNotMatch(last.replies[0], /Flaw/);
 });
 
-test('every flag the category asks about is asked, once, in rule order — and an unknown flag never is', () => {
+test('every flag the category asks about is asked, once — and the AI\'s flags and unknown ones never are', () => {
   const { results, last } = run([
     text('SELL'),
     text('3'),
     text('iPhone 12'),
     text('250k'),
     text('2'),
-    text('yes'), // is a phone
     text('no'), // no flaws
     text('Tobi'),
     text('yes'),
   ]);
-  assert.match(results[4].replies[0], /phone/i);
-  assert.match(results[5].replies[0], /flaws/);
-  assert.equal(results[6].state, 'pi_name');
-  assert.deepEqual(last.action.item.flags, ['is_phone']);
-  assert.match(last.replies[0], /About phone/);
+  // No "is it a phone?": the AI decides that from the photos.
+  assert.match(results[4].replies[0], /flaws/);
+  assert.equal(results[5].state, 'pi_name');
+  assert.deepEqual(last.action.item.flags, []);
+  assert.match(last.replies[0], /About phone \(if it's a phone\)/);
 });
 
 test('a category with no conditional rules goes straight from condition to name', () => {
@@ -281,10 +280,10 @@ test('a summary missing something after a deploy starts over rather than filing 
 test('shotsFor and flagsToAsk read the rules the way the database does', () => {
   assert.deepEqual(shotsFor(RULES, 'clothing'), { needed: ['Front', 'Back', 'Size/brand label'], optional: ['Worn on a model'] });
   assert.deepEqual(shotsFor(RULES, 'clothing', ['has_flaws']).needed.at(-1), 'Flaw close-up');
-  assert.deepEqual(flagsToAsk(RULES, 'gadgets'), ['is_phone', 'has_flaws'], 'has_screen is the AI\'s to decide, not a question');
+  assert.deepEqual(flagsToAsk(RULES, 'gadgets'), ['has_flaws'], 'has_screen and is_phone are the AI\'s to decide, not questions');
   // A shot the AI decides on is asked for with its condition spelled out,
   // and plainly once the flag is set.
-  assert.deepEqual(shotsFor(RULES, 'gadgets').needed, ['Front', 'Screen on (if it has a screen)']);
+  assert.deepEqual(shotsFor(RULES, 'gadgets').needed, ['Front', 'Screen on (if it has a screen)', "About phone (if it's a phone)"]);
   assert.deepEqual(shotsFor(RULES, 'gadgets', ['has_screen', 'is_phone']).needed, ['Front', 'Screen on', 'About phone']);
   assert.deepEqual(flagsToAsk(RULES, 'shoes'), []);
 });
