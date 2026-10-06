@@ -1138,7 +1138,41 @@ const CHECK_SAY = {
   closed: (store) => `That item has already gone to ${store}. Send *SELL* to offer another one.`,
   ended: 'That item timed out before all the photos arrived. Send *SELL* to start again.',
   draftFailed: 'Something went wrong saving that. Send *SELL* to try again.',
+  alreadyCounted: (counted, missing) =>
+    `You've sent this photo already — it counts as your *${listOf(counted)}*.` +
+    (missing.length ? ` Please send a separate photo for: ${missing.join(', ')}.` : ''),
+  earlierItem: 'You sent this photo for an earlier item. Please take a new photo of this one.',
 };
+
+const listOf = (labels) =>
+  labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
+
+// A duplicate, told in terms of what the earlier copy already counts for —
+// "it counts as your Flaw close-up, still needed: Front" says what to do next,
+// where "already sent" alone left a seller resending the same photo. Null
+// when there is nothing more useful to say than the service's own message.
+async function duplicateMessage(cfg, draftId, photoId) {
+  if (!photoId) return null;
+  const matches = await db(cfg).rpc('find_similar_photos', { p_photo_id: photoId });
+  const match = Array.isArray(matches) ? matches[0] : null;
+  if (!match) return null;
+  if (match.draft_id !== draftId) return CHECK_SAY.earlierItem;
+
+  const [earlier, draft] = await Promise.all([
+    db(cfg).one('listing_photos', `id=eq.${match.photo_id}&select=status,shot_type,also_shot_types`),
+    db(cfg).one('listing_drafts', `id=eq.${draftId}&select=category,missing_shots`),
+  ]);
+  if (earlier?.status !== 'passed' || !earlier.shot_type || !draft) return null;
+
+  const rules = await db(cfg).select(
+    'photo_shot_rules',
+    `category=eq.${encodeURIComponent(draft.category)}&select=shot_type,label`
+  );
+  const label = Object.fromEntries((rules ?? []).map((r) => [r.shot_type, r.label]));
+  const counted = [earlier.shot_type, ...(earlier.also_shot_types ?? [])].map((s) => label[s] ?? s);
+  const missing = (draft.missing_shots ?? []).map((s) => label[s] ?? s);
+  return CHECK_SAY.alreadyCounted(counted, missing);
+}
 
 async function photoIntake(cfg, event, tenant, conversation) {
   const own = { session: tenant.waha_session };
@@ -1359,7 +1393,14 @@ async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId })
   if (body.repeat_request) return body;
 
   if (body.status === 'rejected') {
-    await say(cfg, tenant, chat, body.message || CHECK_SAY.failed, aboutIt);
+    const better =
+      body.reason === 'duplicate'
+        ? await duplicateMessage(cfg, draftId, body.photo_id).catch((err) => {
+            console.warn('duplicate lookup failed:', err?.message ?? err);
+            return null;
+          })
+        : null;
+    await say(cfg, tenant, chat, better || body.message || CHECK_SAY.failed, aboutIt);
   } else if (ack && body.message) {
     await say(cfg, tenant, chat, body.message, own);
   }

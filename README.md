@@ -119,6 +119,14 @@ the seller is asked for it "if it has a screen" (`AI_FLAGS` in
 finish. The AI may label a photo as any shot of the category; the database
 alone decides what is still missing.
 
+One photo can count for several shots (migration 0046): the AI names the
+main one in `shot_type` and any others it clearly shows in
+`listing_photos.also_shot_types` — a phone's front showing a cracked screen
+covers both Front and Flaw close-up — and `listing_draft_missing_shots()`
+counts either. When the photo-check service refuses a duplicate, the Worker
+says what the earlier copy already counts for and what is still needed,
+rather than just "already sent".
+
 A reply about one photo (rejected, or failed to check) quotes it, from the
 Worker and from the review service alike, so a seller who sends four at once
 can see which one to retake. Only a real WhatsApp message id is quoted.
