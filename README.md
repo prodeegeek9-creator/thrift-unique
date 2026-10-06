@@ -123,9 +123,12 @@ A reply about one photo (rejected, or failed to check) quotes it, from the
 Worker and from the review service alike, so a seller who sends four at once
 can see which one to retake. Only a real WhatsApp message id is quoted.
 
-The blur minimum is 50 (migration 0043): WhatsApp's 720×1280 copies and plain
-backgrounds pull the score down, and sharp items were scoring 78–92 against
-the old 100.
+The blur check is a floor, not a judge: 25 (migrations 0043, 0045). A
+Laplacian score can't tell a plain surface from a soft one — a sharp photo of
+a phone's black, switched-off screen scored 43, a sharp remote on a plain
+floor 92 against the original 100 — so the plain code only stops photos
+blurred past recognition, and the review AI, which sees the photo, rejects
+the rest as 'blurry' when they are.
 
 The AI's main job is naming each photo's shot (front, label, flaws…); the
 size, light, blur and duplicate checks are plain code. Doing without it
