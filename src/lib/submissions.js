@@ -11,7 +11,7 @@ import { callWorker } from './api.js';
 const COLUMNS =
   'id, seller_chat_id, seller_name, seller_phone, title, asking_price, condition, images, status, ' +
   'decline_reason, product_id, decided_at, created_at, ' +
-  'sold_at, owed_amount, consignor_paid_at, consignor_paid_note';
+  'sold_at, owed_amount, consignor_paid_at, consignor_paid_note, ai_note';
 
 // The tabs on "Items to review", each a slice of the same table:
 //

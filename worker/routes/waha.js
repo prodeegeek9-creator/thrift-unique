@@ -1105,6 +1105,7 @@ export async function announceSubmission(cfg, tenant, chat, submission) {
         price: submission.asking_price,
         name: submission.seller_name,
         origin: cfg.publicOrigin,
+        note: submission.ai_note,
       })
     );
   }

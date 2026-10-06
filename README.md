@@ -105,7 +105,25 @@ group by u.draft_id, d.extracted->>'title', t.name
 order by max(u.created_at) desc;
 ```
 
-The AI's only job is naming each photo's shot (front, label, flaws…); the
+**What the AI reads from the item** (migration 0044): the same call that
+names each photo's shot also describes the item — what it looks like,
+whether it has a screen, whether it fits the category the seller picked, and
+visible problems (dirty, stained, damaged, worn, missing parts). It is saved
+on the draft (`listing_drafts.ai_item`) and, when the item is filed, becomes
+`submissions.ai_issues` / `ai_note`: an "⚠️ AI noticed" line on the review
+card and in the owner's WhatsApp alert. A note for the owner, never a reason
+to refuse a photo. The seller gets a tip if it looks dirty. Its first read
+also decides `has_screen`, which a gadget's "Screen on" shot now depends on:
+the seller is asked for it "if it has a screen" (`AI_FLAGS` in
+`lib/photoIntake.js`), never asked the question, so a remote or a charger can
+finish. The AI may label a photo as any shot of the category; the database
+alone decides what is still missing.
+
+The blur minimum is 50 (migration 0043): WhatsApp's 720×1280 copies and plain
+backgrounds pull the score down, and sharp items were scoring 78–92 against
+the old 100.
+
+The AI's main job is naming each photo's shot (front, label, flaws…); the
 size, light, blur and duplicate checks are plain code. Doing without it
 entirely means a *guided* photo stage instead — the bot asks for one shot at a
 time ("now the size label") and takes the photo as that shot — which costs
@@ -1095,25 +1113,24 @@ From the spec, this README's earlier notes, and decisions made while building:
 4. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers), and
    once the list under "Before live money" is done.
-5. **AI cost recording: on hold at step 2 of 3.** Migration 0042 (the
-   `ai_usage` table) is applied, and `photo_review_worker.py` on the photo
-   server is patched (`record_usage()`; the previous file is
-   `photo_review_worker.py.bak2`), but the service has **not been restarted**,
-   so the running copy doesn't record yet. A restart for any reason picks the
-   patch up; without prices it records tokens with an empty `cost_usd`, which
-   is harmless. To finish: add `OPENAI_PRICE_INPUT_PER_M`,
+5. **AI cost: prices not set yet.** The photo-review
+   service records every call in `ai_usage` (patched and restarted; the file
+   before that patch is `photo_review_worker.py.bak2`), but without prices
+   `cost_usd` stays empty — the tokens are kept, so it can be worked out
+   later. To finish: add `OPENAI_PRICE_INPUT_PER_M`,
    `OPENAI_PRICE_CACHED_PER_M` and `OPENAI_PRICE_OUTPUT_PER_M` (your model's
    prices from openai.com/api/pricing) to `/opt/vendwyze-photo-check/.env`,
-   `sudo systemctl restart vendwyze-photo-review`, send one SELL with photos,
-   and run the cost query in the photo-review section.
+   then `sudo systemctl restart vendwyze-photo-review`.
 6. **A photo stage with no AI** (guided, one shot at a time), if the per-item
    cost ever outweighs it — see "What the AI costs" above.
 7. **Photo quality per store** (Relaxed / Standard / Strict): size, light and
    blur thresholds are platform-wide in the photo-check service today.
 8. **Loose ends from the photo-review setup**: rotate the WAHA webhook secrets
    that were pasted into a chat; move the photo-check URL off
-   `wa.prodeegee.com` to a Vendwyze domain once there is one; reword the
-   service's "your listing is ready" message for items brought to a store.
+   `wa.prodeegee.com` to a Vendwyze domain once there is one.
+9. **The AI choosing the category** from the first photo, instead of the
+   seller, if the "wrong category" notes (0044) show sellers often pick wrong.
+   It would mean asking for one photo before the shot list.
 
 ## Setup
 

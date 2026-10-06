@@ -26,6 +26,7 @@ const RULES = [
   { category: 'clothing', shot_type: 'flaw', label: 'Flaw close-up', requirement: 'conditional', condition_flag: 'has_flaws', sort_order: 4 },
   { category: 'clothing', shot_type: 'on_model', label: 'Worn on a model', requirement: 'optional', condition_flag: null, sort_order: 5 },
   { category: 'gadgets', shot_type: 'front', label: 'Front', requirement: 'required', condition_flag: null, sort_order: 1 },
+  { category: 'gadgets', shot_type: 'screen_on', label: 'Screen on', requirement: 'conditional', condition_flag: 'has_screen', sort_order: 3 },
   { category: 'gadgets', shot_type: 'about_screen', label: 'About phone', requirement: 'conditional', condition_flag: 'is_phone', sort_order: 4 },
   { category: 'gadgets', shot_type: 'flaw', label: 'Flaw close-up', requirement: 'conditional', condition_flag: 'has_flaws', sort_order: 5 },
   { category: 'gadgets', shot_type: 'mystery', label: 'Mystery', requirement: 'conditional', condition_flag: 'unknown_flag', sort_order: 6 },
@@ -255,7 +256,11 @@ test('a summary missing something after a deploy starts over rather than filing 
 test('shotsFor and flagsToAsk read the rules the way the database does', () => {
   assert.deepEqual(shotsFor(RULES, 'clothing'), { needed: ['Front', 'Back', 'Size/brand label'], optional: ['Worn on a model'] });
   assert.deepEqual(shotsFor(RULES, 'clothing', ['has_flaws']).needed.at(-1), 'Flaw close-up');
-  assert.deepEqual(flagsToAsk(RULES, 'gadgets'), ['is_phone', 'has_flaws']);
+  assert.deepEqual(flagsToAsk(RULES, 'gadgets'), ['is_phone', 'has_flaws'], 'has_screen is the AI\'s to decide, not a question');
+  // A shot the AI decides on is asked for with its condition spelled out,
+  // and plainly once the flag is set.
+  assert.deepEqual(shotsFor(RULES, 'gadgets').needed, ['Front', 'Screen on (if it has a screen)']);
+  assert.deepEqual(shotsFor(RULES, 'gadgets', ['has_screen', 'is_phone']).needed, ['Front', 'Screen on', 'About phone']);
   assert.deepEqual(flagsToAsk(RULES, 'shoes'), []);
 });
 

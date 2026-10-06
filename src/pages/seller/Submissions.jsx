@@ -269,6 +269,14 @@ function SubmissionCard({ item, tenantId, account, canSeeAccounts }) {
           ) : null}
         </p>
 
+        {/* What the photo-review AI noticed (migration 0044). Worth a look
+            before deciding, never decided for the owner. */}
+        {item.ai_note ? (
+          <p className="mt-2 rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink">
+            <span className="font-semibold">⚠️ AI noticed:</span> {item.ai_note}
+          </p>
+        ) : null}
+
         {item.status === 'declined' && item.decline_reason ? (
           <p className="mt-2 text-xs text-muted">Reason: {item.decline_reason}</p>
         ) : null}
