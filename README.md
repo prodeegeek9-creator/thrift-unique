@@ -119,6 +119,10 @@ the seller is asked for it "if it has a screen" (`AI_FLAGS` in
 finish. The AI may label a photo as any shot of the category; the database
 alone decides what is still missing.
 
+A reply about one photo (rejected, or failed to check) quotes it, from the
+Worker and from the review service alike, so a seller who sends four at once
+can see which one to retake. Only a real WhatsApp message id is quoted.
+
 The blur minimum is 50 (migration 0043): WhatsApp's 720×1280 copies and plain
 backgrounds pull the score down, and sharp items were scoring 78–92 against
 the old 100.

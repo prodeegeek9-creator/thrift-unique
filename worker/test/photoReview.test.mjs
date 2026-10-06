@@ -350,8 +350,15 @@ test("a rejected photo's reason is passed on to the seller", async () => {
       : { status: 200, body: pending() }
   );
   try {
-    await toStore([...DETAILS.map((t) => fromConsignor(t)), fromConsignor('', { media: wahaFile('blurry') })]);
-    assert.match(toSeller(waha).at(-1).text, /blurry/);
+    await toStore([
+      ...DETAILS.map((t) => fromConsignor(t)),
+      fromConsignor('', { media: wahaFile('blurry'), id: 'false_234809@c.us_BLURRY1' }),
+    ]);
+    const answer = toSeller(waha).at(-1);
+    assert.match(answer.text, /blurry/);
+    // Quoting the photo it means, so a seller who sent four can tell which.
+    assert.equal(answer.reply_to, 'false_234809@c.us_BLURRY1');
+    assert.ok(toSeller(waha).slice(0, -1).every((m) => !m.reply_to), 'nothing else is a reply');
   } finally {
     restore();
   }

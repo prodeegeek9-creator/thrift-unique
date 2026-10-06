@@ -614,7 +614,7 @@ async function persist(cfg, tenant, chatId, previous, result) {
 // The log write is best-effort on purpose: a message the seller has already
 // received is not un-sent by a failed insert, and throwing here would make
 // WAHA retry the whole conversation turn.
-export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession } = {}) {
+export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession, replyTo } = {}) {
   if (!cfg.wahaUrl) {
     console.warn('waha not configured; would have sent:', text.slice(0, 80));
     return false;
@@ -650,7 +650,7 @@ export async function say(cfg, tenant, chatId, text, { session = cfg.wahaSession
   }
 
   try {
-    await sendText(cfg, session, chatId, text);
+    await sendText(cfg, session, chatId, text, { replyTo });
   } catch (err) {
     console.error('send failed:', err?.message ?? err);
     return false;
@@ -1324,6 +1324,10 @@ async function createDraft(cfg, tenant, chat, item) {
 // localhost) host into media URLs, and the service needs the public one.
 async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId }) {
   const own = { session: tenant.waha_session };
+  // Anything said about this photo in particular quotes it, so a seller who
+  // sent several at once can see which one it means. Only a real WhatsApp
+  // id can be quoted, never the stand-ins made up when one is missing.
+  const aboutIt = { ...own, replyTo: image.id ?? undefined };
 
   let res;
   let body;
@@ -1337,7 +1341,7 @@ async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId })
     body = await res.json().catch(() => null);
   } catch (err) {
     console.error('photo check unreachable:', err?.message ?? err);
-    await say(cfg, tenant, chat, CHECK_SAY.failed, own);
+    await say(cfg, tenant, chat, CHECK_SAY.failed, aboutIt);
     return null;
   }
 
@@ -1347,7 +1351,7 @@ async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId })
       body?.error === 'draft_closed' ? CHECK_SAY.closed(tenant.name)
       : body?.error === 'media_too_large' ? CHECK_SAY.tooLarge
       : CHECK_SAY.failed;
-    await say(cfg, tenant, chat, text, own);
+    await say(cfg, tenant, chat, text, aboutIt);
     return null;
   }
 
@@ -1355,7 +1359,7 @@ async function checkPhoto(cfg, tenant, chat, draftId, image, { ack, messageId })
   if (body.repeat_request) return body;
 
   if (body.status === 'rejected') {
-    await say(cfg, tenant, chat, body.message || CHECK_SAY.failed, own);
+    await say(cfg, tenant, chat, body.message || CHECK_SAY.failed, aboutIt);
   } else if (ack && body.message) {
     await say(cfg, tenant, chat, body.message, own);
   }
