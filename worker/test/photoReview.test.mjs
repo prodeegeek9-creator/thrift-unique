@@ -151,7 +151,11 @@ const DETAILS = ['SELL', '1', 'Black Zara blazer', '15k', '3', 'no', 'Ada Obi', 
 
 // store_shot_rules_for(), as 0041 defines it: the defaults with this store's
 // overrides applied, and switched-off shots left out.
+// What find_similar_photos answers, per test: (args, tables) => rows.
+let similar = () => [];
+
 const RPCS = {
+  find_similar_photos: (args, tables) => similar(args, tables),
   store_shot_rules_for: ({ p_tenant_id, p_category = null }, tables) =>
     tables.photo_shot_rules
       .filter((r) => p_category == null || r.category === p_category)
@@ -361,6 +365,53 @@ test("a rejected photo's reason is passed on to the seller", async () => {
     assert.ok(toSeller(waha).slice(0, -1).every((m) => !m.reply_to), 'nothing else is a reply');
   } finally {
     restore();
+  }
+});
+
+test('a duplicate is explained by what the earlier copy already counts for', async () => {
+  // The earlier copy passed as the flaw close-up and also shows the back;
+  // the label is still to come.
+  similar = (args, tables) => {
+    const draft = tables.listing_drafts[0];
+    draft.missing_shots = ['label'];
+    tables.listing_photos.push({
+      id: 'earlier', tenant_id: TENANT, draft_id: draft.id, status: 'passed', shot_type: 'flaw', also_shot_types: ['back'],
+    });
+    return [{ photo_id: 'earlier', draft_id: draft.id, distance: 0 }];
+  };
+  const { waha, restore } = setup({}, () => ({
+    status: 200,
+    body: pending({ status: 'rejected', reason: 'duplicate', message: "You've already sent this photo." }),
+  }));
+  try {
+    await toStore([...DETAILS.map((t) => fromConsignor(t)), fromConsignor('', { media: wahaFile('again') })]);
+    assert.equal(
+      toSeller(waha).at(-1).text,
+      "You've sent this photo already — it counts as your *Flaw close-up and Back*. Please send a separate photo for: Size/brand label."
+    );
+  } finally {
+    similar = () => [];
+    restore();
+  }
+});
+
+test("a duplicate of another item's photo, or one not yet reviewed, is told plainly", async () => {
+  for (const [answer, expected] of [
+    [() => [{ photo_id: 'old', draft_id: 'some-other-draft', distance: 1 }], /earlier item/],
+    [() => [], /^You've already sent this photo\.$/],
+  ]) {
+    similar = answer;
+    const { waha, restore } = setup({}, () => ({
+      status: 200,
+      body: pending({ status: 'rejected', reason: 'duplicate', message: "You've already sent this photo." }),
+    }));
+    try {
+      await toStore([...DETAILS.map((t) => fromConsignor(t)), fromConsignor('', { media: wahaFile('again') })]);
+      assert.match(toSeller(waha).at(-1).text, expected);
+    } finally {
+      similar = () => [];
+      restore();
+    }
   }
 });
 
