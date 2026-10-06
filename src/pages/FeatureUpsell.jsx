@@ -36,6 +36,10 @@ const COPY = {
     title: 'Post to your own Facebook Page automatically',
     body: 'Same listing, posted to your Page as you, the moment you send it to the bot. Nothing to copy, paste or re-upload.',
   },
+  photo_review: {
+    title: 'Get usable photos the first time',
+    body: "Every photo people send with an item is checked as it arrives. Blurry, dark or wrong photos are sent back, and sellers are told exactly which shots are missing, so items reach your review queue ready to list.",
+  },
   analytics: {
     title: 'See which channel actually sells',
     body: 'Sales over time, average order value, and a breakdown of which channel the money came from — WhatsApp, Instagram, Facebook or TikTok. Stop guessing which posting is worth the effort.',

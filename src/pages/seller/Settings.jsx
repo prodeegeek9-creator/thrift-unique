@@ -9,10 +9,10 @@ import { tenantScope } from '../../lib/queryKeys.js';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { useMyProfile } from '../../lib/profile.js';
 import DetailsForm from '../../components/DetailsForm.jsx';
-import PhotoRequirements from '../../components/PhotoRequirements.jsx';
+import PhotoRequirements, { PhotoRequirementsLocked } from '../../components/PhotoRequirements.jsx';
 
 export default function Settings() {
-  const { tenant, role } = useTenant();
+  const { tenant, role, can } = useTenant();
   const toast = useToast();
   const qc = useQueryClient();
   const isOwner = role === 'owner';
@@ -122,11 +122,15 @@ export default function Settings() {
         )}
       </form>
 
-      {/* Only where the photo-review intake runs: a thrift store with the
-          photo_review flag on. Explicitly true — hasFeature() treats a flag
-          with no tier as on by default, which is wrong for a rollout switch. */}
-      {tenant && tenant.store_type !== 'brand' && tenant.features?.photo_review === true ? (
-        <PhotoRequirements tenant={tenant} isOwner={isOwner} />
+      {/* Thrift stores only: a brand sells its own stock, nobody brings it
+          items. The AI photo check is Growth+ (migration 0042); a Starter
+          store keeps the plain intake and sees what it would get. */}
+      {tenant && tenant.store_type !== 'brand' ? (
+        can('photo_review') ? (
+          <PhotoRequirements tenant={tenant} isOwner={isOwner} />
+        ) : (
+          <PhotoRequirementsLocked />
+        )
       ) : null}
 
       <YourDetails />

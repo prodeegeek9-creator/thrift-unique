@@ -38,9 +38,12 @@ Their tables were first created by hand on the live database;
 `0038_photo_review.sql` brings them into the repo, closes the default grants
 they were created with, and links a submission to its draft.
 
-**This is now the canonical intake**, for stores with the `photo_review`
-flag on (a `tenant_features` row; off unless set). The old one
-(`worker/lib/intake.js`) still runs for everyone else, and a conversation
+**This is now the canonical intake** for Growth and Business stores:
+`photo_review` is a Growth flag like escrow (migration 0042), seeded with the
+others and flipped by a plan change, and the platform can still switch it on
+or off for one store by hand. Starter stores keep the old one
+(`worker/lib/intake.js`, no photo checks, no AI) and see the Photo
+requirements card locked with a Growth badge. A conversation
 finishes in whichever flow it started in. The two are not parallel systems
 any more — the new one *feeds* the old one's end:
 
@@ -84,6 +87,29 @@ photos, so loosening one can make a waiting item ready at once. A store that
 declines every category tells anyone who sends SELL it isn't taking items
 over WhatsApp. Photo *quality* thresholds (size, light, blur) are still
 platform-wide, in photo-check.
+
+**What the AI costs** (`ai_usage`, migration 0042): the photo-review service
+writes one row per OpenAI call — store, draft, model, photos, input / cached /
+output tokens, and `cost_usd` worked out from `OPENAI_PRICE_INPUT_PER_M`,
+`OPENAI_PRICE_CACHED_PER_M` and `OPENAI_PRICE_OUTPUT_PER_M` in its `.env`
+(US dollars per million tokens; without them only the tokens are kept).
+Platform data: no grant to anon or a signed-in user. Cost per item:
+
+```sql
+select d.extracted->>'title' as item, t.name as store, count(*) as ai_calls,
+       sum(u.images) as photos, sum(u.cost_usd) as cost_usd
+from ai_usage u
+join tenants t on t.id = u.tenant_id
+left join listing_drafts d on d.id = u.draft_id
+group by u.draft_id, d.extracted->>'title', t.name
+order by max(u.created_at) desc;
+```
+
+The AI's only job is naming each photo's shot (front, label, flaws…); the
+size, light, blur and duplicate checks are plain code. Doing without it
+entirely means a *guided* photo stage instead — the bot asks for one shot at a
+time ("now the size label") and takes the photo as that shot — which costs
+nothing per item but can't tell when somebody sends the wrong thing.
 
 Both services and the Worker talk to the same self-hosted WAHA (session
 names like `ut-platform`, `ut-kay-stores` are this project's tenants).

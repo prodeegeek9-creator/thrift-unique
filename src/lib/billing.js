@@ -86,6 +86,7 @@ const FEATURE_LABELS = {
   whatsapp_checkout: 'Checkout inside WhatsApp',
   publish_instagram: 'Instagram',
   publish_facebook: 'Facebook',
+  photo_review: 'AI photo checks',
   analytics: 'Advanced analytics',
   team: 'Staff accounts',
   publish_tiktok: 'TikTok',

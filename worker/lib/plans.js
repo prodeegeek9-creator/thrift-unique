@@ -31,6 +31,7 @@ export const FLAG_MIN_TIER = {
   whatsapp_checkout: 'growth',
   publish_instagram: 'growth',
   publish_facebook: 'growth',
+  photo_review: 'growth',
   analytics: 'business',
   team: 'business',
   publish_tiktok: 'business',
@@ -53,7 +54,7 @@ export const tierRank = (tier) => TIERS.indexOf(tier);
 // posting wait on Meta's and TikTok's reviews, so they are "coming soon".
 export const PLAN_PITCH = {
   starter: ['WhatsApp listing bot', 'WhatsApp Status posting', 'Your own store page', 'Checkout and payment links'],
-  growth: ['Buyer protection (payment held until the buyer confirms)', 'Checkout inside WhatsApp: a cart and one payment link', 'Your buyer list', 'Dispute handling', `${COMMISSION.growth}% commission instead of ${COMMISSION.starter}%`],
+  growth: ['Buyer protection (payment held until the buyer confirms)', 'Checkout inside WhatsApp: a cart and one payment link', 'Your buyer list', 'Dispute handling', 'AI photo checks on items people bring you', `${COMMISSION.growth}% commission instead of ${COMMISSION.starter}%`],
   business: ['Sales analytics', 'Staff accounts', 'Priority support'],
 };
 export const COMING_SOON = { growth: 'Instagram and Facebook posting', business: 'TikTok posting and WooCommerce sync' };
