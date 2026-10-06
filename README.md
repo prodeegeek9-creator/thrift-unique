@@ -115,7 +115,8 @@ card and in the owner's WhatsApp alert. A note for the owner, never a reason
 to refuse a photo. The seller gets a tip if it looks dirty. Its first read
 also decides `has_screen`, which a gadget's "Screen on" shot now depends on:
 the seller is asked for it "if it has a screen" (`AI_FLAGS` in
-`lib/photoIntake.js`), never asked the question, so a remote or a charger can
+`lib/photoIntake.js`), never asked the question. `is_phone` works the same
+way: "About phone (if it's a phone)", decided by the AI, not asked, so a remote or a charger can
 finish. The AI may label a photo as any shot of the category; the database
 alone decides what is still missing.
 
