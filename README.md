@@ -1095,6 +1095,25 @@ From the spec, this README's earlier notes, and decisions made while building:
 4. **Live payments**: switch Paystack from test to live once the business
    account is verified (Transfers enabled, OTP off for API transfers), and
    once the list under "Before live money" is done.
+5. **AI cost recording: on hold at step 2 of 3.** Migration 0042 (the
+   `ai_usage` table) is applied, and `photo_review_worker.py` on the photo
+   server is patched (`record_usage()`; the previous file is
+   `photo_review_worker.py.bak2`), but the service has **not been restarted**,
+   so the running copy doesn't record yet. A restart for any reason picks the
+   patch up; without prices it records tokens with an empty `cost_usd`, which
+   is harmless. To finish: add `OPENAI_PRICE_INPUT_PER_M`,
+   `OPENAI_PRICE_CACHED_PER_M` and `OPENAI_PRICE_OUTPUT_PER_M` (your model's
+   prices from openai.com/api/pricing) to `/opt/vendwyze-photo-check/.env`,
+   `sudo systemctl restart vendwyze-photo-review`, send one SELL with photos,
+   and run the cost query in the photo-review section.
+6. **A photo stage with no AI** (guided, one shot at a time), if the per-item
+   cost ever outweighs it — see "What the AI costs" above.
+7. **Photo quality per store** (Relaxed / Standard / Strict): size, light and
+   blur thresholds are platform-wide in the photo-check service today.
+8. **Loose ends from the photo-review setup**: rotate the WAHA webhook secrets
+   that were pasted into a chat; move the photo-check URL off
+   `wa.prodeegee.com` to a Vendwyze domain once there is one; reword the
+   service's "your listing is ready" message for items brought to a store.
 
 ## Setup
 
