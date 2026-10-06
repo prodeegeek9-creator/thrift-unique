@@ -29,6 +29,7 @@ export const FLAG_MIN_TIER = {
   whatsapp_checkout: 'growth',  // cart and payment inside the store's WhatsApp chat
   publish_instagram: 'growth',
   publish_facebook: 'growth',
+  photo_review: 'growth',       // AI photo checks on items people bring the store
 
   // Business — the bespoke, high-ticket tier.
   analytics: 'business',        // sales trend + channel attribution

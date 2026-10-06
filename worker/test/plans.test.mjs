@@ -113,6 +113,7 @@ test('on the free trial an upgrade is immediate: plan, features and standard com
     assert.equal(tenantRow(sb).tier, 'growth');
     assert.equal(tenantRow(sb).commission_pct, 7);
     assert.equal(flag(sb, 'escrow'), true);
+    assert.equal(flag(sb, 'photo_review'), true, 'the AI photo check comes with Growth');
     assert.equal(flag(sb, 'analytics'), false);
   } finally { restore(); }
 });
@@ -190,6 +191,7 @@ test('a downgrade waits for the end of the paid month, bills the lower price, th
     assert.equal(tenantRow(sb).tier, 'starter');
     assert.equal(tenantRow(sb).commission_pct, 8);
     assert.equal(tenantRow(sb).next_tier, null);
+    assert.equal(flag(sb, 'photo_review'), false, 'Starter goes back to the plain intake');
   } finally { restore(); }
 });
 

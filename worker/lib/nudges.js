@@ -33,6 +33,7 @@ const FEATURE_NAMES = {
   whatsapp_checkout: 'checkout inside WhatsApp',
   publish_instagram: 'Instagram posting',
   publish_facebook: 'Facebook posting',
+  photo_review: 'AI photo checks',
   analytics: 'sales analytics',
   team: 'staff accounts',
   publish_tiktok: 'TikTok posting',

@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import TierBadge from './ui/TierBadge.jsx';
 import { keys } from '../lib/queryKeys.js';
 import { useToast } from '../lib/ToastContext.jsx';
 import {
@@ -127,6 +129,30 @@ export default function PhotoRequirements({ tenant, isOwner }) {
           {!isOwner ? <p className="mt-2 text-xs text-muted">Only the store owner can change these.</p> : null}
         </>
       )}
+    </section>
+  );
+}
+
+// What a Starter store sees in its place: the plain intake has no photo
+// checks to configure, so say what Growth adds rather than show dead controls.
+export function PhotoRequirementsLocked() {
+  return (
+    <section className="card mt-4 max-w-lg p-5">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
+        Photo requirements <TierBadge flag="photo_review" />
+      </h2>
+      <p className="mt-0.5 text-sm text-muted">
+        On Growth, every photo people send with an item is checked as it arrives: blurry, dark
+        or wrong photos are sent back, and sellers are told exactly which shots are missing
+        before the item reaches your review queue. You choose which categories you take and
+        which shots each one needs.
+      </p>
+      <Link
+        to="/dashboard/billing?plan=growth"
+        className="mt-3 inline-block text-sm font-semibold text-green underline-offset-2 hover:underline"
+      >
+        See Growth
+      </Link>
     </section>
   );
 }
