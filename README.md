@@ -69,6 +69,22 @@ and `PHOTO_CHECK_KEY` (a secret, the same value as the service's
 its flag says. The URL must be a hostname with HTTPS — a Worker cannot call a
 bare IP, and the key travels in a header.
 
+**Each store sets its own expectations** (`0041_store_photo_requirements.sql`,
+Dashboard → Settings → Photo requirements, owner only): which categories it
+takes (`store_photo_categories`), and per shot Required / Optional / Off
+(`store_shot_rules`). Both store only the *differences* from the platform
+defaults in `photo_shot_rules` — setting a shot back to its default deletes
+the row — so a store that never opens the card follows the defaults as they
+change. The main shot can't be changed, and a shot that depends on a question
+(flaws, a phone) can only be left on or switched off; a trigger enforces both.
+`store_shot_rules_for()` gives a store's effective rules (the Worker uses it
+to tell sellers what to send), `listing_draft_missing_shots()` reads the same
+overrides, and changing a rule re-checks the store's drafts still waiting on
+photos, so loosening one can make a waiting item ready at once. A store that
+declines every category tells anyone who sends SELL it isn't taking items
+over WhatsApp. Photo *quality* thresholds (size, light, blur) are still
+platform-wide, in photo-check.
+
 Both services and the Worker talk to the same self-hosted WAHA (session
 names like `ut-platform`, `ut-kay-stores` are this project's tenants).
 

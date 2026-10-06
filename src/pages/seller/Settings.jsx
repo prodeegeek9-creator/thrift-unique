@@ -9,6 +9,7 @@ import { tenantScope } from '../../lib/queryKeys.js';
 import { useAuth } from '../../lib/AuthContext.jsx';
 import { useMyProfile } from '../../lib/profile.js';
 import DetailsForm from '../../components/DetailsForm.jsx';
+import PhotoRequirements from '../../components/PhotoRequirements.jsx';
 
 export default function Settings() {
   const { tenant, role } = useTenant();
@@ -120,6 +121,13 @@ export default function Settings() {
           </p>
         )}
       </form>
+
+      {/* Only where the photo-review intake runs: a thrift store with the
+          photo_review flag on. Explicitly true — hasFeature() treats a flag
+          with no tier as on by default, which is wrong for a rollout switch. */}
+      {tenant && tenant.store_type !== 'brand' && tenant.features?.photo_review === true ? (
+        <PhotoRequirements tenant={tenant} isOwner={isOwner} />
+      ) : null}
 
       <YourDetails />
     </>

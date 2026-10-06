@@ -149,8 +149,23 @@ async function toStore(messages, e = testEnv()) {
 
 const DETAILS = ['SELL', '1', 'Black Zara blazer', '15k', '3', 'no', 'Ada Obi', 'yes'];
 
+// store_shot_rules_for(), as 0041 defines it: the defaults with this store's
+// overrides applied, and switched-off shots left out.
+const RPCS = {
+  store_shot_rules_for: ({ p_tenant_id, p_category = null }, tables) =>
+    tables.photo_shot_rules
+      .filter((r) => p_category == null || r.category === p_category)
+      .map((r) => {
+        const o = tables.store_shot_rules.find(
+          (x) => x.tenant_id === p_tenant_id && x.category === r.category && x.shot_type === r.shot_type
+        );
+        return { ...r, requirement: o?.requirement ?? r.requirement };
+      })
+      .filter((r) => r.requirement !== 'off'),
+};
+
 function setup(seedOptions, checkAnswer) {
-  const supabase = makeFakeSupabase(seed(seedOptions));
+  const supabase = makeFakeSupabase(seed(seedOptions), { rpcs: RPCS });
   const waha = makeFakeWaha();
   const check = makeFakeCheck(checkAnswer);
   const restore = installFetch({ supabase, waha, photoCheck: check });
@@ -229,6 +244,55 @@ test('the details become a listing draft, and the seller is told which photos to
     // Nothing filed and nothing checked yet.
     assert.equal(supabase.tables.submissions.length, 0);
     assert.equal(check.calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+// ── THE STORE'S OWN EXPECTATIONS ─────────────────────────────────────────────
+
+test("a category the store doesn't take is not offered", async () => {
+  const { waha, restore } = setup({
+    store_photo_categories: [{ tenant_id: TENANT, category: 'shoes', accepted: false }],
+  });
+  try {
+    await toStore([fromConsignor('SELL')]);
+    const menu = toSeller(waha).at(-1).text;
+    assert.match(menu, /1 Clothing/);
+    assert.doesNotMatch(menu, /Shoes/);
+  } finally {
+    restore();
+  }
+});
+
+test("a shot the store switched off isn't asked for, and another store's choices don't leak in", async () => {
+  const { waha, restore } = setup({
+    store_shot_rules: [
+      { tenant_id: TENANT, category: 'clothing', shot_type: 'label', requirement: 'off' },
+      { tenant_id: 'some-other-store', category: 'clothing', shot_type: 'back', requirement: 'off' },
+    ],
+  });
+  try {
+    await toStore(DETAILS.map((t) => fromConsignor(t)));
+    const list = toSeller(waha).at(-1).text;
+    assert.match(list, /• Front\n• Back(\n|$)/);
+    assert.doesNotMatch(list, /label/i);
+  } finally {
+    restore();
+  }
+});
+
+test('when every category is switched off, SELL says so instead of showing an empty menu', async () => {
+  const { supabase, waha, restore } = setup({
+    store_photo_categories: [
+      { tenant_id: TENANT, category: 'clothing', accepted: false },
+      { tenant_id: TENANT, category: 'shoes', accepted: false },
+    ],
+  });
+  try {
+    await toStore([fromConsignor('SELL')]);
+    assert.match(toSeller(waha).at(-1).text, /can't take items/);
+    assert.equal(supabase.tables.listing_drafts.length, 0);
   } finally {
     restore();
   }

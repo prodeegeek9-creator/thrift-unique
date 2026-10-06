@@ -37,6 +37,7 @@ export const keys = {
   billingSummary: (t) => ['tenant', t, 'billing-summary'],
 
   staff: (t) => ['tenant', t, 'staff'],
+  photoSettings: (t) => ['tenant', t, 'photo-settings'],
   channels: (t) => ['tenant', t, 'channels'],
   overview: (t) => ['tenant', t, 'overview'],
 };

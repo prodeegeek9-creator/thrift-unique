@@ -44,6 +44,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     photo_shot_rules: [],
     listing_drafts: [],
     listing_photos: [],
+    store_photo_categories: [],
+    store_shot_rules: [],
     ...structuredClone(seed),
   };
 
