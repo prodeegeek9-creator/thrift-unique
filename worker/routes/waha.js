@@ -1159,20 +1159,27 @@ async function photoIntake(cfg, event, tenant, conversation) {
     }
   }
 
-  const [previous, categories, rules] = await Promise.all([
+  // The store's own expectations (migration 0041): the categories it takes,
+  // and every shot as this store needs it, switched-off ones already gone.
+  // store_shot_rules_for() is the same answer the database uses to decide
+  // when an item is ready, so what the seller is asked for and what the item
+  // waits on cannot disagree.
+  const [previous, categories, declined, rules] = await Promise.all([
     db(cfg).one(
       'submissions',
       `tenant_id=eq.${tenant.id}&seller_chat_id=eq.${encodeURIComponent(event.from)}` +
         '&seller_name=not.is.null&select=seller_name&order=created_at.desc'
     ),
     db(cfg).select('photo_categories', 'active=eq.true&select=slug,name&order=name.asc'),
-    db(cfg).select('photo_shot_rules', 'select=category,shot_type,label,requirement,condition_flag,sort_order'),
+    db(cfg).select('store_photo_categories', `tenant_id=eq.${tenant.id}&accepted=eq.false&select=category`),
+    db(cfg).rpc('store_shot_rules_for', { p_tenant_id: tenant.id }),
   ]);
+  const notTaken = new Set((declined ?? []).map((r) => r.category));
 
   const result = photoIntakeStep(current, event, {
     store: tenant.name,
     knownName: previous?.seller_name ?? null,
-    categories: categories ?? [],
+    categories: (categories ?? []).filter((c) => !notTaken.has(c.slug)),
     rules: rules ?? [],
   });
 
