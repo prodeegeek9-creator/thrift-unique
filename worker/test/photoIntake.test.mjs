@@ -142,6 +142,31 @@ test('a category with no conditional rules goes straight from condition to name'
   assert.equal(results[4].state, 'pi_name');
 });
 
+test('a category that settles the condition skips the question, and names things in its own terms', () => {
+  const ctx = {
+    ...CTX,
+    categories: [{ slug: 'food', name: 'Food', default_condition: 'brand_new', title_example: 'Chin chin, 1kg pack' }],
+    rules: [
+      { category: 'food', shot_type: 'product', label: 'The product', requirement: 'required', condition_flag: null, sort_order: 1 },
+      { category: 'food', shot_type: 'packaging_label', label: 'Packaging label', requirement: 'conditional', condition_flag: 'packaged', sort_order: 2 },
+    ],
+  };
+  const { results, last } = run(
+    [text('SELL'), text('1'), text('Chin chin'), text('3000'), text('yes'), text('Ada'), text('YES')],
+    ctx
+  );
+  assert.match(results[1].replies[0], /\(e\.g\. "Chin chin, 1kg pack"\)/);
+  // Straight from the price to the food's own question: no "what condition".
+  assert.equal(results[3].state, 'pi_flag');
+  assert.match(results[3].replies[0], /packaging/);
+  assert.doesNotMatch(results.map((r) => r.replies.join(' ')).join(' '), /What condition/);
+  // Nor is a condition nobody was asked shown back to them.
+  assert.equal(results[5].state, 'pi_review');
+  assert.doesNotMatch(results[5].replies[0], /Brand new/);
+  // It is still filed with one: submissions need it.
+  assert.equal(last.action.item.condition, 'brand_new');
+});
+
 test('a seller we know is not asked their name again', () => {
   const { results } = run(
     [text('SELL'), text('2'), text('Nike Air Max'), text('40000'), text('1')],
