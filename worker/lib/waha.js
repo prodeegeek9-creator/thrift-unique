@@ -255,11 +255,13 @@ export function typingDelay(cfg, text) {
   return Math.min(1800, Math.max(800, 600 + String(text ?? '').length * 12));
 }
 
-export async function sendText(cfg, session, to, text) {
+// `replyTo`, a WhatsApp message id, sends it as a reply quoting that message:
+// the one way to say *which* of four photos sent together was the blurry one.
+export async function sendText(cfg, session, to, text, { replyTo } = {}) {
   const call = client(cfg);
   return call('/api/sendText', {
     method: 'POST',
-    body: { session, chatId: to, text },
+    body: { session, chatId: to, text, ...(replyTo ? { reply_to: replyTo } : {}) },
   });
 }
 

@@ -113,11 +113,12 @@ export function paidConsignorMessage({ store, title, amount, note }) {
 }
 
 // For the store owner, on the platform number, when an item arrives.
-export function newSubmissionMessage({ title, price, name, origin }) {
+export function newSubmissionMessage({ title, price, name, origin, note }) {
   return (
     `📥 New item to review: *${title}*, ${formatNaira(price)} asked` +
     (name ? `, from ${name}` : '') +
     '.' +
+    (note ? `\n\n⚠️ AI noticed: ${note}` : '') +
     (origin ? `\n\nReview it: ${origin}/dashboard/submissions` : '')
   );
 }

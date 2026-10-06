@@ -23,6 +23,40 @@ const PRIVATE_BUCKET = 'listing-photos';
 // angles are clutter.
 const MAX_SUBMISSION_IMAGES = 8;
 
+// What the AI noticed about the item (listing_drafts.ai_item, migration 0044),
+// as the store's review queue shows it. A note for the owner to weigh, never
+// a verdict: the item still reaches the queue.
+const ISSUE_TEXT = {
+  dirty: 'looks dirty',
+  stained: 'has stains',
+  damaged: 'looks damaged',
+  worn: 'looks worn',
+  missing_parts: 'may be missing parts',
+};
+
+export function aiReadFor(draft, { askedFlaws = false } = {}) {
+  const ai = draft?.ai_item;
+  if (!ai || typeof ai !== 'object') return { ai_issues: [], ai_note: null };
+
+  const issues = [...new Set(Array.isArray(ai.issues) ? ai.issues : [])].filter((i) => ISSUE_TEXT[i]);
+  const parts = [];
+  if (issues.length) {
+    const said = issues.map((i) => ISSUE_TEXT[i]);
+    parts.push(`It ${said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said.at(-1)}` : said[0]}.`);
+  }
+  // Dirt washes off; the rest is what "any flaws?" was asking about.
+  if (askedFlaws && !(draft.flags ?? []).includes('has_flaws') && issues.some((i) => i !== 'dirty')) {
+    parts.push('The seller said it has no flaws.');
+  }
+  const looksLike = String(ai.description ?? '').trim().slice(0, 120);
+  if (ai.fits_category === false && looksLike) {
+    parts.push(`It may be in the wrong category: it looks like ${looksLike}.`);
+  }
+
+  const note = parts.join(' ').slice(0, 500);
+  return { ai_issues: issues, ai_note: note || null };
+}
+
 export async function finalizeDrafts(env, { limit = 20 } = {}) {
   const cfg = config(env);
   if (!cfg.supabaseUrl || !cfg.serviceKey) return null;
@@ -40,7 +74,7 @@ export async function finalizeDrafts(env, { limit = 20 } = {}) {
   const ready = await db(cfg).select(
     'listing_drafts',
     'status=eq.ready&extracted->>source=eq.sell' +
-      `&select=id,tenant_id,seller_chat_id,category,extracted&order=updated_at.asc&limit=${limit}`
+      `&select=id,tenant_id,seller_chat_id,category,flags,extracted,ai_item&order=updated_at.asc&limit=${limit}`
   );
 
   let filed = 0;
@@ -104,7 +138,7 @@ async function file(cfg, draft) {
     ),
     db(cfg).select(
       'photo_shot_rules',
-      `category=eq.${encodeURIComponent(draft.category)}&select=shot_type,sort_order`
+      `category=eq.${encodeURIComponent(draft.category)}&select=shot_type,sort_order,condition_flag`
     ),
   ]);
 
@@ -137,6 +171,7 @@ async function file(cfg, draft) {
       condition: item.condition,
       images,
       draft_id: draft.id,
+      ...aiReadFor(draft, { askedFlaws: (rules ?? []).some((r) => r.condition_flag === 'has_flaws') }),
     },
     { onConflict: 'draft_id' }
   );

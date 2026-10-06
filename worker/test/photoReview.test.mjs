@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker, { EVERY_MINUTE } from '../index.js';
-import { finalizeDrafts } from '../routes/photoReview.js';
+import { finalizeDrafts, aiReadFor } from '../routes/photoReview.js';
 import { makeFakeSupabase, installFetch, env } from './fake-supabase.mjs';
 
 // Items brought to a store, with the photos checked: the webhook side
@@ -350,8 +350,15 @@ test("a rejected photo's reason is passed on to the seller", async () => {
       : { status: 200, body: pending() }
   );
   try {
-    await toStore([...DETAILS.map((t) => fromConsignor(t)), fromConsignor('', { media: wahaFile('blurry') })]);
-    assert.match(toSeller(waha).at(-1).text, /blurry/);
+    await toStore([
+      ...DETAILS.map((t) => fromConsignor(t)),
+      fromConsignor('', { media: wahaFile('blurry'), id: 'false_234809@c.us_BLURRY1' }),
+    ]);
+    const answer = toSeller(waha).at(-1);
+    assert.match(answer.text, /blurry/);
+    // Quoting the photo it means, so a seller who sent four can tell which.
+    assert.equal(answer.reply_to, 'false_234809@c.us_BLURRY1');
+    assert.ok(toSeller(waha).slice(0, -1).every((m) => !m.reply_to), 'nothing else is a reply');
   } finally {
     restore();
   }
@@ -525,6 +532,52 @@ test('a ready draft becomes a submission: photos copied out in shot order, selle
   } finally {
     restore();
   }
+});
+
+test("what the AI noticed reaches the review queue and the owner's message", async () => {
+  const seed = readySeed();
+  seed.listing_drafts[0].ai_item = {
+    description: 'a black blazer',
+    has_screen: false,
+    fits_category: true,
+    issues: ['dirty', 'stained'],
+  };
+  const { supabase, waha, restore } = setup(seed);
+  try {
+    await finalizeDrafts(testEnv());
+    const item = supabase.tables.submissions[0];
+    assert.deepEqual(item.ai_issues, ['dirty', 'stained']);
+    // Stains are a flaw, and the seller said there were none.
+    assert.equal(item.ai_note, 'It looks dirty and has stains. The seller said it has no flaws.');
+
+    const owner = waha.sent.find((m) => m.chatId === OWNER_CHAT);
+    assert.match(owner.text, /⚠️ AI noticed: It looks dirty and has stains\./);
+  } finally {
+    restore();
+  }
+});
+
+test('the AI note: nothing to say, dirt alone, a declared flaw, the wrong category, junk from the model', () => {
+  assert.deepEqual(aiReadFor({ ai_item: null }), { ai_issues: [], ai_note: null });
+  assert.deepEqual(aiReadFor({ ai_item: { issues: [], fits_category: true } }), { ai_issues: [], ai_note: null });
+
+  // Dirt washes off: not a contradiction of "no flaws".
+  assert.equal(aiReadFor({ flags: [], ai_item: { issues: ['dirty'] } }, { askedFlaws: true }).ai_note, 'It looks dirty.');
+  // Damage the seller owned up to is not news.
+  assert.equal(
+    aiReadFor({ flags: ['has_flaws'], ai_item: { issues: ['damaged'] } }, { askedFlaws: true }).ai_note,
+    'It looks damaged.'
+  );
+  // And if nobody asked, nobody "said" anything.
+  assert.equal(aiReadFor({ flags: [], ai_item: { issues: ['worn'] } }).ai_note, 'It looks worn.');
+
+  assert.equal(
+    aiReadFor({ ai_item: { issues: [], fits_category: false, description: 'a TV remote' } }).ai_note,
+    'It may be in the wrong category: it looks like a TV remote.'
+  );
+
+  // Unknown issues are dropped rather than breaking the insert's check.
+  assert.deepEqual(aiReadFor({ ai_item: { issues: ['haunted', 'worn', 'worn'] } }).ai_issues, ['worn']);
 });
 
 test('filing twice files once', async () => {

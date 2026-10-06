@@ -63,6 +63,13 @@ export const FLAG_QUESTIONS = {
   packaged: 'Does it come sealed in packaging with a label? Reply *YES* or *NO*.',
 };
 
+// Flags nobody is asked about: the photo-review AI sets them from the photos
+// (migration 0044), so the shot is listed with the condition spelled out and
+// the seller sends it only if it applies.
+export const AI_FLAGS = {
+  has_screen: 'if it has a screen',
+};
+
 const FLAG_SUMMARY = {
   has_flaws: 'Has flaws',
   is_phone: 'Phone',
@@ -130,8 +137,14 @@ export function shotsFor(rules, category, flags = []) {
     .filter((r) => r.category === category)
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   const needed = mine
-    .filter((r) => r.requirement === 'required' || (r.requirement === 'conditional' && flags.includes(r.condition_flag)))
-    .map((r) => r.label);
+    .filter(
+      (r) =>
+        r.requirement === 'required' ||
+        (r.requirement === 'conditional' && (flags.includes(r.condition_flag) || AI_FLAGS[r.condition_flag]))
+    )
+    .map((r) => (r.requirement === 'conditional' && AI_FLAGS[r.condition_flag] && !flags.includes(r.condition_flag)
+      ? `${r.label} (${AI_FLAGS[r.condition_flag]})`
+      : r.label));
   const optional = mine.filter((r) => r.requirement === 'optional').map((r) => r.label);
   return { needed, optional };
 }
