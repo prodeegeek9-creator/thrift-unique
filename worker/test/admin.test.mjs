@@ -825,3 +825,92 @@ test('the overview reports the platform number: what WAHA says and when we last 
     assert.equal((await res.json()).platform.status, 'UNREACHABLE');
   } finally { restore2(); }
 });
+
+// ── the AI and bot logs ──────────────────────────────────────────────────────
+
+function logCtx() {
+  const data = seed();
+  data.tenants[0].whatsapp_number = '2348011112222';
+  data.ai_usage = [
+    { id: 1, tenant_id: TENANT, draft_id: 'draft-1', purpose: 'photo_review', model: 'gpt-x', images: 2,
+      input_tokens: 52000, cached_tokens: 0, output_tokens: 180, cost_usd: null,
+      prompt: 'Classify each photo', response: '{"photos":[]}', created_at: '2026-10-07T10:00:00Z' },
+  ];
+  data.listing_drafts = [
+    { id: 'draft-1', tenant_id: TENANT, category: 'gadgets', status: 'published', extracted: { title: 'Poco phone' } },
+  ];
+  data.bot_messages = [
+    { id: 'm1', tenant_id: TENANT, chat_id: '201@lid', direction: 'in', body: 'SELL', has_media: false, source: null, created_at: '2026-10-07T09:00:00Z' },
+    { id: 'm2', tenant_id: TENANT, chat_id: '201@lid', direction: 'out', body: 'What kind of item is it?', has_media: false, source: null, created_at: '2026-10-07T09:00:05Z' },
+    { id: 'm3', tenant_id: TENANT, chat_id: '201@lid', direction: 'out', body: 'Still need: Front', has_media: false, source: 'photo_review', created_at: '2026-10-07T09:05:00Z' },
+    { id: 'm4', tenant_id: TENANT, chat_id: '2348011112222@c.us', direction: 'in', body: 'hi', has_media: false, source: null, created_at: '2026-10-07T08:00:00Z' },
+  ];
+  data.submissions = [{ id: 's1', tenant_id: TENANT, seller_chat_id: '201@lid', seller_name: 'Ada Obi', created_at: '2026-10-07T09:10:00Z' }];
+  const sb = makeFakeSupabase(data, {
+    rpcs: {
+      ai_usage_totals: () => [{ period: 'today', calls: 1, images: 2, input_tokens: 52000, cached_tokens: 0, output_tokens: 180, cost_usd: 0, unpriced_calls: 1 }],
+    },
+  });
+  const restore = installFetch({ supabase: sb, tokens: TOKENS });
+  return { sb, restore };
+}
+
+test('the AI and bot logs are for operators only', async () => {
+  const { restore } = logCtx();
+  try {
+    for (const path of ['/api/admin/ai', '/api/admin/bot']) {
+      assert.equal((await worker.fetch(call(path, { token: 'tok-seller' }), env(), {})).status, 403);
+      assert.equal((await worker.fetch(call(path), env(), {})).status, 403);
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('the AI log: totals, each call with its store, item, tokens and the reply itself', async () => {
+  const { restore } = logCtx();
+  try {
+    const res = await worker.fetch(call('/api/admin/ai', { token: 'tok-support' }), env(), {});
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.totals[0].period, 'today');
+    assert.equal(body.calls.length, 1);
+    const [c] = body.calls;
+    assert.equal(c.store, 'Store');
+    assert.deepEqual(c.item, { title: 'Poco phone', category: 'gadgets', status: 'published' });
+    assert.equal(c.input_tokens, 52000);
+    assert.equal(c.response, '{"photos":[]}');
+    assert.equal(c.prompt, 'Classify each photo');
+    assert.equal(body.next, null);
+  } finally {
+    restore();
+  }
+});
+
+test('the bot log: chats newest first and named, then one chat oldest first', async () => {
+  const { restore } = logCtx();
+  try {
+    const list = await (await worker.fetch(call('/api/admin/bot', { token: 'tok-support' }), env(), {})).json();
+    assert.deepEqual(list.chats.map((c) => [c.chat_id, c.messages, c.who]), [
+      ['201@lid', 3, 'Ada Obi'],
+      ['2348011112222@c.us', 1, 'Store owner'],
+    ]);
+    assert.equal(list.chats[0].last.source, 'photo_review');
+
+    const thread = await (
+      await worker.fetch(
+        call(`/api/admin/bot?tenant=${TENANT}&chat=${encodeURIComponent('201@lid')}`, { token: 'tok-support' }),
+        env(),
+        {}
+      )
+    ).json();
+    assert.deepEqual(thread.messages.map((m) => m.id), ['m1', 'm2', 'm3']);
+    assert.equal(thread.chat.who, 'Ada Obi');
+
+    // A chat on its own, without its store, is refused rather than guessed.
+    const bad = await worker.fetch(call('/api/admin/bot?chat=201%40lid', { token: 'tok-support' }), env(), {});
+    assert.equal(bad.status, 400);
+  } finally {
+    restore();
+  }
+});

@@ -142,6 +142,9 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     return inner == null ? inner : String(inner);
   };
 
+  const listOf = (val) =>
+    val.replace(/^\(|\)$/g, '').split(',').map((v) => v.replace(/^"(.*)"$/, '$1'));
+
   function matches(row, filters) {
     return filters.every((f) => {
       const cell = cellOf(row, f.col);
@@ -155,7 +158,8 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (f.op === 'gte') return new Date(cell) >= new Date(f.val);
       if (f.op === 'is') return f.val === 'null' ? cell == null : String(cell) === f.val;
       if (f.op === 'not.is') return f.val === 'null' ? cell != null : String(cell) !== f.val;
-      if (f.op === 'in') return f.val.replace(/[()]/g, '').split(',').includes(String(cell));
+      // PostgREST lets a list item be double-quoted (a chat id has an @ in it).
+      if (f.op === 'in') return listOf(f.val).includes(String(cell));
       if (f.op === 'not.in') return cell != null && !f.val.replace(/[()]/g, '').split(',').includes(String(cell));
       return false;
     });
