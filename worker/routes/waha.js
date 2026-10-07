@@ -26,6 +26,14 @@ import { provisionStore } from '../lib/provision.js';
 import { accountForCode } from './signup.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { photoIntakeStep, photoStatusMessage, PHOTO_STATES } from '../lib/photoIntake.js';
+import {
+  petIntakeStep,
+  petSentMessage,
+  petRejectedMessage,
+  newPetListingMessage,
+  wantsToSellPet,
+  PET_STATES,
+} from '../lib/petIntake.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
 import { reservedMinutes } from '../lib/reservations.js';
@@ -703,6 +711,7 @@ async function storeSession(cfg, event) {
   const body = String(event.body ?? '');
   const asked =
     SELL.test(body) ||
+    wantsToSellPet(body) ||
     isBuy(event.body) ||
     (tenant.store_type !== 'brand' && BANK.test(body)) ||
     // Confirming a payout account change: the bot asked, and this answers it.
@@ -721,6 +730,13 @@ async function storeSession(cfg, event) {
         { paused_until: null }
       );
     }
+  }
+
+  // A store that lists pets on its own site (lib/petIntake.js). Ahead of the
+  // consignment flows: such a store takes pets, not items, and pays nobody.
+  if (PET_STATES.includes(conversation?.state)) return petIntake(cfg, event, tenant, conversation);
+  if (wantsToSellPet(body) && (await petListingsOn(cfg, tenant))) {
+    return petIntake(cfg, event, tenant, conversation);
   }
 
   // Where a consignor is paid (lib/consignorBank.js). SELL always starts an
@@ -1111,6 +1127,101 @@ export async function announceSubmission(cfg, tenant, chat, submission) {
   }
 
   return Boolean(ask);
+}
+
+// ── PETS LISTED ON THE STORE'S OWN SITE ──────────────────────────────────────
+//
+// lib/petIntake.js, for stores with the pet_listings flag (set by hand from the
+// platform; no plan seeds it). The finished listing is sent to the store's site
+// (PET_LISTINGS_URL), which holds it until the store approves it there. Nothing
+// is filed here: no submission, no product, no payout.
+
+export async function petListingsOn(cfg, tenant) {
+  if (!cfg.petListingsUrl || !cfg.petListingsKey) return false;
+  const row = await db(cfg).one(
+    'tenant_features',
+    `tenant_id=eq.${tenant.id}&flag=eq.pet_listings&select=enabled`
+  );
+  return Boolean(row?.enabled);
+}
+
+async function petIntake(cfg, event, tenant, conversation) {
+  const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
+
+  const result = petIntakeStep(conversation, event, { store: tenant.name, phone });
+  if (!result) return json({ ok: true, ignored: 'not a pet for sale' });
+
+  // The same replay guard as the other intakes.
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    {
+      tenant_id: tenant.id,
+      chat_id: event.from,
+      external_id: inboundId(event),
+      direction: 'in',
+      body: event.body ?? null,
+      has_media: Boolean(event.hasMedia),
+    },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+
+  await persist(cfg, tenant, event.from, conversation, result);
+
+  const own = { session: tenant.waha_session };
+  for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
+
+  if (result.action?.type === 'pet_listing') {
+    await forwardPetListing(cfg, tenant, event, result.action);
+  }
+
+  return json({ ok: true, petIntake: result.state });
+}
+
+// Photos into our public bucket first: the site copies them from there, and a
+// WAHA media URL is neither public nor long-lived.
+export async function forwardPetListing(cfg, tenant, event, action) {
+  const own = { session: tenant.waha_session };
+
+  let paths = [];
+  try {
+    paths = await uploadAll(cfg, tenant.id, action.images);
+  } catch (err) {
+    console.error('pet listing media failed:', err?.message ?? err);
+  }
+  const photos = paths.map((p) => publicUrl(cfg, p)).filter(Boolean);
+  if (!photos.length) {
+    await say(cfg, tenant, event.from, "I couldn't save those photos. Send *SELL* to try again.", own);
+    return false;
+  }
+
+  let res, body;
+  try {
+    res = await fetch(cfg.petListingsUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
+      body: JSON.stringify({ ...action.listing, photos }),
+    });
+    body = await res.json().catch(() => ({}));
+  } catch (err) {
+    console.error('pet listing send failed:', err?.message ?? err);
+  }
+
+  if (res?.status === 400) {
+    await say(cfg, tenant, event.from, petRejectedMessage(body?.details), own);
+    return false;
+  }
+  if (!res?.ok) {
+    console.error('pet listing refused:', res?.status, JSON.stringify(body ?? {}).slice(0, 200));
+    await say(cfg, tenant, event.from, 'Something went wrong sending that. Send *SELL* to try again in a moment.', own);
+    return false;
+  }
+
+  await say(cfg, tenant, event.from, petSentMessage(tenant.name), own);
+
+  const owner = chatId(tenant.whatsapp_number);
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing));
+  return true;
 }
 
 // ── ITEMS BROUGHT TO A STORE, WITH THE PHOTOS CHECKED ────────────────────────
