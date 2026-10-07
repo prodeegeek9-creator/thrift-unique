@@ -48,6 +48,9 @@ export function aiReadFor(draft, { askedFlaws = false } = {}) {
   if (askedFlaws && !(draft.flags ?? []).includes('has_flaws') && issues.some((i) => i !== 'dirty')) {
     parts.push('The seller said it has no flaws.');
   }
+  // A shop-style picture isn't refused — a seller's own photo can look
+  // professional — but the owner should look twice before buying it in.
+  if (ai.shop_photo === true) parts.push('Some photos may be from a shop or the internet.');
   const looksLike = String(ai.description ?? '').trim().slice(0, 120);
   if (ai.fits_category === false && looksLike) {
     parts.push(`It may be in the wrong category: it looks like ${looksLike}.`);
