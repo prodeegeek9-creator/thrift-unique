@@ -136,6 +136,8 @@ function Call({ call }) {
           </p>
           <p className="mt-0.5 text-[11px] text-muted">
             {dateTime(call.created_at)} · {call.model} · {call.images} photo{call.images === 1 ? '' : 's'}
+            {call.image_detail ? ` · ${call.image_detail} detail` : ''}
+            {call.images ? ` · ≈${tokens(Math.round(call.input_tokens / call.images))} tokens a photo` : ''}
           </p>
         </div>
         <div className="text-right text-[11px] text-muted">
@@ -155,6 +157,12 @@ function Call({ call }) {
           What it was asked
         </Toggle>
       </div>
+
+      {!call.response && !call.prompt ? (
+        <p className="mt-1 text-[11px] text-muted">
+          The question and reply weren't recorded for this call — it was made before the photo service saved them.
+        </p>
+      ) : null}
 
       {open ? (
         <pre className="scroll-thin mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-text">

@@ -114,6 +114,12 @@ with the review service's own messages (`source = 'photo_review'`) marked as
 the AI's. Both are read through the Worker as an operator
 (`worker/routes/adminLogs.js`); neither table is granted to anyone signed in.
 
+**Photo size for the AI** (migration 0049): `OPENAI_IMAGE_DETAIL` in the
+photo-review service's `.env` — `low` (one 512px view, far fewer tokens),
+`high`, or `auto` (the default) — is recorded on each call as
+`ai_usage.image_detail` and shown in the AI log with tokens per photo, so
+the two can be compared on real items before choosing.
+
 **What the AI reads from the item** (migration 0044): the same call that
 names each photo's shot also describes the item — what it looks like,
 whether it has a screen, whether it fits the category the seller picked, and
