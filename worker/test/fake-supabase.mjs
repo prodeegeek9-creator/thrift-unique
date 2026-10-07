@@ -273,6 +273,8 @@ export function installFetch({
   paystackVerify = null,
   // The photo-check service: { url, handler(url, init) }.
   photoCheck = null,
+  // The site a pet store lists on (PET_LISTINGS_URL): { url, handler(url, init) }.
+  petSite = null,
 }) {
   const real = globalThis.fetch;
 
@@ -303,6 +305,8 @@ export function installFetch({
     if (waha && url.startsWith(waha.url)) return waha.handler(url, init);
 
     if (photoCheck && url.startsWith(photoCheck.url)) return photoCheck.handler(url, init);
+
+    if (petSite && url.startsWith(petSite.url)) return petSite.handler(url, init);
 
     if (url === `${SUPABASE_URL}/auth/v1/user`) {
       const auth = init?.headers?.Authorization ?? '';

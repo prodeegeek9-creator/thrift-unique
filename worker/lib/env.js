@@ -60,6 +60,15 @@ export function config(env) {
     photoCheckUrl: env.PHOTO_CHECK_URL ? env.PHOTO_CHECK_URL.replace(/\/+$/, '') : null,
     photoCheckKey: env.PHOTO_CHECK_KEY || null,
 
+    // Where a store with the pet_listings flag sends the pets people list
+    // through its WhatsApp (lib/petIntake.js) — PuppyPlace's
+    // /api/seller-listings — and the key that site checks. The URL is not a
+    // secret (wrangler.jsonc `vars`); PET_LISTINGS_KEY is a Worker secret, the
+    // same value as SELLER_API_KEY on the site. Both unset means the pet
+    // intake is off for every store, whatever their flag says.
+    petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
+    petListingsKey: env.PET_LISTINGS_KEY || null,
+
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.
     wahaTypingMs:

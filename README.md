@@ -176,6 +176,34 @@ nothing per item but can't tell when somebody sends the wrong thing.
 Both services and the Worker talk to the same self-hosted WAHA (session
 names like `ut-platform`, `ut-kay-stores` are this project's tenants).
 
+## Pets listed on the store's own site
+
+A store can take pets instead of items and list them on its **own** website
+rather than on Vendwyze. PuppyPlace (puppyplace.ng) is the first. Somebody
+messages the store's WhatsApp ("Hi PuppyPlace, I want to sell my dog", or
+SELL), and `lib/petIntake.js` asks for the pet, breed, age, sale or adoption
+and price, city, vaccinations and deworming, anything else buyers should know,
+up to six photos, a name and the WhatsApp number buyers should use. On YES,
+`forwardPetListing()` in `routes/waha.js` copies the photos into
+`product-images` and POSTs the listing to the site, which holds it until the
+store approves it there. Nothing is filed here: no submission, no product,
+no payout. Buyers ("do you sell puppies?") are left to the store, as on any
+store's own number.
+
+It is on for a store when all three hold:
+
+- the store's `tenant_features` row `pet_listings` is enabled — set by hand,
+  no plan seeds it:
+  `insert into tenant_features (tenant_id, flag, enabled) values ('<id>', 'pet_listings', true) on conflict (tenant_id, flag) do update set enabled = true;`
+- `PET_LISTINGS_URL` is set (`wrangler.jsonc` vars, PuppyPlace's
+  `/api/seller-listings`);
+- `PET_LISTINGS_KEY` is a Worker secret, the same value as `SELLER_API_KEY`
+  on the site.
+
+Without any of them, SELL on that store is the usual item intake. The site's
+side of the contract is `docs/seller-listings-api.md` in the puppyplace-ng
+repo.
+
 ## Structure
 
 ```

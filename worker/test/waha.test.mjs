@@ -1714,3 +1714,132 @@ test('a web account gets one code, and sees its store waiting for approval once 
     assert.equal((await me('tok-web')).body.hasStore, true);
   } finally { restore(); }
 });
+
+// ── PETS LISTED ON THE STORE'S OWN SITE ──────────────────────────────────────
+
+const PET_SITE = 'https://pets.test/api/seller-listings';
+
+function makeFakePetSite({ status = 201, body = null } = {}) {
+  const received = [];
+  return {
+    url: PET_SITE,
+    received,
+    async handler(url, init) {
+      received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify(body ?? { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1' }), { status });
+    },
+  };
+}
+
+function petSeed(enabled = true) {
+  return {
+    ...storeSeed({ name: 'PuppyPlace' }),
+    tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled }],
+    submissions: [],
+  };
+}
+
+async function toPetStore(messages, extraEnv = {}) {
+  const e = wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', ...extraEnv });
+  for (const m of messages) await worker.fetch(hook(m, { secret: STORE_SECRET }), e, {});
+}
+
+const PET_CHAT = [
+  fromConsignor('Hi PuppyPlace, I want to sell my dog.'),
+  fromConsignor('Boerboel'),
+  fromConsignor('10 weeks'),
+  fromConsignor('1'),
+  fromConsignor('150k'),
+  fromConsignor('Lugbe, Abuja'),
+  fromConsignor('1'),
+  fromConsignor('skip'),
+  fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SESSION}/pup.jpg` }),
+  fromConsignor('done'),
+  fromConsignor('Ade'),
+  fromConsignor('yes'),
+  fromConsignor('yes'),
+];
+
+test('a pet store sends a listed dog to its site, and files nothing here', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await toPetStore(PET_CHAT);
+
+    assert.equal(petSite.received.length, 1);
+    const sent = petSite.received[0];
+    assert.equal(sent.auth, 'Bearer pet-key');
+    assert.equal(sent.body.breed, 'Boerboel');
+    assert.equal(sent.body.type, 'Dog');
+    assert.equal(sent.body.price, 150000);
+    assert.equal(sent.body.whatsapp, CONSIGNOR_PHONE);
+    assert.equal(sent.body.seller_name, 'Ade');
+    assert.equal(sent.body.photos.length, 1);
+    // Our public copy, not WAHA's private URL.
+    assert.match(sent.body.photos[0], new RegExp(`^${SUPABASE_URL}/storage/v1/object/public/product-images/${TENANT}/`));
+
+    assert.equal(supabase.tables.submissions.length, 0);
+    assert.equal(supabase.tables.products.length, 0);
+
+    const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
+    assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
+    assert.match(toSeller.at(-1).text, /Sent! PuppyPlace will check your listing/);
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
+    assert.equal(toOwner.length, 1);
+    assert.match(toOwner[0].text, /New pet listing sent for review: \*Boerboel\*, ₦150,000, Lugbe, Abuja/);
+  } finally {
+    restore();
+  }
+});
+
+test('the site refusing a listing tells the seller why', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ status: 400, body: { error: 'Invalid listing', details: ['photo 1: larger than 5 MB'] } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await toPetStore(PET_CHAT);
+    const last = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT).at(-1);
+    assert.match(last.text, /couldn't send that listing[\s\S]*photo 1: larger than 5 MB/);
+    assert.equal(waha.sent.filter((m) => m.chatId === SELLER_CHAT).length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('buyers on a pet store are not answered', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite: makeFakePetSite() });
+
+  try {
+    await toPetStore([fromConsignor('Do you sell puppies?'), fromConsignor('How much is the Boerboel?')]);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.bot_messages.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('without the flag, or without the site configured, SELL is the usual item intake', async () => {
+  for (const [label, seedData, extraEnv] of [
+    ['flag off', petSeed(false), {}],
+    ['no site', petSeed(true), { PET_LISTINGS_URL: '', PET_LISTINGS_KEY: '' }],
+  ]) {
+    const supabase = makeFakeSupabase(seedData);
+    const waha = makeFakeWaha();
+    const petSite = makeFakePetSite();
+    const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+    try {
+      await toPetStore([fromConsignor('SELL')], extraEnv);
+      assert.equal(supabase.tables.bot_conversations[0]?.state, 'photo', label);
+      assert.equal(petSite.received.length, 0, label);
+    } finally {
+      restore();
+    }
+  }
+});
