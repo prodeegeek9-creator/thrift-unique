@@ -627,6 +627,13 @@ test('the AI note: nothing to say, dirt alone, a declared flaw, the wrong catego
     'It may be in the wrong category: it looks like a TV remote.'
   );
 
+  // A picture that may not be the seller's own: noted for the owner, never refused.
+  assert.equal(
+    aiReadFor({ ai_item: { issues: [], fits_category: true, shop_photo: true } }).ai_note,
+    'Some photos may be from a shop or the internet.'
+  );
+  assert.equal(aiReadFor({ ai_item: { issues: [], shop_photo: false } }).ai_note, null);
+
   // Unknown issues are dropped rather than breaking the insert's check.
   assert.deepEqual(aiReadFor({ ai_item: { issues: ['haunted', 'worn', 'worn'] } }).ai_issues, ['worn']);
 });

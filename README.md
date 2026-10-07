@@ -148,6 +148,14 @@ counts either. When the photo-check service refuses a duplicate, the Worker
 says what the earlier copy already counts for and what is still needed,
 rather than just "already sent".
 
+Only a clear screenshot (a phone's status bar, app buttons, a chat or web
+page around the picture) is refused as not a photo of the item. A photo
+that looks like it came from a shop or the internet is not refused — a
+seller's own photo can look professional — but the AI marks the item
+(`ai_item.shop_photo`) and the owner's review card says "Some photos may be
+from a shop or the internet". A picture showing front and back side by
+side counts for both (`also_shot_types`).
+
 A reply about one photo (rejected, or failed to check) quotes it, from the
 Worker and from the review service alike, so a seller who sends four at once
 can see which one to retake. Only a real WhatsApp message id is quoted.
