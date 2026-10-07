@@ -15,6 +15,7 @@ import { reconcile } from '../lib/reconcile.js';
 import { releaseEscrow } from '../lib/orders.js';
 import { split } from '../lib/money.js';
 import { listTeam, addToTeam, changeTeam, teamLink } from './adminTeam.js';
+import { aiLog, botLog } from './adminLogs.js';
 import { generateInvite } from '../lib/accounts.js';
 import { refundOrder, refundPreview, retryRefund, RefundError } from '../lib/refunds.js';
 
@@ -64,6 +65,8 @@ export async function handleAdmin(request, env, path) {
   if (rest === '/escrow' && method === 'GET') return releaseQueue(cfg);
   if (rest === '/disputes' && method === 'GET') return listDisputes(cfg);
   if (rest === '/audit' && method === 'GET') return listAudit(cfg);
+  if (rest === '/ai' && method === 'GET') return aiLog(cfg, new URL(request.url));
+  if (rest === '/bot' && method === 'GET') return botLog(cfg, new URL(request.url));
 
   const tenantDetail = rest.match(/^\/tenants\/([0-9a-f-]{36})$/i);
   if (tenantDetail && method === 'GET') return tenantView(cfg, tenantDetail[1]);

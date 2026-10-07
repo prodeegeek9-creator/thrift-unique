@@ -58,6 +58,15 @@ export const fetchReleaseQueue = () => call('/escrow');
 export const fetchDisputes = () => call('/disputes');
 export const fetchAudit = () => call('/audit');
 
+// The AI and bot logs (worker/routes/adminLogs.js). Each takes an optional
+// store, and `before` — the oldest timestamp already shown — for the next page.
+const query = (params) => {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v));
+  return q.size ? `?${q}` : '';
+};
+export const fetchAiLog = ({ tenant, before } = {}) => call(`/ai${query({ tenant, before })}`);
+export const fetchBotLog = ({ tenant, chat, before } = {}) => call(`/bot${query({ tenant, chat, before })}`);
+
 export const setFlag = (tenantId, flag, enabled) =>
   call(`/tenants/${tenantId}/flags`, { method: 'POST', body: { flag, enabled } });
 

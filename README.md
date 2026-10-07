@@ -105,6 +105,15 @@ group by u.draft_id, d.extracted->>'title', t.name
 order by max(u.created_at) desc;
 ```
 
+**Seeing it in the console** (migration 0048): `/admin/ai` lists every AI
+call — store, item, photos, input/cached/output tokens, cost, the prompt's
+text and the model's reply as it came back — with totals for today (Lagos),
+7 and 30 days and all time (`ai_usage_totals()`). `/admin/bot` shows the
+bot's WhatsApp chats from `bot_messages`, named where a seller gave a name,
+with the review service's own messages (`source = 'photo_review'`) marked as
+the AI's. Both are read through the Worker as an operator
+(`worker/routes/adminLogs.js`); neither table is granted to anyone signed in.
+
 **What the AI reads from the item** (migration 0044): the same call that
 names each photo's shot also describes the item — what it looks like,
 whether it has a screen, whether it fits the category the seller picked, and
