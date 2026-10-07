@@ -39,7 +39,7 @@ export async function aiLog(cfg, url) {
       where(
         tenant && `tenant_id=eq.${tenant}`,
         before && `created_at=lt.${encodeURIComponent(before)}`,
-        'select=id,tenant_id,draft_id,purpose,model,images,input_tokens,cached_tokens,output_tokens,cost_usd,prompt,response,created_at',
+        'select=id,tenant_id,draft_id,purpose,model,image_detail,images,input_tokens,cached_tokens,output_tokens,cost_usd,prompt,response,created_at',
         `order=created_at.desc&limit=${AI_PAGE}`
       )
     ),
