@@ -160,12 +160,32 @@ export function newPetListingMessage({ breed, price, listing_type, location }, {
   );
 }
 
-// To the seller, when the store approves the listing.
+// To the seller, when the store approves the listing: the link, and a push to
+// share it, since the seller sharing it is most of how a pet gets seen.
 export function petLiveMessage({ store, breed, listing_type, url }) {
   return (
     `🎉 Good news! Your *${breed}* is now live on ${store}${listing_type === 'adoption' ? ' for adoption' : ''}.` +
-    (url ? `\n\nSee it here:\n${url}` : '') +
+    (url ? `\n\nHere is your link:\n${url}` : '') +
+    '\n\n📣 Please share it! Post it on your WhatsApp Status, Instagram and Facebook, and send it to friends, family and groups. The more people see it, the faster your pet finds a home.' +
+    (url ? "\n\nI'm sending a ready-made message next. Just forward it 👇" : '') +
     '\n\nBuyers will message you directly on WhatsApp. Send *SELL* to list another pet.'
+  );
+}
+
+// Made to be forwarded as it stands: the picture and details come from the link's preview.
+export function petShareMessage({ breed, listing_type, url }) {
+  return `🐾 ${breed} ${listing_type === 'adoption' ? 'available for adoption' : 'for sale'} on PuppyPlace. See photos and details:\n${url}`;
+}
+
+// To somebody who messaged the store about selling a pet before the bot was
+// answering. They have to ask once more: whatever chat their reply arrives on,
+// "SELL" starts the conversation there.
+export function petInviteMessage({ store, browseUrl }) {
+  return (
+    `🐾 Hi! This is the ${store} listing assistant. Sorry we missed your message earlier. I'm switched on now.\n\n` +
+    "If you'd like to sell or rehome a pet, I can list it for you here, free, in about 5 minutes: a few questions and some clear photos, with the pet's face visible.\n\n" +
+    'Reply *SELL* to start 🐕' +
+    (browseUrl ? `\n\nLooking to buy instead? Browse the pets for sale:\n${browseUrl}` : '')
   );
 }
 

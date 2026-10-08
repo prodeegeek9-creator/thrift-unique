@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker from '../index.js';
+import { sendPetInvites } from '../routes/petInvites.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
 
@@ -2055,10 +2056,13 @@ test('when the store approves a listing the seller is told, from the store numbe
   const { res, json, waha } = await live(LIVE);
   assert.equal(res.status, 200);
   assert.equal(json.sent, true);
-  assert.equal(waha.sent.length, 1);
-  assert.equal(waha.sent[0].chatId, '2348031234567@c.us');
-  assert.equal(waha.sent[0].session, STORE_SESSION);
+  assert.equal(waha.sent.length, 2);
+  assert.ok(waha.sent.every((m) => m.chatId === '2348031234567@c.us' && m.session === STORE_SESSION));
   assert.match(waha.sent[0].text, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1/);
+  // …with a push to share it…
+  assert.match(waha.sent[0].text, /Please share it![\s\S]*Status, Instagram and Facebook[\s\S]*ready-made message next/);
+  // …and the link again on its own, to forward as it is.
+  assert.equal(waha.sent[1].text, '🐾 Lhasa for sale on PuppyPlace. See photos and details:\nhttps://puppyplace.ng/pets/lhasa-1');
 });
 
 test('the live notice needs the shared key, a number and a store that takes pets', async () => {
@@ -2092,4 +2096,102 @@ test('the live notice needs the shared key, a number and a store that takes pets
   const refused = await live(LIVE, {}, { waha: refusing });
   assert.equal(refused.res.status, 502);
   assert.equal(refused.json.ok, false);
+});
+
+// ── INVITING PEOPLE WHO MESSAGED BEFORE THE BOT WAS ANSWERING ────────────────
+
+const INVITEES = ['2349161587256', '2348133944389', '2348130919728'];
+
+function inviteSeed({ flag = true, status = 'pending' } = {}) {
+  return {
+    ...petSeed(flag),
+    pet_invites: INVITEES.map((phone, i) => ({
+      id: `inv-${i}`, tenant_id: TENANT, phone, status, attempts: 0, error: null, created_at: `2026-10-08T10:0${i}:00Z`, sent_at: null,
+    })),
+  };
+}
+const inviteEnv = () => wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' });
+
+test('each invited number gets the bot\'s opening message once, from the store number', async () => {
+  const supabase = makeFakeSupabase(inviteSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const first = await sendPetInvites(inviteEnv());
+    assert.deepEqual(first, { sent: 3, failed: 0, skipped: 0 });
+    assert.deepEqual(waha.sent.map((m) => m.chatId), INVITEES.map((p) => `${p}@c.us`));
+    assert.ok(waha.sent.every((m) => m.session === STORE_SESSION));
+    assert.match(waha.sent[0].text, /This is the PuppyPlace listing assistant\. Sorry we missed your message earlier/);
+    assert.match(waha.sent[0].text, /Reply \*SELL\* to start/);
+    assert.match(waha.sent[0].text, /Looking to buy instead\?[\s\S]*https:\/\/pets\.test\/pets\.html/);
+    assert.deepEqual(supabase.tables.pet_invites.map((r) => r.status), ['sent', 'sent', 'sent']);
+    assert.ok(supabase.tables.pet_invites.every((r) => r.sent_at && r.attempts === 1));
+
+    // A second sweep finds nothing to send: nobody is messaged twice.
+    assert.equal(await sendPetInvites(inviteEnv()), null);
+    assert.equal(waha.sent.length, 3);
+  } finally {
+    restore();
+  }
+});
+
+test('an invitation is never sent for a store that does not take pets, or twice for one already claimed', async () => {
+  const off = makeFakeSupabase(inviteSeed({ flag: false }));
+  const waha = makeFakeWaha();
+  let restore = installFetch({ supabase: off, waha, tokens: TOKENS });
+  try {
+    assert.deepEqual(await sendPetInvites(inviteEnv()), { sent: 0, failed: 3, skipped: 0 });
+    assert.equal(waha.sent.length, 0);
+    assert.ok(off.tables.pet_invites.every((r) => r.status === 'failed' && /not set up/.test(r.error)));
+  } finally {
+    restore();
+  }
+
+  // A row another sweep is already sending, or one that sent, is left alone.
+  const busy = makeFakeSupabase(inviteSeed({ status: 'sending' }));
+  const waha2 = makeFakeWaha();
+  restore = installFetch({ supabase: busy, waha: waha2, tokens: TOKENS });
+  try {
+    assert.equal(await sendPetInvites(inviteEnv()), null);
+    assert.equal(waha2.sent.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('WhatsApp refusing an invitation is retried a few times, then given up on', async () => {
+  const supabase = makeFakeSupabase({ ...inviteSeed(), pet_invites: [{ id: 'i1', tenant_id: TENANT, phone: INVITEES[0], status: 'pending', attempts: 0, error: null, created_at: '2026-10-08T10:00:00Z', sent_at: null }] });
+  const waha = makeFakeWaha();
+  const through = waha.handler;
+  waha.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await sendPetInvites(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_invites[0].status, supabase.tables.pet_invites[0].attempts], ['pending', 1]);
+    await sendPetInvites(inviteEnv());
+    await sendPetInvites(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_invites[0].status, supabase.tables.pet_invites[0].attempts], ['failed', 3]);
+    assert.match(supabase.tables.pet_invites[0].error, /did not take/);
+    assert.equal(await sendPetInvites(inviteEnv()), null);
+  } finally {
+    restore();
+  }
+});
+
+test('the every-minute job sends the invitations', async () => {
+  const supabase = makeFakeSupabase(inviteSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const waits = [];
+
+  try {
+    await worker.scheduled({ cron: '* * * * *' }, inviteEnv(), { waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+    assert.equal(waha.sent.length, 3);
+    assert.ok(supabase.tables.pet_invites.every((r) => r.status === 'sent'));
+  } finally {
+    restore();
+  }
 });

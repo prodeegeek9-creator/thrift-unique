@@ -5,6 +5,7 @@
 // release, tenant provisioning. The bundle in dist/ talks to this and to
 // Supabase-through-RLS, and to nothing else.
 
+import { sendPetInvites } from './routes/petInvites.js';
 import { ConfigError } from './lib/env.js';
 import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
@@ -82,6 +83,12 @@ export default {
         finalizeDrafts(env).then((r) => {
           if (r && (r.filed || r.failed || r.expired)) console.log(`draft filing: ${JSON.stringify(r)}`);
         })
+      );
+      // People waiting to be invited to list a pet (routes/petInvites.js).
+      ctx.waitUntil(
+        sendPetInvites(env)
+          .then((r) => r && console.log(`pet invites: ${JSON.stringify(r)}`))
+          .catch((err) => console.error('pet invites:', err?.message ?? err))
       );
       return;
     }

@@ -8,6 +8,8 @@ import {
   MAX_PET_PHOTOS,
   newPetListingMessage,
   petLiveMessage,
+  petShareMessage,
+  petInviteMessage,
   petRejectedMessage,
   petFailedOwnerMessage,
 } from '../lib/petIntake.js';
@@ -292,4 +294,16 @@ test('the owner learns whether the photos were checked, and the seller when the 
   const live = petLiveMessage({ store: 'PuppyPlace', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' });
   assert.match(live, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1[\s\S]*Send \*SELL\*/);
   assert.match(petLiveMessage({ store: 'PuppyPlace', breed: 'Cat', listing_type: 'adoption' }), /live on PuppyPlace for adoption/);
+  // The seller is asked to share it, and given something to forward.
+  assert.match(live, /Please share it![\s\S]*WhatsApp Status, Instagram and Facebook/);
+  assert.equal(petShareMessage({ breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' }), '🐾 Lhasa for sale on PuppyPlace. See photos and details:\nhttps://puppyplace.ng/pets/lhasa-1');
+  assert.match(petShareMessage({ breed: 'Cat', listing_type: 'adoption', url: 'https://x/y' }), /Cat available for adoption/);
+});
+
+test('the invitation says who it is, why, and how to start', () => {
+  const msg = petInviteMessage({ store: 'PuppyPlace', browseUrl: 'https://puppyplace.ng/pets.html' });
+  assert.match(msg, /This is the PuppyPlace listing assistant[\s\S]*free, in about 5 minutes[\s\S]*face visible[\s\S]*Reply \*SELL\* to start[\s\S]*pets\.html/);
+  assert.doesNotMatch(petInviteMessage({ store: 'PuppyPlace' }), /Looking to buy/);
+  // And "SELL", the reply it asks for, does start the conversation.
+  assert.equal(petIntakeStep(null, say('SELL'), ctx).state, 'pet_type');
 });
