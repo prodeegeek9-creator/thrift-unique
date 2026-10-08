@@ -69,6 +69,12 @@ export function config(env) {
     petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
     petListingsKey: env.PET_LISTINGS_KEY ? env.PET_LISTINGS_KEY.trim() : null,
 
+    // Looking at the photos of a pet being listed (lib/petVision.js): a Google
+    // AI Studio key as a Worker secret, and optionally the model. Without the
+    // key the photos are saved and listed unchecked, and the owner is told so.
+    petVisionKey: env.PET_VISION_KEY ? env.PET_VISION_KEY.trim() : null,
+    petVisionModel: env.PET_VISION_MODEL ? env.PET_VISION_MODEL.trim() : null,
+
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.
     wahaTypingMs:

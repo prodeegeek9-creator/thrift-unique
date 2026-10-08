@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { petIntakeStep, wantsToSellPet, MAX_PET_PHOTOS, newPetListingMessage, petRejectedMessage, petFailedOwnerMessage } from '../lib/petIntake.js';
+import {
+  petIntakeStep,
+  petPhotosDone,
+  wantsToSellPet,
+  MAX_PET_PHOTOS,
+  newPetListingMessage,
+  petLiveMessage,
+  petRejectedMessage,
+  petFailedOwnerMessage,
+} from '../lib/petIntake.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
 
 // Somebody listing a pet through a pet store's WhatsApp. Pure, so every
@@ -11,11 +20,17 @@ const photo = (n = 1) => ({ hasMedia: true, mediaUrl: `https://waha.test/api/fil
 const say = (body) => ({ body });
 const ctx = { store: 'PuppyPlace', phone: '2348031234567' };
 
-function run(messages, context = ctx) {
+// Saving and looking at the photos happens outside the pure step (routes/waha.js);
+// here that is played by `look`: draft images → [{ stored, v? }]. By default the
+// photos are saved and not looked at.
+const unlooked = (draft) => draft.images.map((_, i) => ({ stored: `p${i}` }));
+
+function run(messages, context = ctx, look = unlooked) {
   let conversation = null;
   const out = [];
   for (const m of messages) {
-    const r = petIntakeStep(conversation, m, context);
+    let r = petIntakeStep(conversation, m, context);
+    if (r?.action?.type === 'process_photos') r = petPhotosDone(r.draft, look(r.draft), context);
     out.push(r);
     if (r) conversation = { state: r.state, draft: r.draft };
   }
@@ -142,11 +157,17 @@ test('photos sent early count, and the limit is the site limit', () => {
   assert.match(early[2].replies[0], /Photo saved/);
   assert.match(early[2].replies[1], /How old/);
 
-  const many = run([...DOG.slice(0, 8), ...Array.from({ length: MAX_PET_PHOTOS + 2 }, (_, i) => photo(i))]);
-  const full = many.find((r) => r.state === 'pet_name');
-  assert.ok(full, 'moves on by itself at the limit');
-  assert.equal(full.draft.images.length, MAX_PET_PHOTOS);
-  assert.match(full.replies[0], /6 photos, the most/);
+  // At the limit it hands over to saving and looking at them by itself, saying why.
+  let conv = null;
+  let handoff = null;
+  for (const m of [...DOG.slice(0, 8), ...Array.from({ length: MAX_PET_PHOTOS + 2 }, (_, i) => photo(i))]) {
+    const r = petIntakeStep(conv, m, ctx);
+    if (r) conv = { state: r.state, draft: r.draft };
+    if (r?.action?.type === 'process_photos' && !handoff) handoff = r;
+  }
+  assert.ok(handoff, 'moves on by itself at the limit');
+  assert.equal(handoff.draft.images.length, MAX_PET_PHOTOS);
+  assert.match(handoff.replies[0], /6 photos, the most/);
 });
 
 test('cancel ends it, and a stale chat starts over', () => {
@@ -180,3 +201,95 @@ test('the owner is told why a listing failed, in plain words', () => {
   assert.match(petFailedOwnerMessage({ status: 404 }), /pet listing could not be sent[\s\S]*address is wrong/);
 }
 );
+
+// ── LOOKING AT THE PHOTOS ────────────────────────────────────────────────────
+
+const pet = (extra = {}) => ({ shows_pet: true, kind: 'dog', face_visible: true, ...extra });
+const NOT_A_PET = { shows_pet: false, kind: 'not_an_animal', face_visible: false };
+const TO_PHOTOS = DOG.slice(0, 8); // up to the question asking for photos
+
+test('"done" hands the photos to be saved and looked at, and says so', () => {
+  const r = petIntakeStep({ state: 'pet_photos', draft: { type: 'Dog', images: [{ url: 'u' }] } }, say('done'), ctx);
+  assert.equal(r.state, 'pet_photos');
+  assert.equal(r.action.type, 'process_photos');
+  assert.match(r.replies.at(-1), /Checking your photos/);
+  // The question asking for photos says the face must show.
+  assert.match(run(TO_PHOTOS.slice(0, 8)).at(-1).replies[0], /face must be clearly visible/);
+});
+
+test('photos that show the pet with a visible face are confirmed to the seller', () => {
+  const steps = run([...DOG.slice(0, 11), say('Ade')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() })));
+  const afterDone = steps[10];
+  assert.match(afterDone.replies[0], /✅ Photos checked: I can see a dog, and its face is clearly visible/);
+  assert.match(afterDone.replies.at(-1), /What name should buyers see/);
+  assert.deepEqual(afterDone.draft.verified, { kind: 'dog' });
+  // …and the summary shows it, and the site is told nothing it cannot store.
+  const last = run([...DOG, say('YES')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() }))).at(-1);
+  assert.equal(last.action.verified, true);
+  assert.equal('verified' in last.action.listing, false);
+  const summary = run(DOG, ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() }))).at(-1);
+  assert.match(summary.replies[0], /2 photos ✅ checked/);
+});
+
+test('a photo with the face showing goes first, since buyers see it first', () => {
+  const sides = [pet({ face_visible: false }), pet({ face_visible: true })];
+  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: sides[i] }))).at(-1);
+  assert.deepEqual(r.draft.images.map((i) => i.stored), ['p1', 'p0']);
+});
+
+test('photos of something else are left out, and the seller is told which', () => {
+  const verdicts = [pet(), NOT_A_PET];
+  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: verdicts[i] }))).at(-1);
+  assert.match(r.replies[0], /I left out a photo:\n• Photo 2: it doesn't show a dog/);
+  assert.equal(r.draft.images.length, 1);
+  assert.equal(r.state, 'pet_name');
+});
+
+test('a cat in a dog listing is called out, and nothing but non-pets sends them back for new photos', () => {
+  const cat = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: i ? pet() : pet({ kind: 'cat' }) }))).at(-1);
+  assert.match(cat.replies[0], /Photo 1: it looks like a cat, not a dog/);
+
+  const none = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: NOT_A_PET }))).at(-1);
+  assert.equal(none.state, 'pet_photos');
+  assert.equal(none.draft.images.length, 0);
+  assert.match(none.replies.join('\n'), /Photo 1: it doesn't show a dog[\s\S]*Please send a clear photo of your dog/);
+
+  // Another pet is not a dog or a cat.
+  const bird = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
+    (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ kind: 'bird' }) }))).at(-1);
+  assert.match(bird.replies[0], /I can see a bird/);
+  const wrong = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
+    (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ kind: 'dog' }) }))).at(-1);
+  assert.match(wrong.replies[0], /it looks like a dog, not a pet/);
+});
+
+test('the dog\'s face must show in at least one photo', () => {
+  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ face_visible: false }) }))).at(-1);
+  assert.equal(r.state, 'pet_photos');
+  assert.match(r.replies.at(-1), /can see your dog, but not its face clearly[\s\S]*type \*done\*/);
+  // The photos that were fine are kept, so one more is enough.
+  assert.equal(r.draft.images.length, 2);
+  const again = petPhotosDone(r.draft, [...r.draft.images, { stored: 'p9', v: pet() }], ctx);
+  assert.equal(again.state, 'pet_name');
+  assert.equal(again.draft.images[0].stored, 'p9');
+});
+
+test('photos that could not be looked at are listed, with no claim that they were checked', () => {
+  const r = run([...DOG.slice(0, 11)]).at(-1);
+  assert.equal(r.state, 'pet_name');
+  assert.doesNotMatch(r.replies.join(' '), /checked/);
+  assert.equal(r.draft.verified, undefined);
+  const none = petPhotosDone({ type: 'Dog', images: [] }, [], ctx);
+  assert.match(none.replies[0], /couldn't save those photos/);
+  assert.equal(none.state, 'pet_photos');
+});
+
+test('the owner learns whether the photos were checked, and the seller when the dog is live', () => {
+  const listing = { breed: 'Boerboel', price: 150000, listing_type: 'sale', location: 'Abuja' };
+  assert.match(newPetListingMessage(listing, { verified: true }), /Photos checked: a real pet, face visible/);
+  assert.match(newPetListingMessage(listing, { verified: false }), /weren't checked automatically/);
+  assert.doesNotMatch(newPetListingMessage(listing), /Photos/);
+  const live = petLiveMessage({ store: 'PuppyPlace', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' });
+  assert.match(live, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1[\s\S]*Send \*SELL\*/);
+  assert.match(petLiveMessage({ store: 'PuppyPlace', breed: 'Cat', listing_type: 'adoption' }), /live on PuppyPlace for adoption/);
+});

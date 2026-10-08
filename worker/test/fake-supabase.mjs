@@ -275,6 +275,8 @@ export function installFetch({
   photoCheck = null,
   // The site a pet store lists on (PET_LISTINGS_URL): { url, handler(url, init) }.
   petSite = null,
+  // The photo-checking model: { handler(url, init) }.
+  vision = null,
 }) {
   const real = globalThis.fetch;
 
@@ -307,6 +309,8 @@ export function installFetch({
     if (photoCheck && url.startsWith(photoCheck.url)) return photoCheck.handler(url, init);
 
     if (petSite && url.startsWith(petSite.url)) return petSite.handler(url, init);
+
+    if (vision && url.startsWith('https://generativelanguage.googleapis.com/')) return vision.handler(url, init);
 
     if (url === `${SUPABASE_URL}/auth/v1/user`) {
       const auth = init?.headers?.Authorization ?? '';

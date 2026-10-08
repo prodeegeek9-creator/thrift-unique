@@ -73,10 +73,14 @@ const SAY = {
   askNotes:
     'Anything else buyers should know? Sex, colour, temperament, papers, how many in the litter…\n\nReply *skip* to leave it out.',
   askPhotos: (d) =>
-    `Now send clear, recent photos of your ${petWord(d)} 📸 (up to ${MAX_PET_PHOTOS}). Daylight works best. Type *done* when you've sent them.`,
+    `Now send clear, recent photos of your ${petWord(d)} 📸 (up to ${MAX_PET_PHOTOS}). Daylight works best, and the ${petWord(d)}'s *face must be clearly visible* in at least one. Type *done* when you've sent them.`,
   noPhotos: 'Buyers need to see it. Send at least one photo 📸',
   morePhotos: (n) => (n === 1 ? 'Got it 👍 Send more, or type *done*.' : `${n} photos. Send more, or type *done*.`),
   photoLimit: `That's ${MAX_PET_PHOTOS} photos, the most we can show.`,
+  checking: 'Checking your photos… 🔍',
+  photosNotSaved: "I couldn't save those photos. Please send them again 📸",
+  needFace: (d) =>
+    `I can see your ${petWord(d)}, but not its face clearly 🐾. Please send a photo where the face is visible (eyes and nose), then type *done*.`,
   askName: 'What name should buyers see? (your name or your kennel)',
   badName: `Reply with a name, up to ${MAX_NAME} characters.`,
   askContact: (phone) =>
@@ -92,7 +96,7 @@ const SAY = {
       `📍 ${d.location}`,
       healthLine(d),
       d.notes ? `Notes: ${d.notes}` : null,
-      `${d.images.length} photo${d.images.length === 1 ? '' : 's'}`,
+      `${d.images.length} photo${d.images.length === 1 ? '' : 's'}${d.verified ? ' ✅ checked' : ''}`,
       `Seller: ${d.name}, +${d.whatsapp}`,
     ].filter(Boolean).join('\n') +
     '\n\nReply *YES* to send it for review, or *CANCEL*.',
@@ -146,12 +150,22 @@ export function petRejectedMessage(details) {
 }
 
 // For the store owner, on the platform number.
-export function newPetListingMessage({ breed, price, listing_type, location }) {
+export function newPetListingMessage({ breed, price, listing_type, location }, { verified } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
     (location ? `, ${location}` : '') +
-    '. Approve it in your site admin.'
+    '. Approve it in your site admin.' +
+    (verified === undefined ? '' : verified ? '\n\n📸 Photos checked: a real pet, face visible.' : "\n\n📸 Photos weren't checked automatically — look at them before approving.")
+  );
+}
+
+// To the seller, when the store approves the listing.
+export function petLiveMessage({ store, breed, listing_type, url }) {
+  return (
+    `🎉 Good news! Your *${breed}* is now live on ${store}${listing_type === 'adoption' ? ' for adoption' : ''}.` +
+    (url ? `\n\nSee it here:\n${url}` : '') +
+    '\n\nBuyers will message you directly on WhatsApp. Send *SELL* to list another pet.'
   );
 }
 
@@ -189,7 +203,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     }
     draft.images.push(image);
     if (live.state === 'pet_photos') {
-      if (draft.images.length >= MAX_PET_PHOTOS) return after('pet_photos', draft, ctx, store, SAY.photoLimit);
+      if (draft.images.length >= MAX_PET_PHOTOS) return processPhotos(draft, SAY.photoLimit);
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
     }
     return next(live.state, draft, '📸 Photo saved.', ctx, store);
@@ -239,13 +253,13 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       if (!text) return reply('pet_notes', draft, SAY.askNotes);
       const d = { ...draft, notes: SKIP.test(text) ? null : text.slice(0, MAX_NOTES) };
       // Photos sent earlier in the chat already count.
-      if (d.images.length >= MAX_PET_PHOTOS) return after('pet_photos', d, ctx, store);
+      if (d.images.length >= MAX_PET_PHOTOS) return processPhotos(d);
       return reply('pet_photos', d, d.images.length ? SAY.morePhotos(d.images.length) : SAY.askPhotos(d));
     }
 
     case 'pet_photos':
       if (!draft.images.length) return reply('pet_photos', draft, text ? SAY.noPhotos : SAY.askPhotos(draft));
-      if (FILLER.test(text) || YES.test(text)) return after('pet_photos', draft, ctx, store);
+      if (FILLER.test(text) || YES.test(text)) return processPhotos(draft);
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
 
     case 'pet_name': {
@@ -269,6 +283,67 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     default:
       return null;
   }
+}
+
+// The photos are saved and looked at outside this pure function (routes/waha.js)
+// and the outcome comes back to petPhotosDone().
+function processPhotos(draft, note) {
+  return {
+    state: 'pet_photos',
+    draft,
+    replies: [note, SAY.checking].filter(Boolean),
+    action: { type: 'process_photos' },
+  };
+}
+
+const KIND_WORD = { dog: 'dog', cat: 'cat', bird: 'bird', rabbit: 'rabbit', fish: 'fish', reptile: 'reptile', rodent: 'small pet', other_animal: 'pet' };
+const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a');
+
+// Does what a photo shows fit what the seller says they are listing?
+function fits(type, v) {
+  if (!v.shows_pet) return false;
+  if (type === 'Dog') return v.kind === 'dog';
+  if (type === 'Cat') return v.kind === 'cat';
+  return v.kind !== 'dog' && v.kind !== 'cat';
+}
+
+function whyNot(draft, v) {
+  if (!v.shows_pet) return `it doesn't show a ${petWord(draft)}`;
+  return `it looks like ${article(KIND_WORD[v.kind] ?? 'pet')} ${KIND_WORD[v.kind] ?? 'pet'}, not ${article(petWord(draft))} ${petWord(draft)}`;
+}
+
+// What came of saving and looking at the photos: images is [{ stored, v? }],
+// v being { shows_pet, kind, face_visible } when a photo was looked at and
+// absent when it was not (no check set up, or it could not be done).
+export function petPhotosDone(draft, images, ctx = {}) {
+  const store = ctx.store ?? 'the store';
+  if (!images?.length) return reply('pet_photos', { ...draft, images: [] }, SAY.photosNotSaved);
+
+  const keep = [];
+  const dropped = [];
+  images.forEach((img, i) => (img.v && !fits(draft.type, img.v) ? dropped.push({ n: i + 1, v: img.v }) : keep.push(img)));
+  const droppedNote = dropped.length
+    ? `I left out ${dropped.length === 1 ? 'a photo' : 'some photos'}:\n` +
+      dropped.map(({ n, v }) => `• Photo ${n}: ${whyNot(draft, v)}`).join('\n')
+    : null;
+
+  if (!keep.length) {
+    return reply('pet_photos', { ...draft, images: [] }, droppedNote, `Please send a clear photo of your ${petWord(draft)} 📸`);
+  }
+
+  const looked = keep.filter((img) => img.v);
+  // Only judged when somebody looked: with no check set up, nothing is claimed.
+  if (looked.length && !looked.some((img) => img.v.face_visible)) {
+    return reply('pet_photos', { ...draft, images: keep }, droppedNote, SAY.needFace(draft));
+  }
+
+  // A photo showing the face goes first: it is the one buyers see in the list.
+  const ordered = looked.length ? [...keep.filter((img) => img.v?.face_visible), ...keep.filter((img) => !img.v?.face_visible)] : keep;
+  const kind = looked[0] ? KIND_WORD[looked[0].v.kind] ?? 'pet' : null;
+  const confirmed = kind
+    ? `✅ Photos checked: I can see ${article(kind)} ${kind}, and its face is clearly visible.`
+    : null;
+  return after('pet_photos', { ...draft, images: ordered, verified: kind ? { kind } : undefined }, ctx, store, [droppedNote, confirmed].filter(Boolean).join('\n\n'));
 }
 
 function typeIn(text, answer = false) {
@@ -331,6 +406,7 @@ function submit(draft) {
     replies: [],
     action: {
       type: 'pet_listing',
+      verified: Boolean(draft.verified),
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,
