@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
+import { notifyLivePets } from '../routes/petListings.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
 
@@ -1722,13 +1723,27 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [] } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200 } = {}) {
   const received = [];
+  const statusCalls = [];
   const queue = [...sequence];
-  return {
+  const site = {
     url: PET_SITE,
     received,
+    statusCalls,
+    // slug → 'live' | 'pending' | 'missing', as the site's admin would have left it
+    states,
     async handler(url, init) {
+      if ((init.method ?? 'GET') === 'GET') {
+        const slugs = (new URL(url).searchParams.get('slugs') ?? '').split(',').filter(Boolean);
+        statusCalls.push({ url, auth: init.headers?.Authorization ?? null, slugs });
+        if (statusCode !== 200) return new Response('no', { status: statusCode });
+        return new Response(JSON.stringify({
+          live: slugs.filter((x) => site.states[x] === 'live'),
+          pending: slugs.filter((x) => site.states[x] === 'pending'),
+          missing: slugs.filter((x) => !site.states[x] || site.states[x] === 'missing'),
+        }));
+      }
       received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
       const next = queue.shift();
       if (next?.throws) throw new TypeError('network down');
@@ -1738,6 +1753,7 @@ function makeFakePetSite({ status = 201, body = null, sequence = [] } = {}) {
       });
     },
   };
+  return site;
 }
 
 function petSeed(enabled = true) {
@@ -1746,6 +1762,7 @@ function petSeed(enabled = true) {
     tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled }],
     submissions: [],
     ai_usage: [],
+    pet_listings: [],
   };
 }
 
@@ -1793,6 +1810,13 @@ test('a pet store sends a listed dog to its site, and files nothing here', async
 
     assert.equal(supabase.tables.submissions.length, 0);
     assert.equal(supabase.tables.products.length, 0);
+
+    // Remembered against the chat it came from, to tell the seller when it is approved.
+    assert.equal(supabase.tables.pet_listings.length, 1);
+    assert.deepEqual(
+      (({ tenant_id, slug, breed, listing_type, chat_id, status }) => ({ tenant_id, slug, breed, listing_type, chat_id, status }))(supabase.tables.pet_listings[0]),
+      { tenant_id: TENANT, slug: 'boerboel-1', breed: 'Boerboel', listing_type: 'sale', chat_id: CONSIGNOR_CHAT, status: 'pending' }
+    );
 
     const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
     assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
@@ -2044,75 +2068,6 @@ test('a check that cannot be done never stops a listing, and the store is told t
   }
 });
 
-// ── the pet site telling us a listing is live ──
-
-const KEY = 'pet-key';
-function liveCall(body, { key = KEY, method = 'POST' } = {}) {
-  return new Request('https://app.test/api/waha/pet-live', {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-  });
-}
-const LIVE = { whatsapp: '+2348031234567', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' };
-
-async function live(body, opts = {}, { seedData = petSeed(), extraEnv = {}, waha = makeFakeWaha() } = {}) {
-  const supabase = makeFakeSupabase(seedData);
-  const restore = installFetch({ supabase, waha, tokens: TOKENS });
-  try {
-    const res = await worker.fetch(liveCall(body, opts), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: KEY, ...extraEnv }), {});
-    return { res, json: await res.json(), waha, supabase };
-  } finally {
-    restore();
-  }
-}
-
-test('when the store approves a listing the seller is told, from the store number', async () => {
-  const { res, json, waha } = await live(LIVE);
-  assert.equal(res.status, 200);
-  assert.equal(json.sent, true);
-  assert.equal(waha.sent.length, 2);
-  assert.ok(waha.sent.every((m) => m.chatId === '2348031234567@c.us' && m.session === STORE_SESSION));
-  assert.match(waha.sent[0].text, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1/);
-  // …with a push to share it…
-  assert.match(waha.sent[0].text, /Please share it![\s\S]*Status, Instagram and Facebook[\s\S]*ready-made message next/);
-  // …and the link again on its own, to forward as it is.
-  assert.equal(waha.sent[1].text, '🐾 Lhasa for sale on PuppyPlace. See photos and details:\nhttps://puppyplace.ng/pets/lhasa-1');
-});
-
-test('the live notice needs the shared key, a number and a store that takes pets', async () => {
-  assert.equal((await live(LIVE, { key: 'wrong' })).res.status, 401);
-  assert.equal((await live(LIVE, { key: null })).res.status, 401);
-  assert.equal((await live(LIVE, {}, { extraEnv: { PET_LISTINGS_KEY: '' } })).res.status, 503);
-  assert.equal((await live('nope')).res.status, 400);
-  assert.equal((await live({ ...LIVE, whatsapp: 'call me' })).res.status, 400);
-  assert.equal((await live({ ...LIVE, breed: '' })).res.status, 400);
-  // No store has the flag on.
-  const off = await live(LIVE, {}, { seedData: petSeed(false) });
-  assert.equal(off.res.status, 404);
-  assert.equal(off.waha.sent.length, 0);
-  // A "store" that is not the one that takes pets.
-  assert.equal((await live({ ...LIVE, store: 'someone-else' })).res.status, 404);
-
-  // Two stores take pets, and the site did not say which.
-  const two = petSeed();
-  const OTHER = 'bbbbbbbb-0000-0000-0000-00000000000b';
-  two.tenants.push({ ...two.tenants[0], id: OTHER, slug: 'second', name: 'Second Pets' });
-  two.tenant_features.push({ tenant_id: OTHER, flag: 'pet_listings', enabled: true });
-  assert.equal((await live(LIVE, {}, { seedData: two })).res.status, 409);
-  const named = await live({ ...LIVE, store: 'store' }, {}, { seedData: two });
-  assert.equal(named.res.status, 200);
-  assert.equal(named.waha.sent[0].session, STORE_SESSION);
-
-  // WhatsApp refusing the message is reported, not hidden.
-  const refusing = makeFakeWaha();
-  const through = refusing.handler;
-  refusing.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
-  const refused = await live(LIVE, {}, { waha: refusing });
-  assert.equal(refused.res.status, 502);
-  assert.equal(refused.json.ok, false);
-});
-
 // ── INVITING PEOPLE WHO MESSAGED BEFORE THE BOT WAS ANSWERING ────────────────
 
 const INVITEES = ['2349161587256', '2348133944389', '2348130919728'];
@@ -2206,6 +2161,138 @@ test('the every-minute job sends the invitations', async () => {
     await Promise.all(waits);
     assert.equal(waha.sent.length, 3);
     assert.ok(supabase.tables.pet_invites.every((r) => r.status === 'sent'));
+  } finally {
+    restore();
+  }
+});
+
+// ── TELLING THE SELLER THEIR PET IS LIVE ─────────────────────────────────────
+
+const SELLER_A = '144525699858492@lid';
+const SELLER_B = '40218493227115@lid';
+
+function listingsSeed(rows) {
+  return {
+    ...petSeed(),
+    pet_listings: rows.map(([slug, chat, status = 'pending', extra = {}], i) => ({
+      id: `pl-${i}`, tenant_id: TENANT, slug, breed: i === 0 ? 'Caucasian shepherd' : 'Lhasa', listing_type: 'sale', chat_id: chat,
+      status, attempts: 0, error: null, created_at: new Date().toISOString(), notified_at: null, ...extra,
+    })),
+  };
+}
+
+test('a seller is told when the store approves their listing, however it was approved', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A], ['lhasa-1', SELLER_B], ['gone-1', SELLER_B]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live', 'lhasa-1': 'pending' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.deepEqual(await notifyLivePets(inviteEnv()), { notified: 1, expired: 1, failed: 0 });
+
+    // The site was asked about all three, with the shared key.
+    assert.equal(petSite.statusCalls.length, 1);
+    assert.deepEqual(petSite.statusCalls[0].slugs, ['caucasian-1', 'lhasa-1', 'gone-1']);
+    assert.equal(petSite.statusCalls[0].auth, 'Bearer pet-key');
+
+    // The seller whose pet is live is told in the chat they wrote from, from the store's number…
+    assert.equal(waha.sent.length, 2);
+    assert.ok(waha.sent.every((m) => m.chatId === SELLER_A && m.session === STORE_SESSION));
+    assert.match(waha.sent[0].text, /Your \*Caucasian shepherd\* is now live on PuppyPlace\.[\s\S]*https:\/\/pets\.test\/pets\/caucasian-1[\s\S]*Please share it!/);
+    // …with the link again, to forward.
+    assert.equal(waha.sent[1].text, '🐾 Caucasian shepherd for sale on PuppyPlace. See photos and details:\nhttps://pets.test/pets/caucasian-1');
+
+    const by = (slug) => supabase.tables.pet_listings.find((r) => r.slug === slug);
+    assert.equal(by('caucasian-1').status, 'notified');
+    assert.ok(by('caucasian-1').notified_at);
+    // Still waiting, and one deleted on the site is no longer waited for.
+    assert.equal(by('lhasa-1').status, 'pending');
+    assert.equal(by('gone-1').status, 'expired');
+
+    // A told seller is not asked about again, and nobody is told twice.
+    await notifyLivePets(inviteEnv());
+    assert.deepEqual(petSite.statusCalls[1].slugs, ['lhasa-1']);
+    assert.equal(waha.sent.length, 2);
+
+    // The store approves the other one later, and that seller hears too.
+    petSite.states['lhasa-1'] = 'live';
+    assert.deepEqual(await notifyLivePets(inviteEnv()), { notified: 1, expired: 0, failed: 0 });
+    assert.ok(waha.sent.slice(2).every((m) => m.chatId === SELLER_B));
+    assert.match(waha.sent[2].text, /Your \*Lhasa\* is now live/);
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+  } finally {
+    restore();
+  }
+});
+
+test('nothing is asked or sent without a site configured, or when it cannot answer', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' }, statusCode: 500 });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.equal(await notifyLivePets(wahaEnv()), null);
+    assert.equal(petSite.statusCalls.length, 0);
+    // The site down: the listing keeps waiting, and nobody is told anything.
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+    assert.equal(petSite.statusCalls.length, 1);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.pet_listings[0].status, 'pending');
+  } finally {
+    restore();
+  }
+});
+
+test('a notice WhatsApp refuses is tried again, a few times, never twice once sent', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const through = waha.handler;
+  waha.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await notifyLivePets(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_listings[0].status, supabase.tables.pet_listings[0].attempts], ['pending', 1]);
+    for (let i = 0; i < 4; i++) await notifyLivePets(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_listings[0].status, supabase.tables.pet_listings[0].attempts], ['failed', 5]);
+    assert.match(supabase.tables.pet_listings[0].error, /did not take/);
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+  } finally {
+    restore();
+  }
+});
+
+test('a claim another sweep holds, or old listings nobody approved, are left alone', async () => {
+  const old = new Date(Date.now() - 61 * 86_400_000).toISOString();
+  const supabase = makeFakeSupabase(listingsSeed([['held-1', SELLER_A, 'notifying'], ['old-1', SELLER_B, 'pending', { created_at: old }]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'held-1': 'live', 'old-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.pet_listings.find((r) => r.slug === 'old-1').status, 'expired');
+    assert.equal(supabase.tables.pet_listings.find((r) => r.slug === 'held-1').status, 'notifying');
+  } finally {
+    restore();
+  }
+});
+
+test('the every-minute job tells sellers their pet is live', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  const waits = [];
+
+  try {
+    await worker.scheduled({ cron: '* * * * *' }, inviteEnv(), { waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+    assert.equal(waha.sent.length, 2);
+    assert.equal(supabase.tables.pet_listings[0].status, 'notified');
   } finally {
     restore();
   }

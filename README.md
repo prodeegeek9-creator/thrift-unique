@@ -230,13 +230,19 @@ store; a refusal by WhatsApp is retried up to three times; a row left
 `sending` by a crash is never sent again. Rows are added by the platform, e.g.
 `insert into pet_invites (tenant_id, phone) values ('<id>', '2348031234567');`
 
-**The seller is told when it is live.** When the store approves a listing on
-its site, the site POSTs `{ whatsapp, breed, listing_type, url }` to
-`/api/waha/pet-live` here, with the same shared key, and the seller gets a
-WhatsApp from the store's own number with their link and a push to share it,
-then the link again on its own in a message made to be forwarded. The number is the one buyers were given,
-which is the seller's own unless they chose another. It names the store with
-`store` (its slug), or uses the only one that has `pet_listings` on.
+**The seller is told when it is live.** Each listing sent to the site is
+remembered in `pet_listings` (migration 0051) with the chat it came from. Once
+a minute (`routes/petListings.js`) the Worker asks the site
+(`GET <PET_LISTINGS_URL>/status?slugs=…`, same shared key) which of the ones
+still waiting are live, and each seller whose listing is gets, in the same chat,
+their link with a push to share it on Status, Instagram, Facebook and with
+friends and groups, then the link again on its own in a message made to be
+forwarded. It asks rather than waiting to be told, so it does not matter how
+the store approved the listing (a tick in the admin, the edit form, the
+database) and nothing depends on the site reaching this Worker. A listing
+deleted on the site is dropped; one nobody approved in 60 days is given up on;
+a notice WhatsApp refuses is retried up to five times; a row left `notifying`
+by a crash is never sent again.
 
 ## Structure
 
