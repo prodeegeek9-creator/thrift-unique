@@ -1745,6 +1745,7 @@ function petSeed(enabled = true) {
     ...storeSeed({ name: 'PuppyPlace' }),
     tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled }],
     submissions: [],
+    ai_usage: [],
   };
 }
 
@@ -1929,12 +1930,19 @@ function makeFakeVision(verdicts, { status = 200 } = {}) {
     calls,
     async handler(url, init) {
       const body = JSON.parse(init.body);
-      const photos = body.contents[0].parts.filter((p) => p.inline_data).length;
-      calls.push({ photos, key: init.headers['x-goog-api-key'] });
+      const photos = body.messages[0].content.filter((p) => p.type === 'image_url').length;
+      calls.push({ photos, key: init.headers.Authorization, detail: body.messages[0].content[1]?.image_url.detail });
       if (status !== 200) return new Response('no', { status });
       const next = queue.shift() ?? Array.from({ length: photos }, () => ({ shows_pet: true, kind: 'dog', face_visible: true }));
       const answers = next.map((v, index) => ({ index, ...v }));
-      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ photos: answers }) }] } }] }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          model: 'gpt-4o-mini-2024-07-18',
+          choices: [{ message: { content: JSON.stringify({ photos: answers }) } }],
+          usage: { prompt_tokens: 300 * photos, completion_tokens: 20 * photos, prompt_tokens_details: { cached_tokens: 0 } },
+        }),
+        { status: 200 }
+      );
     },
   };
 }
@@ -1963,11 +1971,17 @@ test('photos are saved at "done", looked at, and the seller is told what was fou
   const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
 
   try {
-    await toPetStore(petChatThrough([pic(1), pic(2)], NAME_TO_YES), { PET_VISION_KEY: 'g-key' });
+    await toPetStore(petChatThrough([pic(1), pic(2)], NAME_TO_YES), { OPENAI_API_KEY: 'oa-key' });
 
     // Both photos were saved at "done", and looked at in one call.
     assert.equal(vision.calls.length, 1);
-    assert.deepEqual(vision.calls[0], { photos: 2, key: 'g-key' });
+    assert.deepEqual(vision.calls[0], { photos: 2, key: 'Bearer oa-key', detail: 'low' });
+    // And what it cost is in the same log as the item reviews.
+    assert.equal(supabase.tables.ai_usage.length, 1);
+    assert.deepEqual(
+      (({ tenant_id, purpose, model, images, input_tokens, output_tokens, image_detail }) => ({ tenant_id, purpose, model, images, input_tokens, output_tokens, image_detail }))(supabase.tables.ai_usage[0]),
+      { tenant_id: TENANT, purpose: 'pet_photos', model: 'gpt-4o-mini-2024-07-18', images: 2, input_tokens: 600, output_tokens: 40, image_detail: 'low' }
+    );
     const seller = textsTo(waha, CONSIGNOR_CHAT);
     assert.ok(seller.some((t) => /Checking your photos/.test(t)));
     assert.ok(seller.some((t) => /I left out a photo:\n• Photo 1: it doesn't show a dog/.test(t)));
@@ -1991,12 +2005,13 @@ test("a dog whose face is hidden is asked for a face photo, and the first photos
   const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
 
   try {
-    await toPetStore(petChatThrough([pic(1)], [pic(2), fromConsignor('done'), ...NAME_TO_YES]), { PET_VISION_KEY: 'g-key' });
+    await toPetStore(petChatThrough([pic(1)], [pic(2), fromConsignor('done'), ...NAME_TO_YES]), { OPENAI_API_KEY: 'oa-key' });
 
     const seller = textsTo(waha, CONSIGNOR_CHAT);
     assert.ok(seller.some((t) => /can see your dog, but not its face clearly/.test(t)));
     // The second look was at the new photo only.
     assert.deepEqual(vision.calls.map((c) => c.photos), [1, 1]);
+    assert.equal(supabase.tables.ai_usage.length, 2);
     // And both photos are listed, the one with the face first.
     assert.equal(petSite.received[0].body.photos.length, 2);
     // (the photo that was looked at second, and showed the face, is the first one listed)
@@ -2010,7 +2025,7 @@ test("a dog whose face is hidden is asked for a face photo, and the first photos
 
 test('a check that cannot be done never stops a listing, and the store is told the photos were not checked', async () => {
   for (const [label, extraEnv, vision] of [
-    ['model refuses', { PET_VISION_KEY: 'g-key' }, makeFakeVision([], { status: 429 })],
+    ['model refuses', { OPENAI_API_KEY: 'oa-key' }, makeFakeVision([], { status: 429 })],
     ['no key set up', {}, makeFakeVision([])],
   ]) {
     const supabase = makeFakeSupabase(petSeed());
