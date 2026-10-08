@@ -1777,6 +1777,7 @@ function petSeed(enabled = true) {
     submissions: [],
     ai_usage: [],
     pet_listings: [],
+    pet_sellers: [],
   };
 }
 
@@ -2509,4 +2510,75 @@ test('a store that takes its own calls never has one declined', async () => {
   const { waha } = await ringStore([ring()], { seedData: seed });
   assert.equal(waha.rejected.length, 0);
   assert.equal(waha.sent.length, 0);
+});
+
+// ── REMEMBERING THE SELLER'S NAME ────────────────────────────────────────────
+
+const NAME_QUESTION = /What name should buyers see/;
+
+test('a seller is asked their name once, and not again on their next listing', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    // First listing: asked, and told "my name" is not one.
+    await toPetStore(petChatThrough([pic(1)], [fromConsignor('my name'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
+    let seller = textsTo(waha, CONSIGNOR_CHAT);
+    assert.equal(seller.filter((t) => NAME_QUESTION.test(t)).length, 1);
+    assert.equal(seller.filter((t) => /doesn't look like a real name/.test(t)).length, 1);
+    assert.equal(petSite.received[0].body.seller_name, 'Ade');
+    // Only the real name is kept.
+    assert.deepEqual(supabase.tables.pet_sellers.map((r) => [r.chat_id, r.name]), [[CONSIGNOR_CHAT, 'Ade']]);
+
+    // Second listing, same chat: no name question, the same name goes to the site.
+    waha.sent.length = 0;
+    await toPetStore(petChatThrough([pic(2)], [fromConsignor('yes'), fromConsignor('yes')]));
+    seller = textsTo(waha, CONSIGNOR_CHAT);
+    assert.ok(!seller.some((t) => NAME_QUESTION.test(t)));
+    assert.ok(seller.some((t) => /I'll list this under \*Ade\*, as last time/.test(t)));
+    assert.ok(seller.some((t) => /Seller: Ade \(as before\)/.test(t)));
+    assert.equal(petSite.received.length, 2);
+    assert.equal(petSite.received[1].body.seller_name, 'Ade');
+  } finally {
+    restore();
+  }
+});
+
+test("another seller is not given somebody else's name, and a changed name is the one kept", async () => {
+  const seed = petSeed();
+  seed.pet_sellers.push({ tenant_id: TENANT, chat_id: '2348000000001@c.us', name: 'Someone Else', updated_at: new Date().toISOString() });
+  const supabase = makeFakeSupabase(seed);
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    // This chat has no name on record: asked.
+    await toPetStore(petChatThrough([pic(1)], [fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
+    assert.equal(textsTo(waha, CONSIGNOR_CHAT).filter((t) => NAME_QUESTION.test(t)).length, 1);
+    // Later they change it at the summary: NAME, then the new one.
+    waha.sent.length = 0;
+    await toPetStore(petChatThrough([pic(2)], [fromConsignor('yes'), fromConsignor('NAME'), fromConsignor('Royal Paws Kennel'), fromConsignor('yes')]));
+    assert.equal(petSite.received.at(-1).body.seller_name, 'Royal Paws Kennel');
+    assert.equal(supabase.tables.pet_sellers.find((r) => r.chat_id === CONSIGNOR_CHAT).name, 'Royal Paws Kennel');
+    assert.equal(supabase.tables.pet_sellers.find((r) => r.chat_id === '2348000000001@c.us').name, 'Someone Else');
+  } finally {
+    restore();
+  }
+});
+
+test('a name is only kept once the listing has reached the site', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ sequence: [{ status: 400, body: { error: 'Invalid listing', details: ['photo 1: larger than 5 MB'] } }] });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await toPetStore(petChatThrough([pic(1)], NAME_TO_YES));
+    assert.equal(supabase.tables.pet_sellers.length, 0);
+  } finally {
+    restore();
+  }
 });

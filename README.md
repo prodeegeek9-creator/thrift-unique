@@ -222,6 +222,15 @@ Worker secret; `PET_VISION_MODEL` and `PET_VISION_DETAIL` (`low`, `high`,
 a cost on each call. Every call is written to `ai_usage` with `purpose =
 'pet_photos'`, so `/admin/ai` shows what it cost next to the item reviews.
 
+**The seller's name** is asked once. It is checked by plain rules
+(`parseSellerName` in `lib/petIntake.js`): a lead-in such as "my name is" is
+taken off, and "my name", "none", "test", a phone number, a web address or a
+single letter is refused with an example of what to send. Once a listing has
+reached the site the name is kept in `pet_sellers` (migration 0052), by chat, and
+the next listing from that chat uses it without asking ("I'll list this under
+*Ade*, as last time"). The summary shows it with "(as before)", and replying
+*NAME* there asks for a different one.
+
 **People who messaged before the bot was on** can be invited. A row in
 `pet_invites` (migration 0050: store, phone number) is picked up by the
 every-minute sweep (`routes/petInvites.js`), which sends the bot's opening

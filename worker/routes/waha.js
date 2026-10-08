@@ -1223,8 +1223,9 @@ async function inActiveBotChat(cfg, tenant, event) {
 
 async function petIntake(cfg, event, tenant, conversation) {
   const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
+  const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from) };
 
-  const result = petIntakeStep(conversation, event, { store: tenant.name, phone });
+  const result = petIntakeStep(conversation, event, ctx);
   if (!result) return json({ ok: true, ignored: 'not a pet for sale' });
 
   // The same replay guard as the other intakes.
@@ -1248,7 +1249,7 @@ async function petIntake(cfg, event, tenant, conversation) {
   for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
 
   if (result.action?.type === 'process_photos') {
-    await processPetPhotos(cfg, tenant, event, result.draft, { store: tenant.name, phone });
+    await processPetPhotos(cfg, tenant, event, result.draft, ctx);
   }
 
   if (result.action?.type === 'pet_listing') {
@@ -1256,6 +1257,17 @@ async function petIntake(cfg, event, tenant, conversation) {
   }
 
   return json({ ok: true, petIntake: result.state });
+}
+
+// The name this seller gave on an earlier listing, so they are not asked again.
+async function knownSellerName(cfg, tenant, chat) {
+  try {
+    const row = await db(cfg).one('pet_sellers', `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(chat)}&select=name`);
+    return row?.name ?? null;
+  } catch (err) {
+    console.warn('seller name not read:', err?.message ?? err);
+    return null;
+  }
 }
 
 // The seller said "done": save the photos now, while WhatsApp still serves
@@ -1366,6 +1378,15 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     }
     return false;
   }
+
+  // The name they gave is kept for next time (only names that passed the check get this far).
+  await db(cfg)
+    .insert(
+      'pet_sellers',
+      { tenant_id: tenant.id, chat_id: event.from, name: action.listing.seller_name, updated_at: new Date().toISOString() },
+      { onConflict: 'tenant_id,chat_id', merge: true, returning: false }
+    )
+    .catch((err) => console.warn('seller name not kept:', err?.message ?? err));
 
   // Remembered, so the seller can be told when the store approves it
   // (routes/petListings.js asks the site which of these are live).

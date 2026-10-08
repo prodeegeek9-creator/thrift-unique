@@ -33,6 +33,38 @@ export function wantsToSellPet(text) {
   return SELL_START.test(t) || (FIRST_PERSON_SELL.test(t) && PET_WORD.test(t));
 }
 
+// "Ade", "Royal Paws Kennel", "Dave_k9": yes. "my name", "none", "test", a phone
+// number, a web address: no. A lead-in such as "my name is" is taken off first,
+// so "my name is Ade" is Ade and a bare "my name" is nothing. Returns the name,
+// or null when it is not one. Plain rules, not a guess by a model: they are the
+// same every time and cost nothing.
+const NAME_LEAD = /^(?:my\s+(?:kennel\s+)?name(?:\s+is)?|(?:kennel\s+)?name(?:\s+is)?|i\s*(?:am|'m)|im|this\s+is|it'?s|call\s+me)\b[\s:,\-–]*/i;
+const NOT_A_NAME = new Set([
+  'none', 'nothing', 'nil', 'null', 'na', 'n a', 'nope', 'no', 'yes', 'ok', 'okay', 'skip', 'test', 'testing', 'me', 'myself',
+  'i', 'you', 'anything', 'whatever', 'any', 'unknown', 'seller', 'owner', 'hello', 'hi', 'hey', 'hmm', 'asdf', 'qwerty',
+  'xxx', 'abc', 'abcd', 'sample', 'example', 'dog', 'puppy', 'pet', 'sale', 'for sale', 'sell', 'private', 'anonymous',
+  'nobody', 'somebody', 'someone', 'person', 'admin', 'no name', 'your name', 'my kennel', 'kennel',
+]);
+const FILLER_WORDS = new Set(['my', 'name', 'kennel', 'your', 'the', 'no', 'none', 'a', 'an', 'is', 'of', 'i', 'me', 'myself', 'you', 'seller', 'owner', 'person', 'unknown', 'anything', 'whatever']);
+
+export function parseSellerName(raw) {
+  const t = String(raw ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(NAME_LEAD, '')
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .trim();
+  if (!t || t.length > MAX_NAME) return null;
+  if ((t.match(/\p{L}/gu) ?? []).length < 2) return null;
+  if ((t.match(/\d/g) ?? []).length >= 6) return null;
+  if (/https?:|www\.|\.(com|ng|net|org)\b|@/i.test(t)) return null;
+  const key = t.toLowerCase().replace(/[^\p{L}\s]/gu, '').replace(/\s+/g, ' ').trim();
+  if (!key || NOT_A_NAME.has(key)) return null;
+  if (key.split(' ').every((w) => FILLER_WORDS.has(w))) return null;
+  if (/^(.)\1+$/u.test(key.replace(/\s/g, ''))) return null;
+  return t;
+}
+
 export const PET_STATES = [
   'pet_type', 'pet_breed', 'pet_age', 'pet_deal', 'pet_price', 'pet_location',
   'pet_health', 'pet_notes', 'pet_photos', 'pet_name', 'pet_contact', 'pet_review',
@@ -82,7 +114,8 @@ const SAY = {
   needFace: (d) =>
     `I can see your ${petWord(d)}, but not its face clearly 🐾. Please send a photo where the face is visible (eyes and nose), then type *done*.`,
   askName: 'What name should buyers see? (your name or your kennel)',
-  badName: `Reply with a name, up to ${MAX_NAME} characters.`,
+  badName: "That doesn't look like a real name 🤔. Please send your name or your kennel's name, for example *Ade* or *Royal Paws Kennel*.",
+  knownName: (name) => `👤 I'll list this under *${name}*, as last time. You can change it at the summary.`,
   askContact: (phone) =>
     phone
       ? `Buyers will message you on WhatsApp at +${phone}. Reply *YES*, or send the number they should use instead.`
@@ -97,10 +130,10 @@ const SAY = {
       healthLine(d),
       d.notes ? `Notes: ${d.notes}` : null,
       `${d.images.length} photo${d.images.length === 1 ? '' : 's'}${d.verified ? ' ✅ checked' : ''}`,
-      `Seller: ${d.name}, +${d.whatsapp}`,
+      `Seller: ${d.name}${d.nameKnown ? ' (as before)' : ''}, +${d.whatsapp}`,
     ].filter(Boolean).join('\n') +
-    '\n\nReply *YES* to send it for review, or *CANCEL*.',
-  reviewAgain: 'Reply *YES* to send it for review, or *CANCEL*.',
+    '\n\nReply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
+  reviewAgain: 'Reply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
   cancelled: 'Cancelled. Nothing was sent. Message *SELL* any time to list a pet.',
 };
 
@@ -299,9 +332,9 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
 
     case 'pet_name': {
-      const name = text.replace(/\s+/g, ' ');
-      if (name.length < 1 || name.length > MAX_NAME) return reply('pet_name', draft, SAY.badName);
-      return after('pet_name', { ...draft, name }, ctx, store);
+      const name = parseSellerName(text);
+      if (!name) return reply('pet_name', draft, SAY.badName);
+      return after('pet_name', { ...draft, name, nameKnown: false }, ctx, store);
     }
 
     case 'pet_contact': {
@@ -313,6 +346,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_review':
       if (YES.test(text)) return submit(draft);
+      if (/^\s*(name|change (?:the )?(?:seller )?name|edit name)\s*$/i.test(text)) return reply('pet_name', draft, SAY.askName);
       if (NO.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
       return reply('pet_review', draft, SAY.reviewAgain);
 
@@ -394,11 +428,15 @@ function typeIn(text, answer = false) {
 
 // What follows a finished step, skipping what is already known.
 function after(state, draft, ctx, store, prefix) {
-  const order = ['pet_photos', 'pet_name', 'pet_contact'];
-  for (const s of order.slice(order.indexOf(state) + 1)) {
-    if (s === 'pet_name' && !draft.name) return reply('pet_name', draft, prefix, SAY.askName);
-    if (s === 'pet_contact') return reply('pet_contact', draft, prefix, SAY.askContact(ctx.phone));
+  // The name asked last time is used again, unless the seller changes it. Only
+  // when coming from the photos: a seller who has just been asked is not asked twice.
+  let note = null;
+  if (state === 'pet_photos' && !draft.name) {
+    if (!ctx.knownName) return reply('pet_name', draft, prefix, SAY.askName);
+    draft = { ...draft, name: ctx.knownName, nameKnown: true };
+    note = SAY.knownName(ctx.knownName);
   }
+  if (!draft.whatsapp) return reply('pet_contact', draft, prefix, note, SAY.askContact(ctx.phone));
   return review(draft, store);
 }
 

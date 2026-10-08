@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   petIntakeStep,
   petPhotosDone,
+  parseSellerName,
   wantsToSellPet,
   MAX_PET_PHOTOS,
   newPetListingMessage,
@@ -328,4 +329,90 @@ test('why the photos were not looked at travels with the listing to the owner', 
   }
   assert.equal(last.action.verified, false);
   assert.equal(last.action.checkNote, 'OpenAI said HTTP 401');
+});
+
+// ── THE SELLER'S NAME ────────────────────────────────────────────────────────
+
+test('real names and kennel names are accepted, with "my name is" taken off', () => {
+  for (const [typed, name] of [
+    ['Ade', 'Ade'],
+    ['Royal Paws Kennel', 'Royal Paws Kennel'],
+    ['Dave_k9', 'Dave_k9'],
+    ['Humblesmith kennel', 'Humblesmith kennel'],
+    ['Ed', 'Ed'],
+    ['Ọlá Bẹ́ kennels', 'Ọlá Bẹ́ kennels'],
+    ['my name is Ade', 'Ade'],
+    ['My name is Royal Paws Kennel', 'Royal Paws Kennel'],
+    ['Name: Tolu', 'Tolu'],
+    ["I'm Bola", 'Bola'],
+    ['I am Bola', 'Bola'],
+    ['call me Chi', 'Chi'],
+    ['  "Ade"  ', 'Ade'],
+    ['Ade   Obi', 'Ade Obi'],
+  ]) {
+    assert.equal(parseSellerName(typed), name, typed);
+  }
+});
+
+test('"my name", placeholders, numbers and web addresses are not names', () => {
+  for (const typed of [
+    'my name', 'My Name', 'my name is', 'name', 'Name:', 'my kennel', 'kennel', 'the owner', 'no name', 'your name',
+    'none', 'N/A', 'nil', 'test', 'testing', 'me', 'myself', 'hello', 'dog', 'seller', 'anonymous', 'skip', 'yes', 'no',
+    'a', 'x', '1', 'aaaa', '!!!', '?', '08031234567', '+2348031234567', '1234567', 'www.shop.com', 'http://x.y', 'ade@mail.com',
+    'puppies.com', '', '   ', 'x'.repeat(81),
+  ]) {
+    assert.equal(parseSellerName(typed), null, JSON.stringify(typed));
+  }
+});
+
+test('a name that is not one is flagged, and asked for again', () => {
+  const asked = run(DOG.slice(0, 11)).at(-1);
+  assert.equal(asked.state, 'pet_name');
+  for (const typed of ['my name', 'none', '08031234567']) {
+    const flagged = petIntakeStep({ state: 'pet_name', draft: asked.draft }, say(typed), ctx);
+    assert.equal(flagged.state, 'pet_name');
+    assert.match(flagged.replies[0], /doesn't look like a real name[\s\S]*\*Ade\* or \*Royal Paws Kennel\*/);
+    assert.equal(flagged.draft.name, undefined);
+  }
+  // "my name is Ade" is taken as Ade, and the next question follows.
+  const ok = petIntakeStep({ state: 'pet_name', draft: asked.draft }, say('my name is Ade'), ctx);
+  assert.equal(ok.state, 'pet_contact');
+  assert.equal(ok.draft.name, 'Ade');
+});
+
+test('a seller who has given a name before is not asked again, and can change it at the summary', () => {
+  const known = { ...ctx, knownName: 'Dave_k9' };
+  // Straight from the photos to the number, with the name already in place.
+  const afterPhotos = run(DOG.slice(0, 11), known).at(-1);
+  assert.equal(afterPhotos.state, 'pet_contact');
+  assert.equal(afterPhotos.draft.name, 'Dave_k9');
+  assert.ok(afterPhotos.replies.some((r) => /I'll list this under \*Dave_k9\*, as last time/.test(r)));
+  assert.ok(!afterPhotos.replies.some((r) => /What name should buyers see/.test(r)));
+
+  const summary = run([...DOG.slice(0, 11), say('yes')], known).at(-1);
+  assert.equal(summary.state, 'pet_review');
+  assert.match(summary.replies[0], /Seller: Dave_k9 \(as before\), \+2348031234567/);
+  assert.match(summary.replies[0], /\*YES\* to send it for review, \*NAME\* to change the seller name, or \*CANCEL\*/);
+
+  // NAME asks again; a bad answer is flagged; a good one goes straight back to the summary.
+  const asking = petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('name'), known);
+  assert.equal(asking.state, 'pet_name');
+  assert.match(asking.replies[0], /What name should buyers see/);
+  assert.equal(petIntakeStep({ state: 'pet_name', draft: asking.draft }, say('my name'), known).state, 'pet_name');
+  const changed = petIntakeStep({ state: 'pet_name', draft: asking.draft }, say('Royal Paws Kennel'), known);
+  assert.equal(changed.state, 'pet_review');
+  assert.match(changed.replies[0], /Seller: Royal Paws Kennel, \+2348031234567/);
+  assert.doesNotMatch(changed.replies[0], /as before/);
+  // …and what is sent is the new name.
+  assert.equal(petIntakeStep({ state: 'pet_review', draft: changed.draft }, say('YES'), known).action.listing.seller_name, 'Royal Paws Kennel');
+  // The unchanged name is what is sent otherwise.
+  assert.equal(petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('YES'), known).action.listing.seller_name, 'Dave_k9');
+});
+
+test('a first-time seller is still asked, and NAME at the summary works for them too', () => {
+  const first = run(DOG.slice(0, 11)).at(-1);
+  assert.match(first.replies.at(-1), /What name should buyers see/);
+  const summary = run(DOG).at(-1);
+  assert.doesNotMatch(summary.replies[0], /as before/);
+  assert.equal(petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('NAME'), ctx).state, 'pet_name');
 });
