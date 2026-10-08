@@ -1,12 +1,18 @@
 // Looking at the photos somebody sends of a pet they want to list (lib/petIntake.js):
 // is a real animal the subject, which kind, and can its face be seen?
 //
-// One call to a vision model for a batch of photos. It is a convenience for
-// the seller and a filter for the store, never a gate that can stop listings:
-// anything that goes wrong (no key, a timeout, an answer that is not what was
-// asked for) returns null, and the conversation carries on unchecked.
+// One call to OpenAI, like the item photo review, for a batch of photos. It is
+// a convenience for the seller and a filter for the store, never a gate that
+// can stop listings: anything that goes wrong (no key, a timeout, an answer
+// that is not what was asked for) returns null, and the conversation carries
+// on unchecked.
 
-export const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_VISION_MODEL = 'gpt-4o-mini';
+// 'low' is one 512px view and a small fixed number of tokens a photo; 'high'
+// reads a WhatsApp photo as tiles and costs thirty thousand or so. Whether a
+// pet is in the picture and its face shows does not need the detail.
+export const DEFAULT_DETAIL = 'low';
+export const DETAILS = ['low', 'high', 'auto'];
 
 // More than this and the request gets large for little gain: the first photos
 // are the ones buyers see.
@@ -15,7 +21,7 @@ const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 
 export const KINDS = ['dog', 'cat', 'bird', 'rabbit', 'fish', 'reptile', 'rodent', 'other_animal', 'not_an_animal'];
 
-const PROMPT =
+export const PROMPT =
   'You check photos for a pet-selling website in Nigeria. There are several images, in order. ' +
   'For each one, answer:\n' +
   '- shows_pet: true only if a real, live animal that could be a pet is clearly the main subject. ' +
@@ -25,24 +31,27 @@ const PROMPT =
   'False if it faces away, is hidden, cropped, blurred or too far away to see its face.\n' +
   'Answer for every image, using its position as index starting at 0.';
 
+// OpenAI's strict structured output: every property required, no extras.
 const SCHEMA = {
-  type: 'OBJECT',
+  type: 'object',
+  additionalProperties: false,
+  required: ['photos'],
   properties: {
     photos: {
-      type: 'ARRAY',
+      type: 'array',
       items: {
-        type: 'OBJECT',
-        properties: {
-          index: { type: 'INTEGER' },
-          shows_pet: { type: 'BOOLEAN' },
-          kind: { type: 'STRING', enum: KINDS },
-          face_visible: { type: 'BOOLEAN' },
-        },
+        type: 'object',
+        additionalProperties: false,
         required: ['index', 'shows_pet', 'kind', 'face_visible'],
+        properties: {
+          index: { type: 'integer' },
+          shows_pet: { type: 'boolean' },
+          kind: { type: 'string', enum: KINDS },
+          face_visible: { type: 'boolean' },
+        },
       },
     },
   },
-  required: ['photos'],
 };
 
 function toBase64(bytes) {
@@ -72,31 +81,47 @@ export async function loadPhotos(urls) {
   );
 }
 
-// photos: [{ bytes, type } | null] → [{ shows_pet, kind, face_visible } | null],
-// one per photo, or null when the whole check could not be done.
+// What a call cost, in the shape ai_usage takes, priced when the Worker has the
+// same per-million prices the photo-review service uses.
+function cost(cfg, input, cached, output) {
+  const { priceInput, priceCached, priceOutput } = cfg;
+  if (![priceInput, priceCached, priceOutput].every((n) => Number.isFinite(n))) return null;
+  return Number((((input - cached) * priceInput + cached * priceCached + output * priceOutput) / 1e6).toFixed(6));
+}
+
+// photos: [{ bytes, type } | null] →
+//   { verdicts: [{ shows_pet, kind, face_visible } | null, …], usage } — one verdict per
+//   photo — or null when the whole check could not be done.
 export async function checkPetPhotos(cfg, photos) {
-  if (!cfg.petVisionKey) return null;
+  if (!cfg.openaiKey) return null;
   const usable = photos.map((p, i) => ({ p, i })).filter(({ p }) => p);
   if (!usable.length) return null;
 
+  const model = cfg.petVisionModel || DEFAULT_VISION_MODEL;
+  const detail = DETAILS.includes(cfg.petVisionDetail) ? cfg.petVisionDetail : DEFAULT_DETAIL;
+
   try {
-    const model = cfg.petVisionModel || DEFAULT_VISION_MODEL;
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.petVisionKey },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.openaiKey}` },
       body: JSON.stringify({
-        contents: [
+        model,
+        messages: [
           {
             role: 'user',
-            parts: [
-              { text: PROMPT },
-              ...usable.map(({ p }) => ({ inline_data: { mime_type: p.type, data: toBase64(p.bytes) } })),
+            content: [
+              { type: 'text', text: PROMPT },
+              ...usable.map(({ p }) => ({
+                type: 'image_url',
+                image_url: { url: `data:${p.type};base64,${toBase64(p.bytes)}`, detail },
+              })),
             ],
           },
         ],
-        generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },
+        response_format: { type: 'json_schema', json_schema: { name: 'pet_photos', strict: true, schema: SCHEMA } },
+        max_completion_tokens: 500,
       }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(25_000),
     });
     if (!res.ok) {
       console.error('pet photo check refused:', res.status, (await res.text().catch(() => '')).slice(0, 200));
@@ -104,19 +129,37 @@ export async function checkPetPhotos(cfg, photos) {
     }
 
     const body = await res.json();
-    const text = (body?.candidates?.[0]?.content?.parts ?? []).map((part) => part.text ?? '').join('');
-    const answers = JSON.parse(text)?.photos;
+    const text = body?.choices?.[0]?.message?.content;
+    const answers = typeof text === 'string' ? JSON.parse(text)?.photos : null;
     if (!Array.isArray(answers)) return null;
 
     // Answers are by position among the photos sent; put them back by the
     // photo's own position.
-    const out = photos.map(() => null);
+    const verdicts = photos.map(() => null);
     for (const a of answers) {
       const original = usable[a?.index]?.i;
       if (original === undefined || !KINDS.includes(a.kind) || typeof a.shows_pet !== 'boolean') continue;
-      out[original] = { shows_pet: a.shows_pet, kind: a.shows_pet ? a.kind : 'not_an_animal', face_visible: a.face_visible === true };
+      verdicts[original] = { shows_pet: a.shows_pet, kind: a.shows_pet ? a.kind : 'not_an_animal', face_visible: a.face_visible === true };
     }
-    return out;
+
+    const u = body.usage ?? {};
+    const input = u.prompt_tokens ?? 0;
+    const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+    const output = u.completion_tokens ?? 0;
+    return {
+      verdicts,
+      usage: {
+        model: body.model || model,
+        images: usable.length,
+        input_tokens: input,
+        cached_tokens: cached,
+        output_tokens: output,
+        cost_usd: cost(cfg, input, cached, output),
+        image_detail: detail,
+        prompt: PROMPT,
+        response: text.slice(0, 20_000),
+      },
+    };
   } catch (err) {
     console.error('pet photo check failed:', err?.message ?? err);
     return null;

@@ -1213,10 +1213,17 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
 
   // Only photos not already looked at, and only the first few: the rest ride along unchecked.
   const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v).slice(0, MAX_CHECKED);
-  if (cfg.petVisionKey && unchecked.length) {
+  if (cfg.openaiKey && unchecked.length) {
     const photos = await loadPhotos(unchecked.map(({ img }) => publicUrl(cfg, img.stored)));
-    const verdicts = await checkPetPhotos(cfg, photos);
-    if (verdicts) unchecked.forEach(({ i }, k) => { if (verdicts[k]) images[i] = { ...images[i], v: verdicts[k] }; });
+    const checked = await checkPetPhotos(cfg, photos);
+    if (checked) {
+      const { verdicts, usage } = checked;
+      unchecked.forEach(({ i }, k) => { if (verdicts[k]) images[i] = { ...images[i], v: verdicts[k] }; });
+      // Into the same log as the item photo review, so the console shows what it cost.
+      await db(cfg)
+        .insert('ai_usage', { tenant_id: tenant.id, purpose: 'pet_photos', ...usage }, { returning: false })
+        .catch((err) => console.warn('ai usage not recorded:', err?.message ?? err));
+    }
   }
 
   const next = petPhotosDone(draft, images, ctx);

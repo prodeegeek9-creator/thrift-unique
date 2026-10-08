@@ -69,11 +69,19 @@ export function config(env) {
     petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
     petListingsKey: env.PET_LISTINGS_KEY ? env.PET_LISTINGS_KEY.trim() : null,
 
-    // Looking at the photos of a pet being listed (lib/petVision.js): a Google
-    // AI Studio key as a Worker secret, and optionally the model. Without the
-    // key the photos are saved and listed unchecked, and the owner is told so.
-    petVisionKey: env.PET_VISION_KEY ? env.PET_VISION_KEY.trim() : null,
+    // Looking at the photos of a pet being listed (lib/petVision.js): OpenAI,
+    // as the item photo review does. OPENAI_API_KEY is a Worker secret (the
+    // same key the photo-review service uses is fine); without it the photos
+    // are saved and listed unchecked, and the owner is told so. The model and
+    // photo size can be changed; the three prices, in US dollars per million
+    // tokens, are the same ones the photo-review service takes, and put a cost
+    // on each call in the AI log (without them only the tokens are kept).
+    openaiKey: env.OPENAI_API_KEY ? env.OPENAI_API_KEY.trim() : null,
     petVisionModel: env.PET_VISION_MODEL ? env.PET_VISION_MODEL.trim() : null,
+    petVisionDetail: env.PET_VISION_DETAIL ? env.PET_VISION_DETAIL.trim().toLowerCase() : null,
+    priceInput: env.OPENAI_PRICE_INPUT_PER_M ? Number(env.OPENAI_PRICE_INPUT_PER_M) : NaN,
+    priceCached: env.OPENAI_PRICE_CACHED_PER_M ? Number(env.OPENAI_PRICE_CACHED_PER_M) : NaN,
+    priceOutput: env.OPENAI_PRICE_OUTPUT_PER_M ? Number(env.OPENAI_PRICE_OUTPUT_PER_M) : NaN,
 
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.
