@@ -1916,3 +1916,180 @@ test('a site that cannot be reached, or answers with a firewall page, is explain
     }
   }
 });
+
+// ── LOOKING AT THE PHOTOS, AND TELLING THE SELLER IT IS LIVE ─────────────────
+
+// A stand-in for the photo-checking model. `verdicts` answers each call in
+// order; each is one entry per photo sent in that call.
+function makeFakeVision(verdicts, { status = 200 } = {}) {
+  const queue = [...verdicts];
+  const calls = [];
+  return {
+    calls,
+    async handler(url, init) {
+      const body = JSON.parse(init.body);
+      const photos = body.contents[0].parts.filter((p) => p.inline_data).length;
+      calls.push({ photos, key: init.headers['x-goog-api-key'] });
+      if (status !== 200) return new Response('no', { status });
+      const next = queue.shift() ?? Array.from({ length: photos }, () => ({ shows_pet: true, kind: 'dog', face_visible: true }));
+      const answers = next.map((v, index) => ({ index, ...v }));
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ photos: answers }) }] } }] }), { status: 200 });
+    },
+  };
+}
+
+const DOGFACE = { shows_pet: true, kind: 'dog', face_visible: true };
+const NOFACE = { shows_pet: true, kind: 'dog', face_visible: false };
+const NOTPET = { shows_pet: false, kind: 'not_an_animal', face_visible: false };
+const pic = (n) => fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SESSION}/p${n}.jpg` });
+
+function petChatThrough(photos, tail = []) {
+  return [
+    fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Boerboel'), fromConsignor('10 weeks'),
+    fromConsignor('1'), fromConsignor('150k'), fromConsignor('Lugbe, Abuja'), fromConsignor('1'), fromConsignor('skip'),
+    ...photos, fromConsignor('done'), ...tail,
+  ];
+}
+const NAME_TO_YES = [fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')];
+
+const textsTo = (waha, chat) => waha.sent.filter((m) => m.chatId === chat).map((m) => m.text);
+
+test('photos are saved at "done", looked at, and the seller is told what was found', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const vision = makeFakeVision([[NOTPET, DOGFACE]]);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+
+  try {
+    await toPetStore(petChatThrough([pic(1), pic(2)], NAME_TO_YES), { PET_VISION_KEY: 'g-key' });
+
+    // Both photos were saved at "done", and looked at in one call.
+    assert.equal(vision.calls.length, 1);
+    assert.deepEqual(vision.calls[0], { photos: 2, key: 'g-key' });
+    const seller = textsTo(waha, CONSIGNOR_CHAT);
+    assert.ok(seller.some((t) => /Checking your photos/.test(t)));
+    assert.ok(seller.some((t) => /I left out a photo:\n• Photo 1: it doesn't show a dog/.test(t)));
+    assert.ok(seller.some((t) => /✅ Photos checked: I can see a dog, and its face is clearly visible/.test(t)));
+    assert.ok(seller.some((t) => /1 photo ✅ checked/.test(t)));
+
+    // Only the real dog photo went to the site, and the store was told it was checked.
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.photos.length, 1);
+    assert.match(textsTo(waha, SELLER_CHAT).at(-1), /Photos checked: a real pet, face visible/);
+  } finally {
+    restore();
+  }
+});
+
+test("a dog whose face is hidden is asked for a face photo, and the first photos are not looked at twice", async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const vision = makeFakeVision([[NOFACE], [DOGFACE]]);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+
+  try {
+    await toPetStore(petChatThrough([pic(1)], [pic(2), fromConsignor('done'), ...NAME_TO_YES]), { PET_VISION_KEY: 'g-key' });
+
+    const seller = textsTo(waha, CONSIGNOR_CHAT);
+    assert.ok(seller.some((t) => /can see your dog, but not its face clearly/.test(t)));
+    // The second look was at the new photo only.
+    assert.deepEqual(vision.calls.map((c) => c.photos), [1, 1]);
+    // And both photos are listed, the one with the face first.
+    assert.equal(petSite.received[0].body.photos.length, 2);
+    // (the photo that was looked at second, and showed the face, is the first one listed)
+    const [first, second] = supabase.uploads.map((u) => `${SUPABASE_URL}/storage/v1/object/public/${u.path}`);
+    assert.deepEqual(petSite.received[0].body.photos, [second, first]);
+    assert.ok(seller.some((t) => /2 photos ✅ checked/.test(t)));
+  } finally {
+    restore();
+  }
+});
+
+test('a check that cannot be done never stops a listing, and the store is told the photos were not checked', async () => {
+  for (const [label, extraEnv, vision] of [
+    ['model refuses', { PET_VISION_KEY: 'g-key' }, makeFakeVision([], { status: 429 })],
+    ['no key set up', {}, makeFakeVision([])],
+  ]) {
+    const supabase = makeFakeSupabase(petSeed());
+    const waha = makeFakeWaha();
+    const petSite = makeFakePetSite();
+    const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+    try {
+      await toPetStore(petChatThrough([pic(1)], NAME_TO_YES), extraEnv);
+      assert.equal(petSite.received.length, 1, label);
+      const seller = textsTo(waha, CONSIGNOR_CHAT);
+      assert.ok(!seller.some((t) => /checked/.test(t.replace(/Checking your photos/, ''))), label);
+      assert.match(textsTo(waha, SELLER_CHAT).at(-1), /weren't checked automatically/, label);
+    } finally {
+      restore();
+    }
+  }
+});
+
+// ── the pet site telling us a listing is live ──
+
+const KEY = 'pet-key';
+function liveCall(body, { key = KEY, method = 'POST' } = {}) {
+  return new Request('https://app.test/api/waha/pet-live', {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+}
+const LIVE = { whatsapp: '+2348031234567', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' };
+
+async function live(body, opts = {}, { seedData = petSeed(), extraEnv = {}, waha = makeFakeWaha() } = {}) {
+  const supabase = makeFakeSupabase(seedData);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    const res = await worker.fetch(liveCall(body, opts), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: KEY, ...extraEnv }), {});
+    return { res, json: await res.json(), waha, supabase };
+  } finally {
+    restore();
+  }
+}
+
+test('when the store approves a listing the seller is told, from the store number', async () => {
+  const { res, json, waha } = await live(LIVE);
+  assert.equal(res.status, 200);
+  assert.equal(json.sent, true);
+  assert.equal(waha.sent.length, 1);
+  assert.equal(waha.sent[0].chatId, '2348031234567@c.us');
+  assert.equal(waha.sent[0].session, STORE_SESSION);
+  assert.match(waha.sent[0].text, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1/);
+});
+
+test('the live notice needs the shared key, a number and a store that takes pets', async () => {
+  assert.equal((await live(LIVE, { key: 'wrong' })).res.status, 401);
+  assert.equal((await live(LIVE, { key: null })).res.status, 401);
+  assert.equal((await live(LIVE, {}, { extraEnv: { PET_LISTINGS_KEY: '' } })).res.status, 503);
+  assert.equal((await live('nope')).res.status, 400);
+  assert.equal((await live({ ...LIVE, whatsapp: 'call me' })).res.status, 400);
+  assert.equal((await live({ ...LIVE, breed: '' })).res.status, 400);
+  // No store has the flag on.
+  const off = await live(LIVE, {}, { seedData: petSeed(false) });
+  assert.equal(off.res.status, 404);
+  assert.equal(off.waha.sent.length, 0);
+  // A "store" that is not the one that takes pets.
+  assert.equal((await live({ ...LIVE, store: 'someone-else' })).res.status, 404);
+
+  // Two stores take pets, and the site did not say which.
+  const two = petSeed();
+  const OTHER = 'bbbbbbbb-0000-0000-0000-00000000000b';
+  two.tenants.push({ ...two.tenants[0], id: OTHER, slug: 'second', name: 'Second Pets' });
+  two.tenant_features.push({ tenant_id: OTHER, flag: 'pet_listings', enabled: true });
+  assert.equal((await live(LIVE, {}, { seedData: two })).res.status, 409);
+  const named = await live({ ...LIVE, store: 'store' }, {}, { seedData: two });
+  assert.equal(named.res.status, 200);
+  assert.equal(named.waha.sent[0].session, STORE_SESSION);
+
+  // WhatsApp refusing the message is reported, not hidden.
+  const refusing = makeFakeWaha();
+  const through = refusing.handler;
+  refusing.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
+  const refused = await live(LIVE, {}, { waha: refusing });
+  assert.equal(refused.res.status, 502);
+  assert.equal(refused.json.ok, false);
+});

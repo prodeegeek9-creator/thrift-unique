@@ -5,6 +5,8 @@ import { json } from '../lib/http.js';
 import { timingSafeEqual } from '../lib/paystack.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { storeImage, publicUrl, mediaRequest, MediaError } from '../lib/media.js';
+import { checkPetPhotos, loadPhotos, MAX_CHECKED } from '../lib/petVision.js';
+import { normalizeNumber } from '../lib/phone.js';
 import {
   step,
   listedMessage,
@@ -32,6 +34,8 @@ import {
   petRejectedMessage,
   petFailedOwnerMessage,
   newPetListingMessage,
+  petLiveMessage,
+  petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
   PET_STATES,
@@ -111,6 +115,9 @@ export async function handleWaha(request, env, path) {
     if (method === 'DELETE') return unlinkSession(request, env);
     return json({ error: 'Method not allowed' }, 405);
   }
+
+  // The pet site telling us a listing was approved: the seller is told.
+  if (rest === '/pet-live' && method === 'POST') return petLive(request, env);
 
   if (rest === '/holds' && method === 'GET') return listHolds(request, env);
   if (rest === '/holds/resume' && method === 'POST') return resumeHolds(request, env);
@@ -1173,11 +1180,91 @@ async function petIntake(cfg, event, tenant, conversation) {
   const own = { session: tenant.waha_session };
   for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
 
+  if (result.action?.type === 'process_photos') {
+    await processPetPhotos(cfg, tenant, event, result.draft, { store: tenant.name, phone });
+  }
+
   if (result.action?.type === 'pet_listing') {
     await forwardPetListing(cfg, tenant, event, result.action);
   }
 
   return json({ ok: true, petIntake: result.state });
+}
+
+// The seller said "done": save the photos now, while WhatsApp still serves
+// them (its links do not last, and the summary may wait for a YES), then look
+// at the ones not yet looked at, and carry on from what was found.
+async function processPetPhotos(cfg, tenant, event, draft, ctx) {
+  const own = { session: tenant.waha_session };
+
+  const images = [];
+  for (const img of draft.images ?? []) {
+    if (img.stored) {
+      images.push(img);
+      continue;
+    }
+    try {
+      images.push({ stored: await storeImage(cfg, tenant.id, img) });
+    } catch (err) {
+      console.warn('pet photo not saved:', err?.message ?? err);
+    }
+  }
+
+  // Only photos not already looked at, and only the first few: the rest ride along unchecked.
+  const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v).slice(0, MAX_CHECKED);
+  if (cfg.petVisionKey && unchecked.length) {
+    const photos = await loadPhotos(unchecked.map(({ img }) => publicUrl(cfg, img.stored)));
+    const verdicts = await checkPetPhotos(cfg, photos);
+    if (verdicts) unchecked.forEach(({ i }, k) => { if (verdicts[k]) images[i] = { ...images[i], v: verdicts[k] }; });
+  }
+
+  const next = petPhotosDone(draft, images, ctx);
+  await persist(cfg, tenant, event.from, {}, next);
+  for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
+}
+
+// POST /api/waha/pet-live
+//
+// The pet site calls this when its owner approves a listing; it carries the
+// same shared key as the listing itself. The seller is told on WhatsApp from
+// the store's own number. The number is the one buyers were given, which is
+// the seller's own unless they chose another.
+async function petLive(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
+  if (!cfg.petListingsKey) return json({ error: 'Not configured' }, 503);
+
+  const given = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!timingSafeEqual(given, cfg.petListingsKey)) return json({ error: 'Unauthorized' }, 401);
+
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'Body must be JSON' }, 400); }
+  const number = normalizeNumber(body?.whatsapp);
+  const breed = typeof body?.breed === 'string' ? body.breed.trim().slice(0, 80) : '';
+  if (!number || !breed) return json({ error: 'whatsapp and breed are required' }, 400);
+  const url = typeof body.url === 'string' && /^https:\/\//.test(body.url) ? body.url.slice(0, 300) : null;
+
+  // The store that takes pets: named by the site, or the only one there is.
+  const on = await db(cfg).select('tenant_features', 'flag=eq.pet_listings&enabled=eq.true&select=tenant_id');
+  const ids = on.map((r) => r.tenant_id);
+  if (!ids.length) return json({ error: 'No store takes pet listings' }, 404);
+  const slug = typeof body.store === 'string' ? `&slug=eq.${encodeURIComponent(body.store)}` : '';
+  const tenants = await db(cfg).select(
+    'tenants',
+    `id=in.(${ids.join(',')})${slug}&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status`
+  );
+  if (tenants.length !== 1) {
+    return json({ error: tenants.length ? 'More than one store takes pet listings; send "store"' : 'Store not found' }, tenants.length ? 409 : 404);
+  }
+  const tenant = tenants[0];
+
+  const sent = await say(
+    cfg,
+    tenant,
+    chatId(number),
+    petLiveMessage({ store: tenant.name, breed, listing_type: body.listing_type, url }),
+    { session: tenant.waha_session }
+  );
+  return sent ? json({ ok: true, sent: true }) : json({ ok: false, error: 'WhatsApp did not take the message' }, 502);
 }
 
 // Photos into our public bucket first: the site copies them from there, and a
@@ -1245,7 +1332,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
   await say(cfg, tenant, event.from, petSentMessage(tenant.name), own);
 
   const owner = chatId(tenant.whatsapp_number);
-  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing));
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified }));
   return true;
 }
 

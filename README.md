@@ -204,6 +204,26 @@ Without any of them, SELL on that store is the usual item intake. The site's
 side of the contract is `docs/seller-listings-api.md` in the puppyplace-ng
 repo.
 
+**The photos are looked at.** When the seller says *done*, the photos are saved
+(WhatsApp's own links do not last, and the summary may wait for a YES) and
+`lib/petVision.js` asks a Google Gemini model about each: is a real, live pet
+the subject, which kind, and is its face visible. Photos that do not show the
+kind of pet being listed (a person, a screenshot, a cat in a dog listing) are
+left out and the seller is told which; at least one photo must show the face,
+and that one goes first, since buyers see it first. The summary then says
+"✅ checked". It never stops a listing: with no key, or if the model refuses or
+times out, the photos go through unchecked, and the owner alert says they were
+not checked automatically so they are looked at before approving. Set
+`PET_VISION_KEY` (a Google AI Studio key, as a Worker secret); `PET_VISION_MODEL`
+overrides the default model.
+
+**The seller is told when it is live.** When the store approves a listing on
+its site, the site POSTs `{ whatsapp, breed, listing_type, url }` to
+`/api/waha/pet-live` here, with the same shared key, and the seller gets a
+WhatsApp from the store's own number. The number is the one buyers were given,
+which is the seller's own unless they chose another. It names the store with
+`store` (its slug), or uses the only one that has `pet_listings` on.
+
 ## Structure
 
 ```
