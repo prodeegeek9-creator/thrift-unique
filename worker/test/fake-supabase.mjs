@@ -66,6 +66,10 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     plan_invoices: ['tenant_id', 'period_start'],
     refunds: 'order_id',
     bot_conversations: ['tenant_id', 'chat_id'],
+    // The pet-store tables (migrations 0050-0052), each unique as the real table is.
+    pet_sellers: ['tenant_id', 'chat_id'],
+    pet_listings: ['tenant_id', 'slug'],
+    pet_invites: ['tenant_id', 'phone'],
     consignor_accounts: ['tenant_id', 'seller_chat_id'],
     payment_problems: ['kind', 'key'],
     web_signup_codes: 'code',
