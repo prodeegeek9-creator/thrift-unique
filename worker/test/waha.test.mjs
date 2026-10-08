@@ -1737,17 +1737,24 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200 } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true } = {}) {
   const received = [];
+  const guides = [];
   const statusCalls = [];
   const queue = [...sequence];
   const site = {
     url: PET_SITE,
     received,
     statusCalls,
+    // what was filed at /api/breed-guides
+    guides,
     // slug → 'live' | 'pending' | 'missing', as the site's admin would have left it
     states,
     async handler(url, init) {
+      if (new URL(url).pathname === '/api/breed-guides') {
+        guides.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
+        return new Response(JSON.stringify({ ok: true, status: 'draft', created: guideCreated }), { status: guideStatus });
+      }
       if ((init.method ?? 'GET') === 'GET') {
         const slugs = (new URL(url).searchParams.get('slugs') ?? '').split(',').filter(Boolean);
         statusCalls.push({ url, auth: init.headers?.Authorization ?? null, slugs });
@@ -1962,13 +1969,31 @@ test('a site that cannot be reached, or answers with a firewall page, is explain
 
 // A stand-in for the photo-checking model. `verdicts` answers each call in
 // order; each is one entry per photo sent in that call.
-function makeFakeVision(verdicts, { status = 200 } = {}) {
+const GUIDE = { is_breed: true, about: 'A powerful Italian mastiff.', temperament: 'Loyal and calm with its family.', best_home: 'An experienced owner with a secure yard.' };
+
+function makeFakeVision(verdicts, { status = 200, guide = {} } = {}) {
   const queue = [...verdicts];
   const calls = [];
+  const guideCalls = [];
+  guide = { status: 200, answer: GUIDE, ...guide };
   return {
     calls,
+    guideCalls,
     async handler(url, init) {
       const body = JSON.parse(init.body);
+      // A breed guide is a text-only request.
+      if (typeof body.messages[0].content === 'string') {
+        guideCalls.push({ prompt: body.messages[0].content, key: init.headers.Authorization });
+        if (guide.status !== 200) return new Response('no', { status: guide.status });
+        return new Response(
+          JSON.stringify({
+            model: 'gpt-4o-mini-2024-07-18',
+            choices: [{ message: { content: JSON.stringify(guide.answer) } }],
+            usage: { prompt_tokens: 200, completion_tokens: 90, prompt_tokens_details: { cached_tokens: 0 } },
+          }),
+          { status: 200 }
+        );
+      }
       const photos = body.messages[0].content.filter((p) => p.type === 'image_url').length;
       calls.push({ photos, key: init.headers.Authorization, detail: body.messages[0].content[1]?.image_url.detail });
       if (status !== 200) return new Response('no', { status });
@@ -2079,6 +2104,123 @@ test('a check that cannot be done never stops a listing, and the store is told w
       assert.match(textsTo(waha, SELLER_CHAT).at(-1), expected, label);
       // Nothing was spent, so nothing is logged.
       assert.equal(supabase.tables.ai_usage.length, 0, label);
+    } finally {
+      restore();
+    }
+  }
+});
+
+// ── BREED GUIDES: WRITTEN ONCE PER BREED, APPROVED BY THE OWNER ──────────────
+
+const GUIDE_ENV = { OPENAI_API_KEY: 'oa-key' };
+const guideChat = () => petChatThrough([pic(1)], NAME_TO_YES);
+
+test('a breed the site has no guide for gets one written and filed as a draft, and the owner is told', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ body: { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', breed_guide: 'missing' } });
+  const vision = makeFakeVision([]);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+
+  try {
+    await toPetStore(guideChat(), GUIDE_ENV);
+
+    assert.equal(vision.guideCalls.length, 1);
+    assert.match(vision.guideCalls[0].prompt, /Breed name: "Boerboel"/);
+    assert.equal(petSite.guides.length, 1);
+    assert.equal(petSite.guides[0].url, 'https://pets.test/api/breed-guides');
+    assert.equal(petSite.guides[0].auth, 'Bearer pet-key');
+    assert.equal(petSite.guides[0].body.breed, 'Boerboel');
+    assert.equal(petSite.guides[0].body.pet_type, 'Dog');
+    assert.match(petSite.guides[0].body.summary, /^About: .*\nTemperament: .*\nBest home: /);
+
+    // Paid for, so logged beside the photo checks.
+    const guideUsage = supabase.tables.ai_usage.filter((r) => r.purpose === 'breed_guide');
+    assert.equal(guideUsage.length, 1);
+    assert.equal(guideUsage[0].tenant_id, TENANT);
+    assert.equal(guideUsage[0].images, 0);
+
+    // The seller hears nothing about it; the owner is asked to approve it.
+    assert.ok(!textsTo(waha, CONSIGNOR_CHAT).some((t) => /guide/i.test(t)));
+    assert.match(textsTo(waha, SELLER_CHAT).at(-1), /New breed guide to review: \*Boerboel\*[\s\S]*Breed guides/);
+  } finally {
+    restore();
+  }
+});
+
+test('a breed that already has a guide, however far along, is left alone', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ body: { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', breed_guide: 'exists' } });
+  const vision = makeFakeVision([]);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+
+  try {
+    await toPetStore(guideChat(), GUIDE_ENV);
+    assert.equal(vision.guideCalls.length, 0);
+    assert.equal(petSite.guides.length, 0);
+    assert.equal(supabase.tables.ai_usage.filter((r) => r.purpose === 'breed_guide').length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a site that says no guide is possible, or older than guides, costs nothing', async () => {
+  for (const [label, body] of [
+    ['unavailable', { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', breed_guide: 'unavailable' }],
+    ['not mentioned', { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1' }],
+  ]) {
+    const vision = makeFakeVision([]);
+    const petSite = makeFakePetSite({ body });
+    const restore = installFetch({ supabase: makeFakeSupabase(petSeed()), waha: makeFakeWaha(), tokens: TOKENS, petSite, vision });
+    try {
+      await toPetStore(guideChat(), GUIDE_ENV);
+      assert.equal(vision.guideCalls.length, 0, label);
+      assert.equal(petSite.guides.length, 0, label);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('without an OpenAI key, or when it is not a breed, or when OpenAI fails, the listing still goes and no guide is filed', async () => {
+  const missing = { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', breed_guide: 'missing' };
+  for (const [label, env, vision] of [
+    ['no key', {}, makeFakeVision([])],
+    ['not a breed', GUIDE_ENV, makeFakeVision([], { guide: { answer: { is_breed: false, about: '', temperament: '', best_home: '' } } })],
+    ['openai fails', GUIDE_ENV, makeFakeVision([], { guide: { status: 500 } })],
+  ]) {
+    const supabase = makeFakeSupabase(petSeed());
+    const waha = makeFakeWaha();
+    const petSite = makeFakePetSite({ body: missing });
+    const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+    try {
+      await toPetStore(guideChat(), env);
+      assert.equal(petSite.received.length, 1, label);
+      assert.equal(supabase.tables.pet_listings.length, 1, label);
+      assert.equal(petSite.guides.length, 0, label);
+      assert.ok(!textsTo(waha, SELLER_CHAT).some((t) => /breed guide/i.test(t)), label);
+      assert.ok(textsTo(waha, CONSIGNOR_CHAT).some((t) => /Sent!/.test(t)), label);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('the owner is told only when the site actually filed a new draft, and a refusal is quiet', async () => {
+  const missing = { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', breed_guide: 'missing' };
+  for (const [label, opts, told] of [
+    ['someone filed it first', { guideCreated: false }, false],
+    ['site refuses', { guideStatus: 401 }, false],
+  ]) {
+    const waha = makeFakeWaha();
+    const petSite = makeFakePetSite({ body: missing, ...opts });
+    const restore = installFetch({ supabase: makeFakeSupabase(petSeed()), waha, tokens: TOKENS, petSite, vision: makeFakeVision([]) });
+    try {
+      await toPetStore(guideChat(), GUIDE_ENV);
+      assert.equal(petSite.guides.length, 1, label);
+      assert.equal(textsTo(waha, SELLER_CHAT).some((t) => /breed guide/i.test(t)), told, label);
+      assert.ok(textsTo(waha, CONSIGNOR_CHAT).some((t) => /Sent!/.test(t)), label);
     } finally {
       restore();
     }

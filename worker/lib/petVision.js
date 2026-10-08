@@ -83,7 +83,7 @@ export async function loadPhotos(urls) {
 
 // What a call cost, in the shape ai_usage takes, priced when the Worker has the
 // same per-million prices the photo-review service uses.
-function cost(cfg, input, cached, output) {
+export function cost(cfg, input, cached, output) {
   const { priceInput, priceCached, priceOutput } = cfg;
   if (![priceInput, priceCached, priceOutput].every((n) => Number.isFinite(n))) return null;
   return Number((((input - cached) * priceInput + cached * priceCached + output * priceOutput) / 1e6).toFixed(6));

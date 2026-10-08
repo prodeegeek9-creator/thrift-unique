@@ -6,6 +6,7 @@ import { timingSafeEqual } from '../lib/paystack.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { storeImage, publicUrl, mediaRequest, MediaError } from '../lib/media.js';
 import { checkPetPhotos, loadPhotos, MAX_CHECKED } from '../lib/petVision.js';
+import { writeBreedGuide } from '../lib/breedGuide.js';
 import {
   step,
   listedMessage,
@@ -36,6 +37,7 @@ import {
   petNoCallsMessage,
   NO_CALLS_MARKER,
   newPetListingMessage,
+  breedGuideDraftMessage,
   petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
@@ -1411,7 +1413,40 @@ export async function forwardPetListing(cfg, tenant, event, action) {
 
   const owner = chatId(tenant.whatsapp_number);
   if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote }));
+
+  // The first dog of a breed the site has no guide for: write one, for the store to approve.
+  if (body?.breed_guide === 'missing') await fileBreedGuide(cfg, tenant, action.listing);
   return true;
+}
+
+// Writes a guide for a breed the site does not have one for and files it as a draft;
+// the owner is told only if it was filed. Every failure is quiet: the listing is
+// already sent, and the next dog of the breed tries again.
+async function fileBreedGuide(cfg, tenant, listing) {
+  try {
+    const guide = await writeBreedGuide(cfg, { breed: listing.breed, type: listing.type });
+    if (guide?.error) console.warn('breed guide not written:', guide.error);
+    if (!guide?.text) return;
+
+    await db(cfg)
+      .insert('ai_usage', { tenant_id: tenant.id, purpose: 'breed_guide', ...guide.usage }, { returning: false })
+      .catch((err) => console.warn('ai usage not recorded:', err?.message ?? err));
+
+    const res = await fetch(`${new URL(cfg.petListingsUrl).origin}/api/breed-guides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
+      body: JSON.stringify({ breed: listing.breed, pet_type: listing.type, summary: guide.text }),
+    });
+    if (!res.ok) {
+      console.warn('breed guide refused:', res.status);
+      return;
+    }
+    const filed = await res.json().catch(() => ({}));
+    const owner = chatId(tenant.whatsapp_number);
+    if (filed.created && owner) await say(cfg, tenant, owner, breedGuideDraftMessage({ breed: listing.breed }));
+  } catch (err) {
+    console.warn('breed guide not filed:', err?.message ?? err);
+  }
 }
 
 // ── ITEMS BROUGHT TO A STORE, WITH THE PHOTOS CHECKED ────────────────────────

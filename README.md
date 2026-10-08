@@ -222,6 +222,19 @@ Worker secret; `PET_VISION_MODEL` and `PET_VISION_DETAIL` (`low`, `high`,
 a cost on each call. Every call is written to `ai_usage` with `purpose =
 'pet_photos'`, so `/admin/ai` shows what it cost next to the item reviews.
 
+**A guide to each breed is written once.** When the site answers a new listing
+with `breed_guide: "missing"` (it has no guide for that breed yet),
+`lib/breedGuide.js` asks the same model, with text only and no photos, for three
+short parts: about the breed, its temperament and the home it suits. The breed
+name is cut to letters, numbers and spaces before it is used, and a name that is
+not a breed (the model says so) files nothing. The text is sent to the site's
+`/api/breed-guides` as a **draft**; the owner is told on WhatsApp and approves or
+edits it in the site's admin → Breed guides, and only then do buyers see it, on
+every dog of that breed. A breed that already has a guide is never written
+again. It costs a fraction of a cent, is logged in `ai_usage` with `purpose =
+'breed_guide'`, and like the photo check it can only help: no key or an error
+means no guide, and the next dog of that breed tries again.
+
 **The seller's name** is asked once. It is checked by plain rules
 (`parseSellerName` in `lib/petIntake.js`): a lead-in such as "my name is" is
 taken off, and "my name", "none", "test", a phone number, a web address or a

@@ -197,6 +197,14 @@ export function newPetListingMessage({ breed, price, listing_type, location }, {
   );
 }
 
+// To the store's owner, when a guide for a breed new to the site is waiting.
+export function breedGuideDraftMessage({ breed }) {
+  return (
+    `📘 New breed guide to review: *${breed}*.\n\n` +
+    'Read it, fix anything wrong and approve it in your site admin → Breed guides. Buyers will not see it until you do.'
+  );
+}
+
 // To the seller, when the store approves the listing: the link, and a push to
 // share it, since the seller sharing it is most of how a pet gets seen.
 export function petLiveMessage({ store, breed, listing_type, url }) {
