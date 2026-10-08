@@ -177,6 +177,18 @@ export function petShareMessage({ breed, listing_type, url }) {
   return `🐾 ${breed} ${listing_type === 'adoption' ? 'available for adoption' : 'for sale'} on PuppyPlace. See photos and details:\n${url}`;
 }
 
+// Said to somebody who rings the store's WhatsApp. The marker is what the
+// once-an-hour check looks for in what was already sent.
+export const NO_CALLS_MARKER = "can't take calls";
+
+export function petNoCallsMessage({ store, browseUrl }) {
+  return (
+    `📵 Sorry, ${store} ${NO_CALLS_MARKER} on this number. Please send us a message here instead and we'll reply as soon as we can.\n\n` +
+    'Selling a pet? Reply *SELL* and I will list it for you, free.' +
+    (browseUrl ? `\n\nLooking to buy? Browse the pets for sale:\n${browseUrl}` : '')
+  );
+}
+
 // To somebody who messaged the store about selling a pet before the bot was
 // answering. They have to ask once more: whatever chat their reply arrives on,
 // "SELL" starts the conversation there.

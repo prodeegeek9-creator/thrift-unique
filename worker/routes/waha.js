@@ -32,6 +32,8 @@ import {
   petSentMessage,
   petRejectedMessage,
   petFailedOwnerMessage,
+  petNoCallsMessage,
+  NO_CALLS_MARKER,
   newPetListingMessage,
   petPhotosDone,
   PET_RETRY_MESSAGE,
@@ -151,6 +153,7 @@ async function webhook(request, env) {
   await touchActivity(cfg, event);
 
   if (event.kind === 'status') return recordStatus(cfg, event);
+  if (event.kind === 'call') return callReceived(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
   // top of this file. A store's own session runs the item intake and the
@@ -1142,11 +1145,41 @@ export async function announceSubmission(cfg, tenant, chat, submission) {
 
 export async function petListingsOn(cfg, tenant) {
   if (!cfg.petListingsUrl || !cfg.petListingsKey) return false;
-  const row = await db(cfg).one(
-    'tenant_features',
-    `tenant_id=eq.${tenant.id}&flag=eq.pet_listings&select=enabled`
-  );
+  return petStore(cfg, tenant);
+}
+
+// The flag alone: a store that takes pets, whether or not the site is set up.
+async function petStore(cfg, tenant) {
+  const row = await db(cfg).one('tenant_features', `tenant_id=eq.${tenant.id}&flag=eq.pet_listings&select=enabled`);
   return Boolean(row?.enabled);
+}
+
+// Somebody rang a pet store's WhatsApp. A bot cannot take a call, so the caller
+// is told, in a message, that the number is not for calls and what to do
+// instead. Once an hour at most for each caller: somebody ringing four times
+// in a minute needs one message, not four. Other stores take their own calls.
+async function callReceived(cfg, event) {
+  const tenant = await db(cfg).one(
+    'tenants',
+    `waha_session=eq.${encodeURIComponent(event.session ?? '')}&select=id,slug,name,status,waha_session,waha_status,billing_status,whatsapp_number`
+  );
+  if (!tenant || tenant.status === 'suspended' || tenant.billing_status === 'paused') {
+    return json({ ok: true, ignored: 'no store for this session' });
+  }
+  if (!(await petStore(cfg, tenant))) return json({ ok: true, ignored: 'this store takes its own calls' });
+
+  const since = new Date(Date.now() - 60 * 60_000).toISOString();
+  const recent = await db(cfg).select(
+    'bot_messages',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&direction=eq.out&created_at=gte.${since}&select=body&limit=50`
+  );
+  if (recent.some((m) => String(m.body ?? '').includes(NO_CALLS_MARKER))) {
+    return json({ ok: true, ignored: 'already told this caller in the last hour' });
+  }
+
+  const browseUrl = cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
+  await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl }), { session: tenant.waha_session });
+  return json({ ok: true, told: true });
 }
 
 async function petIntake(cfg, event, tenant, conversation) {

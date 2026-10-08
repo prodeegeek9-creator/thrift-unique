@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
 import { notifyLivePets } from '../routes/petListings.js';
+import { ensurePetCallEvents } from '../routes/petCalls.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
 
@@ -69,6 +70,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
   const stopped = [];
   const created = [];
   const deleted = [];
+  const updated = [];
 
   async function handler(url, init = {}) {
     const path = new URL(url).pathname;
@@ -133,6 +135,11 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         delete sessions[name];
         return new Response(null, { status: 204 });
       }
+      if (init.method === 'PUT' && sessions[name]) {
+        sessions[name] = { ...sessions[name], config: body.config };
+        updated.push({ name, config: body.config });
+        return new Response(JSON.stringify(sessions[name]), { status: 200 });
+      }
       const found = sessions[name];
       return found
         ? new Response(JSON.stringify(found), { status: 200 })
@@ -161,7 +168,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, updated, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -831,7 +838,8 @@ test('an owner links a session, and the webhook it registers carries a secret', 
     assert.equal(res.status, 200);
     assert.equal(waha.created.length, 1);
     assert.equal(waha.created[0].name, 'ut-store');
-    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status']);
+    // Messages, status, and calls (answered only for stores that take pets).
+    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status', 'call.received']);
     assert.equal(
       waha.created[0].config.webhooks[0].url,
       'https://uniquethrift.ng/api/waha/webhook'
@@ -2295,5 +2303,139 @@ test('the every-minute job tells sellers their pet is live', async () => {
     assert.equal(supabase.tables.pet_listings[0].status, 'notified');
   } finally {
     restore();
+  }
+});
+
+// ── PEOPLE WHO RING THE STORE'S WHATSAPP ─────────────────────────────────────
+
+const ring = (extra = {}, { session = STORE_SESSION, from = CONSIGNOR_CHAT } = {}) => ({
+  event: 'call.received',
+  session,
+  payload: { id: `call-${++counter}`, from, timestamp: 1_700_000_000 + counter, isVideo: false, isGroup: false, ...extra },
+});
+
+async function ringStore(calls, { seedData = petSeed(), env: extraEnv = {}, secret = STORE_SECRET } = {}) {
+  const supabase = makeFakeSupabase(seedData);
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const responses = [];
+  try {
+    for (const c of calls) {
+      const res = await worker.fetch(hook(c, { secret }), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', ...extraEnv }), {});
+      responses.push({ status: res.status, json: await res.json() });
+    }
+  } finally {
+    restore();
+  }
+  return { supabase, waha, responses };
+}
+
+test('somebody who rings a pet store is told, by message, that it does not take calls', async () => {
+  const { waha, responses } = await ringStore([ring()]);
+  assert.equal(responses[0].json.told, true);
+  assert.equal(waha.sent.length, 1);
+  assert.equal(waha.sent[0].chatId, CONSIGNOR_CHAT);
+  assert.equal(waha.sent[0].session, STORE_SESSION);
+  assert.match(waha.sent[0].text, /Sorry, PuppyPlace can't take calls on this number\. Please send us a message here instead/);
+  assert.match(waha.sent[0].text, /Reply \*SELL\*[\s\S]*Browse the pets for sale:\nhttps:\/\/pets\.test\/pets\.html/);
+});
+
+test('a video call, and a caller whose number WhatsApp hides, are told the same', async () => {
+  const hidden = '40218493227115@lid';
+  const { waha } = await ringStore([ring({ isVideo: true }), ring({}, { from: hidden })]);
+  assert.deepEqual(waha.sent.map((m) => m.chatId), [CONSIGNOR_CHAT, hidden]);
+});
+
+test('ringing again within the hour is not told again, but an hour later is', async () => {
+  const { waha, responses } = await ringStore([ring(), ring(), ring()]);
+  assert.equal(waha.sent.length, 1);
+  assert.match(responses[1].json.ignored, /already told this caller/);
+
+  // A notice from two hours ago does not count.
+  const seed = petSeed();
+  seed.bot_messages.push({
+    id: 'old', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.",
+    created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+  });
+  const later = await ringStore([ring()], { seedData: seed });
+  assert.equal(later.waha.sent.length, 1);
+  // And a different caller is told on their own account.
+  const other = await ringStore([ring(), ring({}, { from: '2348000000001@c.us' })]);
+  assert.equal(other.waha.sent.length, 2);
+});
+
+test('calls to a store that takes its own, to groups, and from anyone without the secret, are not answered', async () => {
+  // A store that is not a pet store keeps its calls.
+  const off = await ringStore([ring()], { seedData: petSeed(false) });
+  assert.equal(off.waha.sent.length, 0);
+  assert.match(off.responses[0].json.ignored, /takes its own calls/);
+  // A group call is nobody's seller.
+  assert.equal((await ringStore([ring({ isGroup: true })])).waha.sent.length, 0);
+  assert.equal((await ringStore([ring({}, { from: '120363000000@g.us' })])).waha.sent.length, 0);
+  // The wrong secret is refused and nothing is sent.
+  const bad = await ringStore([ring()], { secret: 'wrong' });
+  assert.equal(bad.responses[0].status, 403);
+  assert.equal(bad.waha.sent.length, 0);
+  // A session no store owns.
+  assert.equal((await ringStore([ring({}, { session: 'ut-nobody' })])).responses[0].status, 403);
+});
+
+// ── keeping the session subscribed to calls ──
+
+const OLD_HOOK = { url: 'https://app.test/api/waha/webhook', events: ['message.any', 'session.status'], customHeaders: [{ name: 'X-Thrift-Secret', value: 'tenant-secret' }] };
+const sessionWith = (events) => ({ [STORE_SESSION]: { name: STORE_SESSION, status: 'WORKING', config: { webhooks: [{ ...OLD_HOOK, events }], noweb: { store: { enabled: true } } } } });
+
+test('a pet store linked before calls were answered is subscribed to them, once, keeping its address and secret', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha({ sessions: sessionWith(['message.any', 'session.status']) });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    assert.deepEqual(await ensurePetCallEvents(wahaEnv()), { updated: 1, failed: 0 });
+    assert.equal(waha.updated.length, 1);
+    const hook = waha.updated[0].config.webhooks[0];
+    assert.deepEqual(hook.events, ['message.any', 'session.status', 'call.received']);
+    assert.equal(hook.url, OLD_HOOK.url);
+    assert.deepEqual(hook.customHeaders, OLD_HOOK.customHeaders);
+    // The rest of the session's setup is kept.
+    assert.deepEqual(waha.updated[0].config.noweb, { store: { enabled: true } });
+
+    // Done: nothing more to do, and no second restart.
+    assert.equal(await ensurePetCallEvents(wahaEnv()), null);
+    assert.equal(waha.updated.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('stores that do not take pets are left alone, and a session with the event already is not touched', async () => {
+  for (const [seedData, sessions] of [
+    [petSeed(false), sessionWith(['message.any', 'session.status'])],
+    [petSeed(true), sessionWith(['message.any', 'session.status', 'call.received'])],
+    [petSeed(true), {}],
+  ]) {
+    const waha = makeFakeWaha({ sessions });
+    const restore = installFetch({ supabase: makeFakeSupabase(seedData), waha, tokens: TOKENS });
+    try {
+      assert.equal(await ensurePetCallEvents(wahaEnv()), null);
+      assert.equal(waha.updated.length, 0);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('the every-minute job subscribes a pet store to calls on every fifth minute only', async () => {
+  for (const [minute, expected] of [[3, 0], [5, 1], [10, 1], [11, 0]]) {
+    const waha = makeFakeWaha({ sessions: sessionWith(['message.any', 'session.status']) });
+    const restore = installFetch({ supabase: makeFakeSupabase(petSeed()), waha, tokens: TOKENS, petSite: makeFakePetSite() });
+    const waits = [];
+    try {
+      await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.UTC(2026, 9, 8, 10, minute) }, wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' }), { waitUntil: (p) => waits.push(p) });
+      await Promise.all(waits);
+      assert.equal(waha.updated.length, expected, `minute ${minute}`);
+    } finally {
+      restore();
+    }
   }
 });

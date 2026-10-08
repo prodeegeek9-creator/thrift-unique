@@ -244,6 +244,16 @@ deleted on the site is dropped; one nobody approved in 60 days is given up on;
 a notice WhatsApp refuses is retried up to five times; a row left `notifying`
 by a crash is never sent again.
 
+**Calls are explained, not answered.** Somebody who rings a pet store's
+WhatsApp gets a message that it does not take calls on that number, to send a
+message instead (and that *SELL* lists a pet), with the pets-for-sale link for
+buyers: at most once an hour for each caller. WAHA sends calls as the
+`call.received` event, which new sessions are set up to send; a pet store
+linked earlier is subscribed by `routes/petCalls.js` on the first fifth minute
+it is seen without it (WAHA restarts that session for a few seconds, once).
+Only stores with `pet_listings` on are answered; any other store keeps its
+calls.
+
 ## Structure
 
 ```
