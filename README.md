@@ -254,7 +254,13 @@ buyers: at most once an hour for each caller. WAHA sends calls as the
 linked earlier is subscribed by `routes/petCalls.js` on the first fifth minute
 it is seen without it (WAHA restarts that session for a few seconds, once).
 Only stores with `pet_listings` on are answered; any other store keeps its
-calls.
+calls. A call from somebody **in the middle of a conversation with the bot** (a
+live pet conversation, not finished, not left for hours, not one the owner has
+stepped into) is also declined (`POST /api/rejectCall`), every time; anyone
+else's call is left to ring and only told by message. The chat and the call
+may name the same person differently (a number and a hidden WhatsApp id), so
+when they do not match, the numbers behind them are compared. If WhatsApp will
+not decline, the message still goes.
 
 ## Structure
 

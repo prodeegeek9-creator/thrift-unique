@@ -19,6 +19,7 @@ import {
   passwordLinkMessage,
   shareCaption,
   shareKitIntro,
+  staleness,
 } from '../lib/bot.js';
 import { makePaymentLink } from '../lib/paylinks.js';
 import { generateInvite } from '../lib/accounts.js';
@@ -75,6 +76,7 @@ import {
   getQR,
   WahaError,
   ensureStoreWebhook,
+  rejectCall,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -1168,18 +1170,55 @@ async function callReceived(cfg, event) {
   }
   if (!(await petStore(cfg, tenant))) return json({ ok: true, ignored: 'this store takes its own calls' });
 
+  // Declined only for somebody in the middle of a conversation with the bot:
+  // they are already being helped here, and a call is not how to carry on.
+  // Everybody else's call is left to ring, and told only by message. Every such
+  // call is declined, not once an hour.
+  const declined = (await inActiveBotChat(cfg, tenant, event))
+    ? await rejectCall(cfg, tenant.waha_session, { from: event.from, id: event.id }).then(
+        () => true,
+        (err) => {
+          // The message below still goes: the caller is told either way.
+          console.warn('call not declined:', err?.message ?? err);
+          return false;
+        }
+      )
+    : false;
+
   const since = new Date(Date.now() - 60 * 60_000).toISOString();
   const recent = await db(cfg).select(
     'bot_messages',
     `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&direction=eq.out&created_at=gte.${since}&select=body&limit=50`
   );
   if (recent.some((m) => String(m.body ?? '').includes(NO_CALLS_MARKER))) {
-    return json({ ok: true, ignored: 'already told this caller in the last hour' });
+    return json({ ok: true, declined, ignored: 'already told this caller in the last hour' });
   }
 
   const browseUrl = cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
   await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl }), { session: tenant.waha_session });
-  return json({ ok: true, told: true });
+  return json({ ok: true, declined, told: true });
+}
+
+// Is this caller partway through a conversation with the bot? A live pet
+// conversation: not finished, not left for hours (staleness), and not one the
+// owner has stepped into. The call arrives under one id and the conversation may
+// be stored under another (a number and its hidden WhatsApp id), so if they do
+// not match as they are, the numbers behind them are compared.
+async function inActiveBotChat(cfg, tenant, event) {
+  const rows = await db(cfg).select(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&state=in.(${PET_STATES.join(',')})&select=chat_id,state,updated_at,paused_until&limit=50`
+  );
+  const live = rows.filter((r) => !staleness(r, {}) && !(r.paused_until && new Date(r.paused_until) > new Date()));
+  if (!live.length) return false;
+  if (live.some((r) => r.chat_id === event.from)) return true;
+
+  const caller = await phoneFor(cfg, event.session, event.from).catch(() => null);
+  if (!caller) return false;
+  for (const r of live) {
+    if ((await phoneFor(cfg, event.session, r.chat_id).catch(() => null)) === caller) return true;
+  }
+  return false;
 }
 
 async function petIntake(cfg, event, tenant, conversation) {

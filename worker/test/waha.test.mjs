@@ -59,7 +59,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200 } = {}) {
   const sent = [];
   const mediaFetches = [];
   const typing = [];
@@ -71,6 +71,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
   const created = [];
   const deleted = [];
   const updated = [];
+  const rejected = [];
 
   async function handler(url, init = {}) {
     const path = new URL(url).pathname;
@@ -83,6 +84,11 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         status: 200,
         headers: { 'content-type': 'image/jpeg' },
       });
+    }
+
+    if (path === '/api/rejectCall') {
+      rejected.push(body);
+      return new Response(rejectStatus === 200 ? '{}' : 'no', { status: rejectStatus });
     }
 
     if (path === '/api/startTyping') {
@@ -168,7 +174,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, updated, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -2316,9 +2322,8 @@ const ring = (extra = {}, { session = STORE_SESSION, from = CONSIGNOR_CHAT } = {
   payload: { id: `call-${++counter}`, from, timestamp: 1_700_000_000 + counter, isVideo: false, isGroup: false, ...extra },
 });
 
-async function ringStore(calls, { seedData = petSeed(), env: extraEnv = {}, secret = STORE_SECRET } = {}) {
+async function ringStore(calls, { seedData = petSeed(), env: extraEnv = {}, secret = STORE_SECRET, waha = makeFakeWaha() } = {}) {
   const supabase = makeFakeSupabase(seedData);
-  const waha = makeFakeWaha();
   const restore = installFetch({ supabase, waha, tokens: TOKENS });
   const responses = [];
   try {
@@ -2440,4 +2445,68 @@ test('the every-minute job subscribes a pet store to calls on every fifth minute
       restore();
     }
   }
+});
+
+// ── DECLINING THE CALL, ONLY FOR SOMEBODY IN A CHAT WITH THE BOT ─────────────
+
+const chatting = (chat, state = 'pet_breed', extra = {}) => ({
+  ...petSeed(),
+  bot_conversations: [{ tenant_id: TENANT, chat_id: chat, state, draft: {}, updated_at: new Date().toISOString(), paused_until: null, ...extra }],
+});
+
+test('a caller who is in the middle of a conversation with the bot has the call declined, and is told', async () => {
+  const { waha } = await ringStore([ring()], { seedData: chatting(CONSIGNOR_CHAT) });
+  assert.equal(waha.rejected.length, 1);
+  assert.deepEqual(waha.rejected[0], { session: STORE_SESSION, from: CONSIGNOR_CHAT, id: `call-${counter}` });
+  assert.equal(waha.sent.length, 1);
+  assert.match(waha.sent[0].text, /can't take calls/);
+});
+
+test('anybody else\'s call is left to ring: told, never declined', async () => {
+  for (const [label, seedData] of [
+    ['no conversation at all', petSeed()],
+    ['a finished one', chatting(CONSIGNOR_CHAT, 'idle')],
+    ['one left for hours', chatting(CONSIGNOR_CHAT, 'pet_breed', { updated_at: new Date(Date.now() - 7 * 3_600_000).toISOString() })],
+    ['one the owner has stepped into', chatting(CONSIGNOR_CHAT, 'pet_breed', { paused_until: new Date(Date.now() + 3_600_000).toISOString() })],
+    ['somebody else\'s conversation', chatting('2348000000001@c.us')],
+  ]) {
+    const { waha } = await ringStore([ring()], { seedData });
+    assert.equal(waha.rejected.length, 0, label);
+    assert.equal(waha.sent.length, 1, label);
+  }
+});
+
+test('every call from somebody in a chat is declined, though they are only told once an hour', async () => {
+  const { waha } = await ringStore([ring(), ring(), ring()], { seedData: chatting(CONSIGNOR_CHAT) });
+  assert.equal(waha.rejected.length, 3);
+  assert.equal(waha.sent.length, 1);
+});
+
+test('the chat and the call may name the same person differently, and are still matched', async () => {
+  // The conversation is under their hidden WhatsApp id; the call arrives under their number.
+  const hidden = '40218493227115@lid';
+  const viaNumber = await ringStore([ring()], { seedData: chatting(hidden), waha: makeFakeWaha({ lids: { [hidden]: CONSIGNOR_CHAT } }) });
+  assert.equal(viaNumber.waha.rejected.length, 1);
+  assert.equal(viaNumber.waha.rejected[0].from, CONSIGNOR_CHAT);
+  // And the other way: the call under the hidden id, the chat under the number.
+  const viaId = await ringStore([ring({}, { from: hidden })], { seedData: chatting(CONSIGNOR_CHAT), waha: makeFakeWaha({ lids: { [hidden]: CONSIGNOR_CHAT } }) });
+  assert.equal(viaId.waha.rejected.length, 1);
+  // A hidden id nobody can resolve is not guessed at.
+  const unknown = await ringStore([ring()], { seedData: chatting('999@lid'), waha: makeFakeWaha({ lids: {} }) });
+  assert.equal(unknown.waha.rejected.length, 0);
+  assert.equal(unknown.waha.sent.length, 1);
+});
+
+test('a call WhatsApp will not let us decline still gets its message', async () => {
+  const { waha } = await ringStore([ring()], { seedData: chatting(CONSIGNOR_CHAT), waha: makeFakeWaha({ rejectStatus: 500 }) });
+  assert.equal(waha.rejected.length, 1);
+  assert.equal(waha.sent.length, 1);
+  assert.match(waha.sent[0].text, /can't take calls/);
+});
+
+test('a store that takes its own calls never has one declined', async () => {
+  const seed = { ...chatting(CONSIGNOR_CHAT), tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled: false }] };
+  const { waha } = await ringStore([ring()], { seedData: seed });
+  assert.equal(waha.rejected.length, 0);
+  assert.equal(waha.sent.length, 0);
 });

@@ -288,6 +288,12 @@ export async function sendText(cfg, session, to, text, { replyTo } = {}) {
   });
 }
 
+// Declines a call that is ringing: `from` and `id` are the call event's own.
+export async function rejectCall(cfg, session, { from, id }) {
+  const call = client(cfg);
+  return call('/api/rejectCall', { method: 'POST', body: { session, from, id } });
+}
+
 // A photo in a chat, by URL (WAHA fetches it). Used for the share kit.
 export async function sendImage(cfg, session, to, { url, caption = '', mimetype = 'image/jpeg' }) {
   const call = client(cfg);
