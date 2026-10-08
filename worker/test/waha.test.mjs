@@ -1880,6 +1880,11 @@ test('a failure on the site side keeps the seller answers, tells the owner why, 
     // One YES, and it goes through.
     await toPetStore([fromConsignor('yes')]);
     assert.equal(petSite.received.length, 2);
+    // The retry used the copy already saved: WhatsApp's link is not fetched
+    // again (it would have expired), and nothing is uploaded twice.
+    assert.equal(waha.mediaFetches.length, 1);
+    assert.equal(supabase.uploads.length, 1);
+    assert.deepEqual(petSite.received[1].body.photos, petSite.received[0].body.photos);
     assert.equal(petSite.received[1].body.breed, 'Boerboel');
     assert.match(waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT).at(-1).text, /Sent! PuppyPlace will check/);
     assert.equal(supabase.tables.bot_conversations.find((c) => c.chat_id === CONSIGNOR_CHAT).state, 'idle');

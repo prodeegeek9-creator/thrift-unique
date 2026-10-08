@@ -1185,9 +1185,12 @@ async function petIntake(cfg, event, tenant, conversation) {
 export async function forwardPetListing(cfg, tenant, event, action) {
   const own = { session: tenant.waha_session };
 
-  let paths = [];
+  // Photos kept from an earlier try are already in our bucket: WhatsApp's own
+  // link to a photo does not last, so a retry must not go back to it.
+  const kept = action.images.filter((i) => i.stored).map((i) => i.stored);
+  let paths = kept;
   try {
-    paths = await uploadAll(cfg, tenant.id, action.images);
+    paths = [...kept, ...(await uploadAll(cfg, tenant.id, action.images.filter((i) => !i.stored)))];
   } catch (err) {
     console.error('pet listing media failed:', err?.message ?? err);
   }
@@ -1228,7 +1231,8 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       .join(': ') || null;
     console.error('pet listing refused:', res?.status ?? 'no answer', reason ?? '');
     if (action.draft) {
-      await setConversation(cfg, tenant, event.from, { state: 'pet_review', draft: action.draft }).catch(() => {});
+      const draft = { ...action.draft, images: paths.map((stored) => ({ stored })) };
+      await setConversation(cfg, tenant, event.from, { state: 'pet_review', draft }).catch(() => {});
     }
     await say(cfg, tenant, event.from, action.draft ? PET_RETRY_MESSAGE : 'Something went wrong sending that. Send *SELL* to try again in a moment.', own);
     const failed = chatId(tenant.whatsapp_number);
