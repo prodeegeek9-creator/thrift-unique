@@ -1221,7 +1221,11 @@ export async function forwardPetListing(cfg, tenant, event, action) {
   // Anything else is not the seller's doing. Put them back at the summary so
   // one YES retries it, and tell the owner what actually happened.
   if (!res?.ok) {
-    const reason = typeof body?.error === 'string' ? body.error.slice(0, 80) : null;
+    // The site's own words: its error, and for a 500 the database's reason.
+    const detail = Array.isArray(body?.details) && typeof body.details[0] === 'string' ? body.details[0] : null;
+    const reason = [typeof body?.error === 'string' ? body.error.slice(0, 80) : null, detail?.slice(0, 250)]
+      .filter(Boolean)
+      .join(': ') || null;
     console.error('pet listing refused:', res?.status ?? 'no answer', reason ?? '');
     if (action.draft) {
       await setConversation(cfg, tenant, event.from, { state: 'pet_review', draft: action.draft }).catch(() => {});

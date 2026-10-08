@@ -1894,7 +1894,8 @@ test('a site that cannot be reached, or answers with a firewall page, is explain
     [[{ throws: true }], /no answer from the site[\s\S]*PET_LISTINGS_URL/],
     [[{ status: 403, text: '<html>Attention Required</html>' }], /HTTP 403\.[\s\S]*firewall/],
     [[{ status: 503, body: { error: 'Server not configured' } }], /HTTP 503 \(Server not configured\)[\s\S]*SELLER_API_KEY is missing/],
-    [[{ status: 500, body: { error: 'Could not save listing' } }], /HTTP 500 \(Could not save listing\)[\s\S]*error saving it/],
+    [[{ status: 500, body: { error: 'Could not save listing', details: ['null value in column "location" of relation "pets" violates not-null constraint'] } }],
+      /HTTP 500 \(Could not save listing: null value in column "location" of relation "pets" violates not-null constraint\)[\s\S]*error saving it/],
   ]) {
     const supabase = makeFakeSupabase(petSeed());
     const waha = makeFakeWaha();
