@@ -114,6 +114,30 @@ export function petSentMessage(store) {
   );
 }
 
+// When the site could not be reached or turned the listing down for a reason
+// that is not about the listing. The seller is told to try again; the owner is
+// told why, because it is theirs to fix.
+export const PET_RETRY_MESSAGE =
+  "Something went wrong sending that, but I've kept your answers. Reply *YES* to try again, or *CANCEL*.";
+
+const HINTS = {
+  401: 'The key does not match. PET_LISTINGS_KEY here and SELLER_API_KEY on the site must be the same value.',
+  403: "The site's firewall blocked the request (Cloudflare bot protection or a WAF rule).",
+  404: 'The address is wrong, or the site has not been deployed with /api/seller-listings.',
+  503: 'The site is not set up for listings: SELLER_API_KEY is missing there.',
+};
+
+// status is null when the site never answered.
+export function petFailedOwnerMessage({ breed, status, reason }) {
+  const what = status ? `HTTP ${status}${reason ? ` (${reason})` : ''}` : 'no answer from the site';
+  const hint = status ? HINTS[status] ?? (status >= 500 ? 'The site had an error saving it.' : null) : "Check PET_LISTINGS_URL, and that the site is up.";
+  return (
+    `⚠️ A ${breed ?? 'pet'} listing could not be sent to the site: ${what}.` +
+    (hint ? `\n\n${hint}` : '') +
+    '\n\nThe seller was told to reply YES to try again.'
+  );
+}
+
 export function petRejectedMessage(details) {
   const lines = ["I couldn't send that listing:"];
   for (const d of details ?? []) lines.push(`• ${d}`);
@@ -307,6 +331,9 @@ function submit(draft) {
     replies: [],
     action: {
       type: 'pet_listing',
+      // Kept so a failure that is ours, not the seller's, can put them back at
+      // the summary instead of making them answer everything again.
+      draft,
       listing: {
         type: draft.type,
         breed: draft.breed,

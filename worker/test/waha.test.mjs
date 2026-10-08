@@ -1719,14 +1719,22 @@ test('a web account gets one code, and sees its store waiting for approval once 
 
 const PET_SITE = 'https://pets.test/api/seller-listings';
 
-function makeFakePetSite({ status = 201, body = null } = {}) {
+// `sequence` answers the calls in order, then falls back to status/body:
+// each entry is { status, body, text } or { throws: true }.
+function makeFakePetSite({ status = 201, body = null, sequence = [] } = {}) {
   const received = [];
+  const queue = [...sequence];
   return {
     url: PET_SITE,
     received,
     async handler(url, init) {
       received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
-      return new Response(JSON.stringify(body ?? { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1' }), { status });
+      const next = queue.shift();
+      if (next?.throws) throw new TypeError('network down');
+      if (next?.text !== undefined) return new Response(next.text, { status: next.status, headers: { 'content-type': 'text/html' } });
+      return new Response(JSON.stringify(next?.body ?? body ?? { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1' }), {
+        status: next?.status ?? status,
+      });
     },
   };
 }
@@ -1838,6 +1846,65 @@ test('without the flag, or without the site configured, SELL is the usual item i
       await toPetStore([fromConsignor('SELL')], extraEnv);
       assert.equal(supabase.tables.bot_conversations[0]?.state, 'photo', label);
       assert.equal(petSite.received.length, 0, label);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('a failure on the site side keeps the seller answers, tells the owner why, and one YES retries it', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ sequence: [{ status: 401, body: { error: 'Unauthorized' } }] });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await toPetStore(PET_CHAT);
+
+    // The first send was refused…
+    assert.equal(petSite.received.length, 1);
+    const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
+    assert.match(toSeller.at(-1).text, /kept your answers\. Reply \*YES\* to try again/);
+    // …the seller is back at the summary, with everything they said…
+    const conv = supabase.tables.bot_conversations.find((c) => c.chat_id === CONSIGNOR_CHAT);
+    assert.equal(conv.state, 'pet_review');
+    assert.equal(conv.draft.breed, 'Boerboel');
+    assert.equal(conv.draft.images.length, 1);
+    // …and the owner learns what really happened, and what to check.
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
+    assert.equal(toOwner.length, 1);
+    assert.match(toOwner[0].text, /Boerboel listing could not be sent to the site: HTTP 401 \(Unauthorized\)/);
+    assert.match(toOwner[0].text, /PET_LISTINGS_KEY here and SELLER_API_KEY on the site must be the same value/);
+    assert.equal(toOwner[0].session, PLATFORM);
+
+    // One YES, and it goes through.
+    await toPetStore([fromConsignor('yes')]);
+    assert.equal(petSite.received.length, 2);
+    assert.equal(petSite.received[1].body.breed, 'Boerboel');
+    assert.match(waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT).at(-1).text, /Sent! PuppyPlace will check/);
+    assert.equal(supabase.tables.bot_conversations.find((c) => c.chat_id === CONSIGNOR_CHAT).state, 'idle');
+    assert.match(waha.sent.filter((m) => m.chatId === SELLER_CHAT).at(-1).text, /New pet listing sent for review/);
+  } finally {
+    restore();
+  }
+});
+
+test('a site that cannot be reached, or answers with a firewall page, is explained to the owner', async () => {
+  for (const [sequence, expected] of [
+    [[{ throws: true }], /no answer from the site[\s\S]*PET_LISTINGS_URL/],
+    [[{ status: 403, text: '<html>Attention Required</html>' }], /HTTP 403\.[\s\S]*firewall/],
+    [[{ status: 503, body: { error: 'Server not configured' } }], /HTTP 503 \(Server not configured\)[\s\S]*SELLER_API_KEY is missing/],
+    [[{ status: 500, body: { error: 'Could not save listing' } }], /HTTP 500 \(Could not save listing\)[\s\S]*error saving it/],
+  ]) {
+    const supabase = makeFakeSupabase(petSeed());
+    const waha = makeFakeWaha();
+    const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite: makeFakePetSite({ sequence }) });
+    try {
+      await toPetStore(PET_CHAT);
+      const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
+      assert.equal(toOwner.length, 1, String(expected));
+      assert.match(toOwner[0].text, expected);
+      assert.match(waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT).at(-1).text, /Reply \*YES\* to try again/);
     } finally {
       restore();
     }

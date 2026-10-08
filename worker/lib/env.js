@@ -67,7 +67,7 @@ export function config(env) {
     // same value as SELLER_API_KEY on the site. Both unset means the pet
     // intake is off for every store, whatever their flag says.
     petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
-    petListingsKey: env.PET_LISTINGS_KEY || null,
+    petListingsKey: env.PET_LISTINGS_KEY ? env.PET_LISTINGS_KEY.trim() : null,
 
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.

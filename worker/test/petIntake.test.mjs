@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { petIntakeStep, wantsToSellPet, MAX_PET_PHOTOS, newPetListingMessage, petRejectedMessage } from '../lib/petIntake.js';
+import { petIntakeStep, wantsToSellPet, MAX_PET_PHOTOS, newPetListingMessage, petRejectedMessage, petFailedOwnerMessage } from '../lib/petIntake.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
 
 // Somebody listing a pet through a pet store's WhatsApp. Pure, so every
@@ -163,3 +163,20 @@ test('messages for the owner and for a refused listing', () => {
   assert.match(newPetListingMessage({ breed: 'Cat', listing_type: 'adoption' }), /for adoption/);
   assert.match(petRejectedMessage(['photo 1: larger than 5 MB']), /• photo 1: larger than 5 MB/);
 });
+
+test('a finished listing keeps its draft on the action, for a retry', () => {
+  const last = run([...DOG, say('YES')]).at(-1);
+  assert.equal(last.action.draft.breed, 'Boerboel');
+  assert.equal(last.action.draft.images.length, 2);
+  assert.equal(last.action.draft.whatsapp, '2348031234567');
+  // Resuming from it goes straight back to the same summary and YES submits it again.
+  const again = petIntakeStep({ state: 'pet_review', draft: last.action.draft }, say('yes'), ctx);
+  assert.deepEqual(again.action.listing, last.action.listing);
+});
+
+test('the owner is told why a listing failed, in plain words', () => {
+  assert.match(petFailedOwnerMessage({ breed: 'Boerboel', status: 401, reason: 'Unauthorized' }), /HTTP 401 \(Unauthorized\)[\s\S]*must be the same value/);
+  assert.match(petFailedOwnerMessage({ breed: 'Boerboel', status: null }), /no answer from the site/);
+  assert.match(petFailedOwnerMessage({ status: 404 }), /pet listing could not be sent[\s\S]*address is wrong/);
+}
+);
