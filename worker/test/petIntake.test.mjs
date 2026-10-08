@@ -289,7 +289,10 @@ test('photos that could not be looked at are listed, with no claim that they wer
 test('the owner learns whether the photos were checked, and the seller when the dog is live', () => {
   const listing = { breed: 'Boerboel', price: 150000, listing_type: 'sale', location: 'Abuja' };
   assert.match(newPetListingMessage(listing, { verified: true }), /Photos checked: a real pet, face visible/);
-  assert.match(newPetListingMessage(listing, { verified: false }), /weren't checked automatically/);
+  assert.match(newPetListingMessage(listing, { verified: false }), /weren't checked automatically\. Look at them before approving/);
+  // …and when it can be said, why.
+  assert.match(newPetListingMessage(listing, { verified: false, note: 'OPENAI_API_KEY is not set on the Worker' }), /weren't checked automatically \(OPENAI_API_KEY is not set on the Worker\)\. Look at them/);
+  assert.doesNotMatch(newPetListingMessage(listing, { verified: true, note: 'ignored' }), /ignored/);
   assert.doesNotMatch(newPetListingMessage(listing), /Photos/);
   const live = petLiveMessage({ store: 'PuppyPlace', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' });
   assert.match(live, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1[\s\S]*Send \*SELL\*/);
@@ -306,4 +309,23 @@ test('the invitation says who it is, why, and how to start', () => {
   assert.doesNotMatch(petInviteMessage({ store: 'PuppyPlace' }), /Looking to buy/);
   // And "SELL", the reply it asks for, does start the conversation.
   assert.equal(petIntakeStep(null, say('SELL'), ctx).state, 'pet_type');
+});
+
+test('why the photos were not looked at travels with the listing to the owner', () => {
+  const stuck = run(DOG, ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}` })));
+  assert.equal(stuck.at(-1).draft.checkNote, undefined);
+  // The note given when the photos were handled is kept on the draft and handed on with the listing.
+  let conv = null;
+  let last;
+  for (const m of DOG.slice(0, 11)) {
+    let r = petIntakeStep(conv, m, ctx);
+    if (r?.action?.type === 'process_photos') r = petPhotosDone(r.draft, r.draft.images.map((_, i) => ({ stored: `p${i}` })), { ...ctx, checkNote: 'OpenAI said HTTP 401' });
+    conv = { state: r.state, draft: r.draft };
+  }
+  for (const m of [say('Ade Kennels'), say('yes'), say('YES')]) {
+    last = petIntakeStep(conv, m, ctx);
+    conv = { state: last.state, draft: last.draft };
+  }
+  assert.equal(last.action.verified, false);
+  assert.equal(last.action.checkNote, 'OpenAI said HTTP 401');
 });

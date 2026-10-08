@@ -2055,10 +2055,10 @@ test("a dog whose face is hidden is asked for a face photo, and the first photos
   }
 });
 
-test('a check that cannot be done never stops a listing, and the store is told the photos were not checked', async () => {
-  for (const [label, extraEnv, vision] of [
-    ['model refuses', { OPENAI_API_KEY: 'oa-key' }, makeFakeVision([], { status: 429 })],
-    ['no key set up', {}, makeFakeVision([])],
+test('a check that cannot be done never stops a listing, and the store is told why the photos were not checked', async () => {
+  for (const [label, extraEnv, vision, expected] of [
+    ['no key set up', {}, makeFakeVision([]), /weren't checked automatically \(OPENAI_API_KEY is not set on the Worker\)/],
+    ['model refuses', { OPENAI_API_KEY: 'oa-key' }, makeFakeVision([], { status: 429 }), /weren't checked automatically \(OpenAI said HTTP 429\)/],
   ]) {
     const supabase = makeFakeSupabase(petSeed());
     const waha = makeFakeWaha();
@@ -2069,7 +2069,9 @@ test('a check that cannot be done never stops a listing, and the store is told t
       assert.equal(petSite.received.length, 1, label);
       const seller = textsTo(waha, CONSIGNOR_CHAT);
       assert.ok(!seller.some((t) => /checked/.test(t.replace(/Checking your photos/, ''))), label);
-      assert.match(textsTo(waha, SELLER_CHAT).at(-1), /weren't checked automatically/, label);
+      assert.match(textsTo(waha, SELLER_CHAT).at(-1), expected, label);
+      // Nothing was spent, so nothing is logged.
+      assert.equal(supabase.tables.ai_usage.length, 0, label);
     } finally {
       restore();
     }

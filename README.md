@@ -213,7 +213,9 @@ left out and the seller is told which; at least one photo must show the face,
 and that one goes first, since buyers see it first. The summary then says
 "✅ checked". It never stops a listing: with no key, or if the model refuses or
 times out, the photos go through unchecked, and the owner alert says they were
-not checked automatically so they are looked at before approving. Set
+not checked automatically, and why (the key is not set on the Worker, OpenAI's
+own error such as `HTTP 401`, or the photos could not be read back), so they
+are looked at before approving and the cause can be fixed. Set
 `OPENAI_API_KEY` (the same key the photo-review service uses is fine) as a
 Worker secret; `PET_VISION_MODEL` and `PET_VISION_DETAIL` (`low`, `high`,
 `auto`) override the defaults, and the three `OPENAI_PRICE_*_PER_M` values put

@@ -150,13 +150,17 @@ export function petRejectedMessage(details) {
 }
 
 // For the store owner, on the platform number.
-export function newPetListingMessage({ breed, price, listing_type, location }, { verified } = {}) {
+export function newPetListingMessage({ breed, price, listing_type, location }, { verified, note } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
     (location ? `, ${location}` : '') +
     '. Approve it in your site admin.' +
-    (verified === undefined ? '' : verified ? '\n\n📸 Photos checked: a real pet, face visible.' : "\n\n📸 Photos weren't checked automatically — look at them before approving.")
+    (verified === undefined
+      ? ''
+      : verified
+        ? '\n\n📸 Photos checked: a real pet, face visible.'
+        : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`)
   );
 }
 
@@ -349,6 +353,8 @@ function whyNot(draft, v) {
 // absent when it was not (no check set up, or it could not be done).
 export function petPhotosDone(draft, images, ctx = {}) {
   const store = ctx.store ?? 'the store';
+  // Why the photos were not looked at, kept to tell the store with the listing.
+  draft = { ...draft, checkNote: ctx.checkNote ?? undefined };
   if (!images?.length) return reply('pet_photos', { ...draft, images: [] }, SAY.photosNotSaved);
 
   const keep = [];
@@ -439,6 +445,7 @@ function submit(draft) {
     action: {
       type: 'pet_listing',
       verified: Boolean(draft.verified),
+      checkNote: draft.checkNote ?? null,
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,

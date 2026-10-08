@@ -1240,10 +1240,18 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
 
   // Only photos not already looked at, and only the first few: the rest ride along unchecked.
   const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v).slice(0, MAX_CHECKED);
-  if (cfg.openaiKey && unchecked.length) {
+  // Why the photos were not looked at, if they were not: told to the store with the listing.
+  let checkNote = null;
+  if (!cfg.openaiKey) {
+    checkNote = 'OPENAI_API_KEY is not set on the Worker';
+  } else if (unchecked.length) {
     const photos = await loadPhotos(unchecked.map(({ img }) => publicUrl(cfg, img.stored)));
     const checked = await checkPetPhotos(cfg, photos);
-    if (checked) {
+    if (!checked) {
+      checkNote = 'the saved photos could not be read back';
+    } else if (checked.error) {
+      checkNote = checked.error;
+    } else {
       const { verdicts, usage } = checked;
       unchecked.forEach(({ i }, k) => { if (verdicts[k]) images[i] = { ...images[i], v: verdicts[k] }; });
       // Into the same log as the item photo review, so the console shows what it cost.
@@ -1253,7 +1261,7 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
     }
   }
 
-  const next = petPhotosDone(draft, images, ctx);
+  const next = petPhotosDone(draft, images, { ...ctx, checkNote });
   await persist(cfg, tenant, event.from, {}, next);
   for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
 }
@@ -1342,7 +1350,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
   await say(cfg, tenant, event.from, petSentMessage(tenant.name), own);
 
   const owner = chatId(tenant.whatsapp_number);
-  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified }));
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote }));
   return true;
 }
 
