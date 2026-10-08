@@ -30,7 +30,9 @@ import {
   petIntakeStep,
   petSentMessage,
   petRejectedMessage,
+  petFailedOwnerMessage,
   newPetListingMessage,
+  PET_RETRY_MESSAGE,
   wantsToSellPet,
   PET_STATES,
 } from '../lib/petIntake.js';
@@ -1195,25 +1197,40 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     return false;
   }
 
-  let res, body;
+  let res = null;
+  let body = null;
   try {
     res = await fetch(cfg.petListingsUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
       body: JSON.stringify({ ...action.listing, photos }),
     });
-    body = await res.json().catch(() => ({}));
+    // The site answers in JSON; anything else (a firewall page) is just noted.
+    body = await res.json().catch(() => null);
   } catch (err) {
     console.error('pet listing send failed:', err?.message ?? err);
   }
 
+  // The listing itself is wrong (a photo too big, a bad number): the seller
+  // has something to fix, so they start again.
   if (res?.status === 400) {
     await say(cfg, tenant, event.from, petRejectedMessage(body?.details), own);
     return false;
   }
+
+  // Anything else is not the seller's doing. Put them back at the summary so
+  // one YES retries it, and tell the owner what actually happened.
   if (!res?.ok) {
-    console.error('pet listing refused:', res?.status, JSON.stringify(body ?? {}).slice(0, 200));
-    await say(cfg, tenant, event.from, 'Something went wrong sending that. Send *SELL* to try again in a moment.', own);
+    const reason = typeof body?.error === 'string' ? body.error.slice(0, 80) : null;
+    console.error('pet listing refused:', res?.status ?? 'no answer', reason ?? '');
+    if (action.draft) {
+      await setConversation(cfg, tenant, event.from, { state: 'pet_review', draft: action.draft }).catch(() => {});
+    }
+    await say(cfg, tenant, event.from, action.draft ? PET_RETRY_MESSAGE : 'Something went wrong sending that. Send *SELL* to try again in a moment.', own);
+    const failed = chatId(tenant.whatsapp_number);
+    if (failed) {
+      await say(cfg, tenant, failed, petFailedOwnerMessage({ breed: action.listing.breed, status: res?.status ?? null, reason })).catch(() => {});
+    }
     return false;
   }
 
