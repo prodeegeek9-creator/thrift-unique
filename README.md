@@ -217,10 +217,21 @@ not checked automatically so they are looked at before approving. Set
 `PET_VISION_KEY` (a Google AI Studio key, as a Worker secret); `PET_VISION_MODEL`
 overrides the default model.
 
+**People who messaged before the bot was on** can be invited. A row in
+`pet_invites` (migration 0050: store, phone number) is picked up by the
+every-minute sweep (`routes/petInvites.js`), which sends the bot's opening
+message from the store's own number, once, and marks it sent. The message says
+who it is and asks them to reply *SELL*, which starts the conversation on
+whatever chat their reply arrives on. A number is never invited twice per
+store; a refusal by WhatsApp is retried up to three times; a row left
+`sending` by a crash is never sent again. Rows are added by the platform, e.g.
+`insert into pet_invites (tenant_id, phone) values ('<id>', '2348031234567');`
+
 **The seller is told when it is live.** When the store approves a listing on
 its site, the site POSTs `{ whatsapp, breed, listing_type, url }` to
 `/api/waha/pet-live` here, with the same shared key, and the seller gets a
-WhatsApp from the store's own number. The number is the one buyers were given,
+WhatsApp from the store's own number with their link and a push to share it,
+then the link again on its own in a message made to be forwarded. The number is the one buyers were given,
 which is the seller's own unless they chose another. It names the store with
 `store` (its slug), or uses the only one that has `pet_listings` on.
 

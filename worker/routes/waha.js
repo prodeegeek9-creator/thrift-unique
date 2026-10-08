@@ -35,6 +35,7 @@ import {
   petFailedOwnerMessage,
   newPetListingMessage,
   petLiveMessage,
+  petShareMessage,
   petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
@@ -1257,13 +1258,18 @@ async function petLive(request, env) {
   }
   const tenant = tenants[0];
 
+  const own = { session: tenant.waha_session };
   const sent = await say(
     cfg,
     tenant,
     chatId(number),
     petLiveMessage({ store: tenant.name, breed, listing_type: body.listing_type, url }),
-    { session: tenant.waha_session }
+    own
   );
+  // The link again on its own, made to be forwarded as it is.
+  if (sent && url) {
+    await say(cfg, tenant, chatId(number), petShareMessage({ breed, listing_type: body.listing_type, url }), own);
+  }
   return sent ? json({ ok: true, sent: true }) : json({ ok: false, error: 'WhatsApp did not take the message' }, 502);
 }
 
