@@ -312,7 +312,7 @@ export function installFetch({
 
     if (photoCheck && url.startsWith(photoCheck.url)) return photoCheck.handler(url, init);
 
-    if (petSite && url.startsWith(petSite.url)) return petSite.handler(url, init);
+    if (petSite && url.startsWith(new URL(petSite.url).origin)) return petSite.handler(url, init);
 
     if (vision && url.startsWith('https://api.openai.com/')) return vision.handler(url, init);
 
