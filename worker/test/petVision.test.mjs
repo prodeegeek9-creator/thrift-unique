@@ -83,18 +83,26 @@ test('a chosen model and photo size are used, and the cost is worked out when pr
   });
 });
 
-test('anything that goes wrong is no answer, never an error', async () => {
+test('anything that goes wrong says why, in a few words, and never throws', async () => {
   const cases = [
-    () => new Response('quota', { status: 429 }),
-    () => new Response('not json', { status: 200 }),
-    () => new Response(JSON.stringify({ choices: [] }), { status: 200 }),
-    () => new Response(JSON.stringify({ choices: [{ message: { refusal: 'no', content: null } }] }), { status: 200 }),
-    () => new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }] }), { status: 200 }),
-    () => answer('nope'),
-    () => { throw new TypeError('network down'); },
+    [() => new Response('quota', { status: 429 }), /^OpenAI said HTTP 429$/],
+    [() => new Response(JSON.stringify({ error: { message: 'Incorrect API key provided: sk-proj-********abcd. You can find your API key at https://platform.openai.com.' } }), { status: 401 }), /^OpenAI said HTTP 401: Incorrect API key provided: sk-… You can find/],
+    [() => new Response(JSON.stringify({ error: { message: 'The model `gpt-x` does not exist' } }), { status: 404 }), /HTTP 404: The model `gpt-x` does not exist/],
+    [() => new Response('not json', { status: 200 }), /answer could not be read/],
+    [() => new Response(JSON.stringify({ choices: [] }), { status: 200 }), /answer could not be read/],
+    [() => new Response(JSON.stringify({ choices: [{ message: { refusal: 'no', content: null } }] }), { status: 200 }), /answer could not be read/],
+    [() => new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }] }), { status: 200 }), /answer could not be read/],
+    [() => answer('nope'), /answer could not be read/],
+    [() => { throw new TypeError('network down'); }, /^could not reach OpenAI \(network down\)$/],
   ];
-  for (const handler of cases) {
-    await withFetch(handler, async () => assert.equal(await checkPetPhotos(cfg, [photo(1)]), null));
+  for (const [handler, expected] of cases) {
+    await withFetch(handler, async () => {
+      const out = await checkPetPhotos(cfg, [photo(1)]);
+      assert.equal(out.verdicts, undefined);
+      assert.match(out.error, expected);
+      // A key never travels in the explanation.
+      assert.doesNotMatch(out.error, /sk-proj|sk-[a-z0-9]{6}/i);
+    });
   }
   // One bad entry spoils only itself.
   await withFetch(

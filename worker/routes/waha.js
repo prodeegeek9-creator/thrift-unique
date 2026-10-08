@@ -6,7 +6,6 @@ import { timingSafeEqual } from '../lib/paystack.js';
 import { requireMember, refuseMember, NotMember } from '../lib/member.js';
 import { storeImage, publicUrl, mediaRequest, MediaError } from '../lib/media.js';
 import { checkPetPhotos, loadPhotos, MAX_CHECKED } from '../lib/petVision.js';
-import { normalizeNumber } from '../lib/phone.js';
 import {
   step,
   listedMessage,
@@ -20,6 +19,7 @@ import {
   passwordLinkMessage,
   shareCaption,
   shareKitIntro,
+  staleness,
 } from '../lib/bot.js';
 import { makePaymentLink } from '../lib/paylinks.js';
 import { generateInvite } from '../lib/accounts.js';
@@ -33,9 +33,9 @@ import {
   petSentMessage,
   petRejectedMessage,
   petFailedOwnerMessage,
+  petNoCallsMessage,
+  NO_CALLS_MARKER,
   newPetListingMessage,
-  petLiveMessage,
-  petShareMessage,
   petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
@@ -76,6 +76,7 @@ import {
   getQR,
   WahaError,
   ensureStoreWebhook,
+  rejectCall,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -117,9 +118,6 @@ export async function handleWaha(request, env, path) {
     return json({ error: 'Method not allowed' }, 405);
   }
 
-  // The pet site telling us a listing was approved: the seller is told.
-  if (rest === '/pet-live' && method === 'POST') return petLive(request, env);
-
   if (rest === '/holds' && method === 'GET') return listHolds(request, env);
   if (rest === '/holds/resume' && method === 'POST') return resumeHolds(request, env);
 
@@ -157,6 +155,7 @@ async function webhook(request, env) {
   await touchActivity(cfg, event);
 
   if (event.kind === 'status') return recordStatus(cfg, event);
+  if (event.kind === 'call') return callReceived(cfg, event);
 
   // The listing flow lives on the platform session only — see the note at the
   // top of this file. A store's own session runs the item intake and the
@@ -1148,11 +1147,78 @@ export async function announceSubmission(cfg, tenant, chat, submission) {
 
 export async function petListingsOn(cfg, tenant) {
   if (!cfg.petListingsUrl || !cfg.petListingsKey) return false;
-  const row = await db(cfg).one(
-    'tenant_features',
-    `tenant_id=eq.${tenant.id}&flag=eq.pet_listings&select=enabled`
-  );
+  return petStore(cfg, tenant);
+}
+
+// The flag alone: a store that takes pets, whether or not the site is set up.
+async function petStore(cfg, tenant) {
+  const row = await db(cfg).one('tenant_features', `tenant_id=eq.${tenant.id}&flag=eq.pet_listings&select=enabled`);
   return Boolean(row?.enabled);
+}
+
+// Somebody rang a pet store's WhatsApp. A bot cannot take a call, so the caller
+// is told, in a message, that the number is not for calls and what to do
+// instead. Once an hour at most for each caller: somebody ringing four times
+// in a minute needs one message, not four. Other stores take their own calls.
+async function callReceived(cfg, event) {
+  const tenant = await db(cfg).one(
+    'tenants',
+    `waha_session=eq.${encodeURIComponent(event.session ?? '')}&select=id,slug,name,status,waha_session,waha_status,billing_status,whatsapp_number`
+  );
+  if (!tenant || tenant.status === 'suspended' || tenant.billing_status === 'paused') {
+    return json({ ok: true, ignored: 'no store for this session' });
+  }
+  if (!(await petStore(cfg, tenant))) return json({ ok: true, ignored: 'this store takes its own calls' });
+
+  // Declined only for somebody in the middle of a conversation with the bot:
+  // they are already being helped here, and a call is not how to carry on.
+  // Everybody else's call is left to ring, and told only by message. Every such
+  // call is declined, not once an hour.
+  const declined = (await inActiveBotChat(cfg, tenant, event))
+    ? await rejectCall(cfg, tenant.waha_session, { from: event.from, id: event.id }).then(
+        () => true,
+        (err) => {
+          // The message below still goes: the caller is told either way.
+          console.warn('call not declined:', err?.message ?? err);
+          return false;
+        }
+      )
+    : false;
+
+  const since = new Date(Date.now() - 60 * 60_000).toISOString();
+  const recent = await db(cfg).select(
+    'bot_messages',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&direction=eq.out&created_at=gte.${since}&select=body&limit=50`
+  );
+  if (recent.some((m) => String(m.body ?? '').includes(NO_CALLS_MARKER))) {
+    return json({ ok: true, declined, ignored: 'already told this caller in the last hour' });
+  }
+
+  const browseUrl = cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
+  await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl }), { session: tenant.waha_session });
+  return json({ ok: true, declined, told: true });
+}
+
+// Is this caller partway through a conversation with the bot? A live pet
+// conversation: not finished, not left for hours (staleness), and not one the
+// owner has stepped into. The call arrives under one id and the conversation may
+// be stored under another (a number and its hidden WhatsApp id), so if they do
+// not match as they are, the numbers behind them are compared.
+async function inActiveBotChat(cfg, tenant, event) {
+  const rows = await db(cfg).select(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&state=in.(${PET_STATES.join(',')})&select=chat_id,state,updated_at,paused_until&limit=50`
+  );
+  const live = rows.filter((r) => !staleness(r, {}) && !(r.paused_until && new Date(r.paused_until) > new Date()));
+  if (!live.length) return false;
+  if (live.some((r) => r.chat_id === event.from)) return true;
+
+  const caller = await phoneFor(cfg, event.session, event.from).catch(() => null);
+  if (!caller) return false;
+  for (const r of live) {
+    if ((await phoneFor(cfg, event.session, r.chat_id).catch(() => null)) === caller) return true;
+  }
+  return false;
 }
 
 async function petIntake(cfg, event, tenant, conversation) {
@@ -1213,10 +1279,18 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
 
   // Only photos not already looked at, and only the first few: the rest ride along unchecked.
   const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v).slice(0, MAX_CHECKED);
-  if (cfg.openaiKey && unchecked.length) {
+  // Why the photos were not looked at, if they were not: told to the store with the listing.
+  let checkNote = null;
+  if (!cfg.openaiKey) {
+    checkNote = 'OPENAI_API_KEY is not set on the Worker';
+  } else if (unchecked.length) {
     const photos = await loadPhotos(unchecked.map(({ img }) => publicUrl(cfg, img.stored)));
     const checked = await checkPetPhotos(cfg, photos);
-    if (checked) {
+    if (!checked) {
+      checkNote = 'the saved photos could not be read back';
+    } else if (checked.error) {
+      checkNote = checked.error;
+    } else {
       const { verdicts, usage } = checked;
       unchecked.forEach(({ i }, k) => { if (verdicts[k]) images[i] = { ...images[i], v: verdicts[k] }; });
       // Into the same log as the item photo review, so the console shows what it cost.
@@ -1226,58 +1300,9 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
     }
   }
 
-  const next = petPhotosDone(draft, images, ctx);
+  const next = petPhotosDone(draft, images, { ...ctx, checkNote });
   await persist(cfg, tenant, event.from, {}, next);
   for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
-}
-
-// POST /api/waha/pet-live
-//
-// The pet site calls this when its owner approves a listing; it carries the
-// same shared key as the listing itself. The seller is told on WhatsApp from
-// the store's own number. The number is the one buyers were given, which is
-// the seller's own unless they chose another.
-async function petLive(request, env) {
-  const cfg = require_(env, 'supabaseUrl', 'serviceKey');
-  if (!cfg.petListingsKey) return json({ error: 'Not configured' }, 503);
-
-  const given = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!timingSafeEqual(given, cfg.petListingsKey)) return json({ error: 'Unauthorized' }, 401);
-
-  let body;
-  try { body = await request.json(); } catch { return json({ error: 'Body must be JSON' }, 400); }
-  const number = normalizeNumber(body?.whatsapp);
-  const breed = typeof body?.breed === 'string' ? body.breed.trim().slice(0, 80) : '';
-  if (!number || !breed) return json({ error: 'whatsapp and breed are required' }, 400);
-  const url = typeof body.url === 'string' && /^https:\/\//.test(body.url) ? body.url.slice(0, 300) : null;
-
-  // The store that takes pets: named by the site, or the only one there is.
-  const on = await db(cfg).select('tenant_features', 'flag=eq.pet_listings&enabled=eq.true&select=tenant_id');
-  const ids = on.map((r) => r.tenant_id);
-  if (!ids.length) return json({ error: 'No store takes pet listings' }, 404);
-  const slug = typeof body.store === 'string' ? `&slug=eq.${encodeURIComponent(body.store)}` : '';
-  const tenants = await db(cfg).select(
-    'tenants',
-    `id=in.(${ids.join(',')})${slug}&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status`
-  );
-  if (tenants.length !== 1) {
-    return json({ error: tenants.length ? 'More than one store takes pet listings; send "store"' : 'Store not found' }, tenants.length ? 409 : 404);
-  }
-  const tenant = tenants[0];
-
-  const own = { session: tenant.waha_session };
-  const sent = await say(
-    cfg,
-    tenant,
-    chatId(number),
-    petLiveMessage({ store: tenant.name, breed, listing_type: body.listing_type, url }),
-    own
-  );
-  // The link again on its own, made to be forwarded as it is.
-  if (sent && url) {
-    await say(cfg, tenant, chatId(number), petShareMessage({ breed, listing_type: body.listing_type, url }), own);
-  }
-  return sent ? json({ ok: true, sent: true }) : json({ ok: false, error: 'WhatsApp did not take the message' }, 502);
 }
 
 // Photos into our public bucket first: the site copies them from there, and a
@@ -1342,10 +1367,29 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     return false;
   }
 
+  // Remembered, so the seller can be told when the store approves it
+  // (routes/petListings.js asks the site which of these are live).
+  if (typeof body?.slug === 'string') {
+    await db(cfg)
+      .insert(
+        'pet_listings',
+        {
+          tenant_id: tenant.id,
+          slug: body.slug,
+          breed: action.listing.breed,
+          listing_type: action.listing.listing_type,
+          chat_id: event.from,
+          status: 'pending',
+        },
+        { onConflict: 'tenant_id,slug', returning: false }
+      )
+      .catch((err) => console.error('pet listing not recorded:', err?.message ?? err));
+  }
+
   await say(cfg, tenant, event.from, petSentMessage(tenant.name), own);
 
   const owner = chatId(tenant.whatsapp_number);
-  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified }));
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote }));
   return true;
 }
 

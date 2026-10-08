@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
+import { notifyLivePets } from '../routes/petListings.js';
+import { ensurePetCallEvents } from '../routes/petCalls.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
 
@@ -57,7 +59,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200 } = {}) {
   const sent = [];
   const mediaFetches = [];
   const typing = [];
@@ -68,6 +70,8 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
   const stopped = [];
   const created = [];
   const deleted = [];
+  const updated = [];
+  const rejected = [];
 
   async function handler(url, init = {}) {
     const path = new URL(url).pathname;
@@ -80,6 +84,11 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         status: 200,
         headers: { 'content-type': 'image/jpeg' },
       });
+    }
+
+    if (path === '/api/rejectCall') {
+      rejected.push(body);
+      return new Response(rejectStatus === 200 ? '{}' : 'no', { status: rejectStatus });
     }
 
     if (path === '/api/startTyping') {
@@ -132,6 +141,11 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         delete sessions[name];
         return new Response(null, { status: 204 });
       }
+      if (init.method === 'PUT' && sessions[name]) {
+        sessions[name] = { ...sessions[name], config: body.config };
+        updated.push({ name, config: body.config });
+        return new Response(JSON.stringify(sessions[name]), { status: 200 });
+      }
       const found = sessions[name];
       return found
         ? new Response(JSON.stringify(found), { status: 200 })
@@ -160,7 +174,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -830,7 +844,8 @@ test('an owner links a session, and the webhook it registers carries a secret', 
     assert.equal(res.status, 200);
     assert.equal(waha.created.length, 1);
     assert.equal(waha.created[0].name, 'ut-store');
-    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status']);
+    // Messages, status, and calls (answered only for stores that take pets).
+    assert.deepEqual(waha.created[0].config.webhooks[0].events, ['message.any', 'session.status', 'call.received']);
     assert.equal(
       waha.created[0].config.webhooks[0].url,
       'https://uniquethrift.ng/api/waha/webhook'
@@ -1722,13 +1737,27 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [] } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200 } = {}) {
   const received = [];
+  const statusCalls = [];
   const queue = [...sequence];
-  return {
+  const site = {
     url: PET_SITE,
     received,
+    statusCalls,
+    // slug → 'live' | 'pending' | 'missing', as the site's admin would have left it
+    states,
     async handler(url, init) {
+      if ((init.method ?? 'GET') === 'GET') {
+        const slugs = (new URL(url).searchParams.get('slugs') ?? '').split(',').filter(Boolean);
+        statusCalls.push({ url, auth: init.headers?.Authorization ?? null, slugs });
+        if (statusCode !== 200) return new Response('no', { status: statusCode });
+        return new Response(JSON.stringify({
+          live: slugs.filter((x) => site.states[x] === 'live'),
+          pending: slugs.filter((x) => site.states[x] === 'pending'),
+          missing: slugs.filter((x) => !site.states[x] || site.states[x] === 'missing'),
+        }));
+      }
       received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
       const next = queue.shift();
       if (next?.throws) throw new TypeError('network down');
@@ -1738,6 +1767,7 @@ function makeFakePetSite({ status = 201, body = null, sequence = [] } = {}) {
       });
     },
   };
+  return site;
 }
 
 function petSeed(enabled = true) {
@@ -1746,6 +1776,7 @@ function petSeed(enabled = true) {
     tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled }],
     submissions: [],
     ai_usage: [],
+    pet_listings: [],
   };
 }
 
@@ -1793,6 +1824,13 @@ test('a pet store sends a listed dog to its site, and files nothing here', async
 
     assert.equal(supabase.tables.submissions.length, 0);
     assert.equal(supabase.tables.products.length, 0);
+
+    // Remembered against the chat it came from, to tell the seller when it is approved.
+    assert.equal(supabase.tables.pet_listings.length, 1);
+    assert.deepEqual(
+      (({ tenant_id, slug, breed, listing_type, chat_id, status }) => ({ tenant_id, slug, breed, listing_type, chat_id, status }))(supabase.tables.pet_listings[0]),
+      { tenant_id: TENANT, slug: 'boerboel-1', breed: 'Boerboel', listing_type: 'sale', chat_id: CONSIGNOR_CHAT, status: 'pending' }
+    );
 
     const toSeller = waha.sent.filter((m) => m.chatId === CONSIGNOR_CHAT);
     assert.ok(toSeller.every((m) => m.session === STORE_SESSION));
@@ -2023,10 +2061,10 @@ test("a dog whose face is hidden is asked for a face photo, and the first photos
   }
 });
 
-test('a check that cannot be done never stops a listing, and the store is told the photos were not checked', async () => {
-  for (const [label, extraEnv, vision] of [
-    ['model refuses', { OPENAI_API_KEY: 'oa-key' }, makeFakeVision([], { status: 429 })],
-    ['no key set up', {}, makeFakeVision([])],
+test('a check that cannot be done never stops a listing, and the store is told why the photos were not checked', async () => {
+  for (const [label, extraEnv, vision, expected] of [
+    ['no key set up', {}, makeFakeVision([]), /weren't checked automatically \(OPENAI_API_KEY is not set on the Worker\)/],
+    ['model refuses', { OPENAI_API_KEY: 'oa-key' }, makeFakeVision([], { status: 429 }), /weren't checked automatically \(OpenAI said HTTP 429\)/],
   ]) {
     const supabase = makeFakeSupabase(petSeed());
     const waha = makeFakeWaha();
@@ -2037,80 +2075,13 @@ test('a check that cannot be done never stops a listing, and the store is told t
       assert.equal(petSite.received.length, 1, label);
       const seller = textsTo(waha, CONSIGNOR_CHAT);
       assert.ok(!seller.some((t) => /checked/.test(t.replace(/Checking your photos/, ''))), label);
-      assert.match(textsTo(waha, SELLER_CHAT).at(-1), /weren't checked automatically/, label);
+      assert.match(textsTo(waha, SELLER_CHAT).at(-1), expected, label);
+      // Nothing was spent, so nothing is logged.
+      assert.equal(supabase.tables.ai_usage.length, 0, label);
     } finally {
       restore();
     }
   }
-});
-
-// ── the pet site telling us a listing is live ──
-
-const KEY = 'pet-key';
-function liveCall(body, { key = KEY, method = 'POST' } = {}) {
-  return new Request('https://app.test/api/waha/pet-live', {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-  });
-}
-const LIVE = { whatsapp: '+2348031234567', breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' };
-
-async function live(body, opts = {}, { seedData = petSeed(), extraEnv = {}, waha = makeFakeWaha() } = {}) {
-  const supabase = makeFakeSupabase(seedData);
-  const restore = installFetch({ supabase, waha, tokens: TOKENS });
-  try {
-    const res = await worker.fetch(liveCall(body, opts), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: KEY, ...extraEnv }), {});
-    return { res, json: await res.json(), waha, supabase };
-  } finally {
-    restore();
-  }
-}
-
-test('when the store approves a listing the seller is told, from the store number', async () => {
-  const { res, json, waha } = await live(LIVE);
-  assert.equal(res.status, 200);
-  assert.equal(json.sent, true);
-  assert.equal(waha.sent.length, 2);
-  assert.ok(waha.sent.every((m) => m.chatId === '2348031234567@c.us' && m.session === STORE_SESSION));
-  assert.match(waha.sent[0].text, /Your \*Lhasa\* is now live on PuppyPlace\.[\s\S]*https:\/\/puppyplace\.ng\/pets\/lhasa-1/);
-  // …with a push to share it…
-  assert.match(waha.sent[0].text, /Please share it![\s\S]*Status, Instagram and Facebook[\s\S]*ready-made message next/);
-  // …and the link again on its own, to forward as it is.
-  assert.equal(waha.sent[1].text, '🐾 Lhasa for sale on PuppyPlace. See photos and details:\nhttps://puppyplace.ng/pets/lhasa-1');
-});
-
-test('the live notice needs the shared key, a number and a store that takes pets', async () => {
-  assert.equal((await live(LIVE, { key: 'wrong' })).res.status, 401);
-  assert.equal((await live(LIVE, { key: null })).res.status, 401);
-  assert.equal((await live(LIVE, {}, { extraEnv: { PET_LISTINGS_KEY: '' } })).res.status, 503);
-  assert.equal((await live('nope')).res.status, 400);
-  assert.equal((await live({ ...LIVE, whatsapp: 'call me' })).res.status, 400);
-  assert.equal((await live({ ...LIVE, breed: '' })).res.status, 400);
-  // No store has the flag on.
-  const off = await live(LIVE, {}, { seedData: petSeed(false) });
-  assert.equal(off.res.status, 404);
-  assert.equal(off.waha.sent.length, 0);
-  // A "store" that is not the one that takes pets.
-  assert.equal((await live({ ...LIVE, store: 'someone-else' })).res.status, 404);
-
-  // Two stores take pets, and the site did not say which.
-  const two = petSeed();
-  const OTHER = 'bbbbbbbb-0000-0000-0000-00000000000b';
-  two.tenants.push({ ...two.tenants[0], id: OTHER, slug: 'second', name: 'Second Pets' });
-  two.tenant_features.push({ tenant_id: OTHER, flag: 'pet_listings', enabled: true });
-  assert.equal((await live(LIVE, {}, { seedData: two })).res.status, 409);
-  const named = await live({ ...LIVE, store: 'store' }, {}, { seedData: two });
-  assert.equal(named.res.status, 200);
-  assert.equal(named.waha.sent[0].session, STORE_SESSION);
-
-  // WhatsApp refusing the message is reported, not hidden.
-  const refusing = makeFakeWaha();
-  const through = refusing.handler;
-  refusing.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
-  const refused = await live(LIVE, {}, { waha: refusing });
-  assert.equal(refused.res.status, 502);
-  assert.equal(refused.json.ok, false);
 });
 
 // ── INVITING PEOPLE WHO MESSAGED BEFORE THE BOT WAS ANSWERING ────────────────
@@ -2209,4 +2180,333 @@ test('the every-minute job sends the invitations', async () => {
   } finally {
     restore();
   }
+});
+
+// ── TELLING THE SELLER THEIR PET IS LIVE ─────────────────────────────────────
+
+const SELLER_A = '144525699858492@lid';
+const SELLER_B = '40218493227115@lid';
+
+function listingsSeed(rows) {
+  return {
+    ...petSeed(),
+    pet_listings: rows.map(([slug, chat, status = 'pending', extra = {}], i) => ({
+      id: `pl-${i}`, tenant_id: TENANT, slug, breed: i === 0 ? 'Caucasian shepherd' : 'Lhasa', listing_type: 'sale', chat_id: chat,
+      status, attempts: 0, error: null, created_at: new Date().toISOString(), notified_at: null, ...extra,
+    })),
+  };
+}
+
+test('a seller is told when the store approves their listing, however it was approved', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A], ['lhasa-1', SELLER_B], ['gone-1', SELLER_B]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live', 'lhasa-1': 'pending' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.deepEqual(await notifyLivePets(inviteEnv()), { notified: 1, expired: 1, failed: 0 });
+
+    // The site was asked about all three, with the shared key.
+    assert.equal(petSite.statusCalls.length, 1);
+    assert.deepEqual(petSite.statusCalls[0].slugs, ['caucasian-1', 'lhasa-1', 'gone-1']);
+    assert.equal(petSite.statusCalls[0].auth, 'Bearer pet-key');
+
+    // The seller whose pet is live is told in the chat they wrote from, from the store's number…
+    assert.equal(waha.sent.length, 2);
+    assert.ok(waha.sent.every((m) => m.chatId === SELLER_A && m.session === STORE_SESSION));
+    assert.match(waha.sent[0].text, /Your \*Caucasian shepherd\* is now live on PuppyPlace\.[\s\S]*https:\/\/pets\.test\/pets\/caucasian-1[\s\S]*Please share it!/);
+    // …with the link again, to forward.
+    assert.equal(waha.sent[1].text, '🐾 Caucasian shepherd for sale on PuppyPlace. See photos and details:\nhttps://pets.test/pets/caucasian-1');
+
+    const by = (slug) => supabase.tables.pet_listings.find((r) => r.slug === slug);
+    assert.equal(by('caucasian-1').status, 'notified');
+    assert.ok(by('caucasian-1').notified_at);
+    // Still waiting, and one deleted on the site is no longer waited for.
+    assert.equal(by('lhasa-1').status, 'pending');
+    assert.equal(by('gone-1').status, 'expired');
+
+    // A told seller is not asked about again, and nobody is told twice.
+    await notifyLivePets(inviteEnv());
+    assert.deepEqual(petSite.statusCalls[1].slugs, ['lhasa-1']);
+    assert.equal(waha.sent.length, 2);
+
+    // The store approves the other one later, and that seller hears too.
+    petSite.states['lhasa-1'] = 'live';
+    assert.deepEqual(await notifyLivePets(inviteEnv()), { notified: 1, expired: 0, failed: 0 });
+    assert.ok(waha.sent.slice(2).every((m) => m.chatId === SELLER_B));
+    assert.match(waha.sent[2].text, /Your \*Lhasa\* is now live/);
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+  } finally {
+    restore();
+  }
+});
+
+test('nothing is asked or sent without a site configured, or when it cannot answer', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' }, statusCode: 500 });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.equal(await notifyLivePets(wahaEnv()), null);
+    assert.equal(petSite.statusCalls.length, 0);
+    // The site down: the listing keeps waiting, and nobody is told anything.
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+    assert.equal(petSite.statusCalls.length, 1);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.pet_listings[0].status, 'pending');
+  } finally {
+    restore();
+  }
+});
+
+test('a notice WhatsApp refuses is tried again, a few times, never twice once sent', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const through = waha.handler;
+  waha.handler = async (url, init) => (url.endsWith('/api/sendText') ? new Response('nope', { status: 500 }) : through(url, init));
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await notifyLivePets(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_listings[0].status, supabase.tables.pet_listings[0].attempts], ['pending', 1]);
+    for (let i = 0; i < 4; i++) await notifyLivePets(inviteEnv());
+    assert.deepEqual([supabase.tables.pet_listings[0].status, supabase.tables.pet_listings[0].attempts], ['failed', 5]);
+    assert.match(supabase.tables.pet_listings[0].error, /did not take/);
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+  } finally {
+    restore();
+  }
+});
+
+test('a claim another sweep holds, or old listings nobody approved, are left alone', async () => {
+  const old = new Date(Date.now() - 61 * 86_400_000).toISOString();
+  const supabase = makeFakeSupabase(listingsSeed([['held-1', SELLER_A, 'notifying'], ['old-1', SELLER_B, 'pending', { created_at: old }]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'held-1': 'live', 'old-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.equal(await notifyLivePets(inviteEnv()), null);
+    assert.equal(waha.sent.length, 0);
+    assert.equal(supabase.tables.pet_listings.find((r) => r.slug === 'old-1').status, 'expired');
+    assert.equal(supabase.tables.pet_listings.find((r) => r.slug === 'held-1').status, 'notifying');
+  } finally {
+    restore();
+  }
+});
+
+test('the every-minute job tells sellers their pet is live', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  const waits = [];
+
+  try {
+    await worker.scheduled({ cron: '* * * * *' }, inviteEnv(), { waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+    assert.equal(waha.sent.length, 2);
+    assert.equal(supabase.tables.pet_listings[0].status, 'notified');
+  } finally {
+    restore();
+  }
+});
+
+// ── PEOPLE WHO RING THE STORE'S WHATSAPP ─────────────────────────────────────
+
+const ring = (extra = {}, { session = STORE_SESSION, from = CONSIGNOR_CHAT } = {}) => ({
+  event: 'call.received',
+  session,
+  payload: { id: `call-${++counter}`, from, timestamp: 1_700_000_000 + counter, isVideo: false, isGroup: false, ...extra },
+});
+
+async function ringStore(calls, { seedData = petSeed(), env: extraEnv = {}, secret = STORE_SECRET, waha = makeFakeWaha() } = {}) {
+  const supabase = makeFakeSupabase(seedData);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const responses = [];
+  try {
+    for (const c of calls) {
+      const res = await worker.fetch(hook(c, { secret }), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', ...extraEnv }), {});
+      responses.push({ status: res.status, json: await res.json() });
+    }
+  } finally {
+    restore();
+  }
+  return { supabase, waha, responses };
+}
+
+test('somebody who rings a pet store is told, by message, that it does not take calls', async () => {
+  const { waha, responses } = await ringStore([ring()]);
+  assert.equal(responses[0].json.told, true);
+  assert.equal(waha.sent.length, 1);
+  assert.equal(waha.sent[0].chatId, CONSIGNOR_CHAT);
+  assert.equal(waha.sent[0].session, STORE_SESSION);
+  assert.match(waha.sent[0].text, /Sorry, PuppyPlace can't take calls on this number\. Please send us a message here instead/);
+  assert.match(waha.sent[0].text, /Reply \*SELL\*[\s\S]*Browse the pets for sale:\nhttps:\/\/pets\.test\/pets\.html/);
+});
+
+test('a video call, and a caller whose number WhatsApp hides, are told the same', async () => {
+  const hidden = '40218493227115@lid';
+  const { waha } = await ringStore([ring({ isVideo: true }), ring({}, { from: hidden })]);
+  assert.deepEqual(waha.sent.map((m) => m.chatId), [CONSIGNOR_CHAT, hidden]);
+});
+
+test('ringing again within the hour is not told again, but an hour later is', async () => {
+  const { waha, responses } = await ringStore([ring(), ring(), ring()]);
+  assert.equal(waha.sent.length, 1);
+  assert.match(responses[1].json.ignored, /already told this caller/);
+
+  // A notice from two hours ago does not count.
+  const seed = petSeed();
+  seed.bot_messages.push({
+    id: 'old', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.",
+    created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+  });
+  const later = await ringStore([ring()], { seedData: seed });
+  assert.equal(later.waha.sent.length, 1);
+  // And a different caller is told on their own account.
+  const other = await ringStore([ring(), ring({}, { from: '2348000000001@c.us' })]);
+  assert.equal(other.waha.sent.length, 2);
+});
+
+test('calls to a store that takes its own, to groups, and from anyone without the secret, are not answered', async () => {
+  // A store that is not a pet store keeps its calls.
+  const off = await ringStore([ring()], { seedData: petSeed(false) });
+  assert.equal(off.waha.sent.length, 0);
+  assert.match(off.responses[0].json.ignored, /takes its own calls/);
+  // A group call is nobody's seller.
+  assert.equal((await ringStore([ring({ isGroup: true })])).waha.sent.length, 0);
+  assert.equal((await ringStore([ring({}, { from: '120363000000@g.us' })])).waha.sent.length, 0);
+  // The wrong secret is refused and nothing is sent.
+  const bad = await ringStore([ring()], { secret: 'wrong' });
+  assert.equal(bad.responses[0].status, 403);
+  assert.equal(bad.waha.sent.length, 0);
+  // A session no store owns.
+  assert.equal((await ringStore([ring({}, { session: 'ut-nobody' })])).responses[0].status, 403);
+});
+
+// ── keeping the session subscribed to calls ──
+
+const OLD_HOOK = { url: 'https://app.test/api/waha/webhook', events: ['message.any', 'session.status'], customHeaders: [{ name: 'X-Thrift-Secret', value: 'tenant-secret' }] };
+const sessionWith = (events) => ({ [STORE_SESSION]: { name: STORE_SESSION, status: 'WORKING', config: { webhooks: [{ ...OLD_HOOK, events }], noweb: { store: { enabled: true } } } } });
+
+test('a pet store linked before calls were answered is subscribed to them, once, keeping its address and secret', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha({ sessions: sessionWith(['message.any', 'session.status']) });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    assert.deepEqual(await ensurePetCallEvents(wahaEnv()), { updated: 1, failed: 0 });
+    assert.equal(waha.updated.length, 1);
+    const hook = waha.updated[0].config.webhooks[0];
+    assert.deepEqual(hook.events, ['message.any', 'session.status', 'call.received']);
+    assert.equal(hook.url, OLD_HOOK.url);
+    assert.deepEqual(hook.customHeaders, OLD_HOOK.customHeaders);
+    // The rest of the session's setup is kept.
+    assert.deepEqual(waha.updated[0].config.noweb, { store: { enabled: true } });
+
+    // Done: nothing more to do, and no second restart.
+    assert.equal(await ensurePetCallEvents(wahaEnv()), null);
+    assert.equal(waha.updated.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('stores that do not take pets are left alone, and a session with the event already is not touched', async () => {
+  for (const [seedData, sessions] of [
+    [petSeed(false), sessionWith(['message.any', 'session.status'])],
+    [petSeed(true), sessionWith(['message.any', 'session.status', 'call.received'])],
+    [petSeed(true), {}],
+  ]) {
+    const waha = makeFakeWaha({ sessions });
+    const restore = installFetch({ supabase: makeFakeSupabase(seedData), waha, tokens: TOKENS });
+    try {
+      assert.equal(await ensurePetCallEvents(wahaEnv()), null);
+      assert.equal(waha.updated.length, 0);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test('the every-minute job subscribes a pet store to calls on every fifth minute only', async () => {
+  for (const [minute, expected] of [[3, 0], [5, 1], [10, 1], [11, 0]]) {
+    const waha = makeFakeWaha({ sessions: sessionWith(['message.any', 'session.status']) });
+    const restore = installFetch({ supabase: makeFakeSupabase(petSeed()), waha, tokens: TOKENS, petSite: makeFakePetSite() });
+    const waits = [];
+    try {
+      await worker.scheduled({ cron: '* * * * *', scheduledTime: Date.UTC(2026, 9, 8, 10, minute) }, wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' }), { waitUntil: (p) => waits.push(p) });
+      await Promise.all(waits);
+      assert.equal(waha.updated.length, expected, `minute ${minute}`);
+    } finally {
+      restore();
+    }
+  }
+});
+
+// ── DECLINING THE CALL, ONLY FOR SOMEBODY IN A CHAT WITH THE BOT ─────────────
+
+const chatting = (chat, state = 'pet_breed', extra = {}) => ({
+  ...petSeed(),
+  bot_conversations: [{ tenant_id: TENANT, chat_id: chat, state, draft: {}, updated_at: new Date().toISOString(), paused_until: null, ...extra }],
+});
+
+test('a caller who is in the middle of a conversation with the bot has the call declined, and is told', async () => {
+  const { waha } = await ringStore([ring()], { seedData: chatting(CONSIGNOR_CHAT) });
+  assert.equal(waha.rejected.length, 1);
+  assert.deepEqual(waha.rejected[0], { session: STORE_SESSION, from: CONSIGNOR_CHAT, id: `call-${counter}` });
+  assert.equal(waha.sent.length, 1);
+  assert.match(waha.sent[0].text, /can't take calls/);
+});
+
+test('anybody else\'s call is left to ring: told, never declined', async () => {
+  for (const [label, seedData] of [
+    ['no conversation at all', petSeed()],
+    ['a finished one', chatting(CONSIGNOR_CHAT, 'idle')],
+    ['one left for hours', chatting(CONSIGNOR_CHAT, 'pet_breed', { updated_at: new Date(Date.now() - 7 * 3_600_000).toISOString() })],
+    ['one the owner has stepped into', chatting(CONSIGNOR_CHAT, 'pet_breed', { paused_until: new Date(Date.now() + 3_600_000).toISOString() })],
+    ['somebody else\'s conversation', chatting('2348000000001@c.us')],
+  ]) {
+    const { waha } = await ringStore([ring()], { seedData });
+    assert.equal(waha.rejected.length, 0, label);
+    assert.equal(waha.sent.length, 1, label);
+  }
+});
+
+test('every call from somebody in a chat is declined, though they are only told once an hour', async () => {
+  const { waha } = await ringStore([ring(), ring(), ring()], { seedData: chatting(CONSIGNOR_CHAT) });
+  assert.equal(waha.rejected.length, 3);
+  assert.equal(waha.sent.length, 1);
+});
+
+test('the chat and the call may name the same person differently, and are still matched', async () => {
+  // The conversation is under their hidden WhatsApp id; the call arrives under their number.
+  const hidden = '40218493227115@lid';
+  const viaNumber = await ringStore([ring()], { seedData: chatting(hidden), waha: makeFakeWaha({ lids: { [hidden]: CONSIGNOR_CHAT } }) });
+  assert.equal(viaNumber.waha.rejected.length, 1);
+  assert.equal(viaNumber.waha.rejected[0].from, CONSIGNOR_CHAT);
+  // And the other way: the call under the hidden id, the chat under the number.
+  const viaId = await ringStore([ring({}, { from: hidden })], { seedData: chatting(CONSIGNOR_CHAT), waha: makeFakeWaha({ lids: { [hidden]: CONSIGNOR_CHAT } }) });
+  assert.equal(viaId.waha.rejected.length, 1);
+  // A hidden id nobody can resolve is not guessed at.
+  const unknown = await ringStore([ring()], { seedData: chatting('999@lid'), waha: makeFakeWaha({ lids: {} }) });
+  assert.equal(unknown.waha.rejected.length, 0);
+  assert.equal(unknown.waha.sent.length, 1);
+});
+
+test('a call WhatsApp will not let us decline still gets its message', async () => {
+  const { waha } = await ringStore([ring()], { seedData: chatting(CONSIGNOR_CHAT), waha: makeFakeWaha({ rejectStatus: 500 }) });
+  assert.equal(waha.rejected.length, 1);
+  assert.equal(waha.sent.length, 1);
+  assert.match(waha.sent[0].text, /can't take calls/);
+});
+
+test('a store that takes its own calls never has one declined', async () => {
+  const seed = { ...chatting(CONSIGNOR_CHAT), tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled: false }] };
+  const { waha } = await ringStore([ring()], { seedData: seed });
+  assert.equal(waha.rejected.length, 0);
+  assert.equal(waha.sent.length, 0);
 });

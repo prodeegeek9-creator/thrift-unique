@@ -213,7 +213,9 @@ left out and the seller is told which; at least one photo must show the face,
 and that one goes first, since buyers see it first. The summary then says
 "✅ checked". It never stops a listing: with no key, or if the model refuses or
 times out, the photos go through unchecked, and the owner alert says they were
-not checked automatically so they are looked at before approving. Set
+not checked automatically, and why (the key is not set on the Worker, OpenAI's
+own error such as `HTTP 401`, or the photos could not be read back), so they
+are looked at before approving and the cause can be fixed. Set
 `OPENAI_API_KEY` (the same key the photo-review service uses is fine) as a
 Worker secret; `PET_VISION_MODEL` and `PET_VISION_DETAIL` (`low`, `high`,
 `auto`) override the defaults, and the three `OPENAI_PRICE_*_PER_M` values put
@@ -230,13 +232,35 @@ store; a refusal by WhatsApp is retried up to three times; a row left
 `sending` by a crash is never sent again. Rows are added by the platform, e.g.
 `insert into pet_invites (tenant_id, phone) values ('<id>', '2348031234567');`
 
-**The seller is told when it is live.** When the store approves a listing on
-its site, the site POSTs `{ whatsapp, breed, listing_type, url }` to
-`/api/waha/pet-live` here, with the same shared key, and the seller gets a
-WhatsApp from the store's own number with their link and a push to share it,
-then the link again on its own in a message made to be forwarded. The number is the one buyers were given,
-which is the seller's own unless they chose another. It names the store with
-`store` (its slug), or uses the only one that has `pet_listings` on.
+**The seller is told when it is live.** Each listing sent to the site is
+remembered in `pet_listings` (migration 0051) with the chat it came from. Once
+a minute (`routes/petListings.js`) the Worker asks the site
+(`GET <PET_LISTINGS_URL>/status?slugs=…`, same shared key) which of the ones
+still waiting are live, and each seller whose listing is gets, in the same chat,
+their link with a push to share it on Status, Instagram, Facebook and with
+friends and groups, then the link again on its own in a message made to be
+forwarded. It asks rather than waiting to be told, so it does not matter how
+the store approved the listing (a tick in the admin, the edit form, the
+database) and nothing depends on the site reaching this Worker. A listing
+deleted on the site is dropped; one nobody approved in 60 days is given up on;
+a notice WhatsApp refuses is retried up to five times; a row left `notifying`
+by a crash is never sent again.
+
+**Calls are explained, not answered.** Somebody who rings a pet store's
+WhatsApp gets a message that it does not take calls on that number, to send a
+message instead (and that *SELL* lists a pet), with the pets-for-sale link for
+buyers: at most once an hour for each caller. WAHA sends calls as the
+`call.received` event, which new sessions are set up to send; a pet store
+linked earlier is subscribed by `routes/petCalls.js` on the first fifth minute
+it is seen without it (WAHA restarts that session for a few seconds, once).
+Only stores with `pet_listings` on are answered; any other store keeps its
+calls. A call from somebody **in the middle of a conversation with the bot** (a
+live pet conversation, not finished, not left for hours, not one the owner has
+stepped into) is also declined (`POST /api/rejectCall`), every time; anyone
+else's call is left to ring and only told by message. The chat and the call
+may name the same person differently (a number and a hidden WhatsApp id), so
+when they do not match, the numbers behind them are compared. If WhatsApp will
+not decline, the message still goes.
 
 ## Structure
 

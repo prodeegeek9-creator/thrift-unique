@@ -89,9 +89,19 @@ function cost(cfg, input, cached, output) {
   return Number((((input - cached) * priceInput + cached * priceCached + output * priceOutput) / 1e6).toFixed(6));
 }
 
+// What OpenAI said was wrong, in a few words and never with a key in it.
+function reason(text) {
+  let message = '';
+  try {
+    message = JSON.parse(text)?.error?.message ?? '';
+  } catch { /* not JSON */ }
+  return String(message).replace(/sk-[A-Za-z0-9_*.-]+/g, 'sk-…').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
 // photos: [{ bytes, type } | null] →
-//   { verdicts: [{ shows_pet, kind, face_visible } | null, …], usage } — one verdict per
-//   photo — or null when the whole check could not be done.
+//   { verdicts: [{ shows_pet, kind, face_visible } | null, …], usage } — one verdict per photo;
+//   { error } — a few words on why the check could not be done, for whoever has to fix it;
+//   null when there was nothing to check (no key, no photo that could be read).
 export async function checkPetPhotos(cfg, photos) {
   if (!cfg.openaiKey) return null;
   const usable = photos.map((p, i) => ({ p, i })).filter(({ p }) => p);
@@ -124,14 +134,15 @@ export async function checkPetPhotos(cfg, photos) {
       signal: AbortSignal.timeout(25_000),
     });
     if (!res.ok) {
-      console.error('pet photo check refused:', res.status, (await res.text().catch(() => '')).slice(0, 200));
-      return null;
+      const why = reason(await res.text().catch(() => ''));
+      console.error('pet photo check refused:', res.status, why);
+      return { error: `OpenAI said HTTP ${res.status}${why ? `: ${why}` : ''}` };
     }
 
     const body = await res.json();
     const text = body?.choices?.[0]?.message?.content;
     const answers = typeof text === 'string' ? JSON.parse(text)?.photos : null;
-    if (!Array.isArray(answers)) return null;
+    if (!Array.isArray(answers)) return { error: "OpenAI's answer could not be read" };
 
     // Answers are by position among the photos sent; put them back by the
     // photo's own position.
@@ -162,6 +173,6 @@ export async function checkPetPhotos(cfg, photos) {
     };
   } catch (err) {
     console.error('pet photo check failed:', err?.message ?? err);
-    return null;
+    return { error: err instanceof SyntaxError ? "OpenAI's answer could not be read" : `could not reach OpenAI (${String(err?.message ?? err).slice(0, 80)})` };
   }
 }

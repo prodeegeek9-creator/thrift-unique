@@ -150,13 +150,17 @@ export function petRejectedMessage(details) {
 }
 
 // For the store owner, on the platform number.
-export function newPetListingMessage({ breed, price, listing_type, location }, { verified } = {}) {
+export function newPetListingMessage({ breed, price, listing_type, location }, { verified, note } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
     (location ? `, ${location}` : '') +
     '. Approve it in your site admin.' +
-    (verified === undefined ? '' : verified ? '\n\n📸 Photos checked: a real pet, face visible.' : "\n\n📸 Photos weren't checked automatically — look at them before approving.")
+    (verified === undefined
+      ? ''
+      : verified
+        ? '\n\n📸 Photos checked: a real pet, face visible.'
+        : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`)
   );
 }
 
@@ -175,6 +179,18 @@ export function petLiveMessage({ store, breed, listing_type, url }) {
 // Made to be forwarded as it stands: the picture and details come from the link's preview.
 export function petShareMessage({ breed, listing_type, url }) {
   return `🐾 ${breed} ${listing_type === 'adoption' ? 'available for adoption' : 'for sale'} on PuppyPlace. See photos and details:\n${url}`;
+}
+
+// Said to somebody who rings the store's WhatsApp. The marker is what the
+// once-an-hour check looks for in what was already sent.
+export const NO_CALLS_MARKER = "can't take calls";
+
+export function petNoCallsMessage({ store, browseUrl }) {
+  return (
+    `📵 Sorry, ${store} ${NO_CALLS_MARKER} on this number. Please send us a message here instead and we'll reply as soon as we can.\n\n` +
+    'Selling a pet? Reply *SELL* and I will list it for you, free.' +
+    (browseUrl ? `\n\nLooking to buy? Browse the pets for sale:\n${browseUrl}` : '')
+  );
 }
 
 // To somebody who messaged the store about selling a pet before the bot was
@@ -337,6 +353,8 @@ function whyNot(draft, v) {
 // absent when it was not (no check set up, or it could not be done).
 export function petPhotosDone(draft, images, ctx = {}) {
   const store = ctx.store ?? 'the store';
+  // Why the photos were not looked at, kept to tell the store with the listing.
+  draft = { ...draft, checkNote: ctx.checkNote ?? undefined };
   if (!images?.length) return reply('pet_photos', { ...draft, images: [] }, SAY.photosNotSaved);
 
   const keep = [];
@@ -427,6 +445,7 @@ function submit(draft) {
     action: {
       type: 'pet_listing',
       verified: Boolean(draft.verified),
+      checkNote: draft.checkNote ?? null,
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,

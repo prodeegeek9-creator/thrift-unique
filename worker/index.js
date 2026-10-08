@@ -6,6 +6,8 @@
 // Supabase-through-RLS, and to nothing else.
 
 import { sendPetInvites } from './routes/petInvites.js';
+import { notifyLivePets } from './routes/petListings.js';
+import { ensurePetCallEvents } from './routes/petCalls.js';
 import { ConfigError } from './lib/env.js';
 import { json } from './lib/http.js';
 import { handlePaystackWebhook } from './routes/paystack.js';
@@ -89,6 +91,22 @@ export default {
         sendPetInvites(env)
           .then((r) => r && console.log(`pet invites: ${JSON.stringify(r)}`))
           .catch((err) => console.error('pet invites:', err?.message ?? err))
+      );
+      // Pet stores' WhatsApp told to send call events, every fifth minute
+      // (routes/petCalls.js). Applying it restarts the session for a few
+      // seconds, and only the first time.
+      if (new Date(event.scheduledTime ?? Date.now()).getUTCMinutes() % 5 === 0) {
+        ctx.waitUntil(
+          ensurePetCallEvents(env)
+            .then((r) => r && console.log(`pet call events: ${JSON.stringify(r)}`))
+            .catch((err) => console.error('pet call events:', err?.message ?? err))
+        );
+      }
+      // Sellers whose pet the store has just approved (routes/petListings.js).
+      ctx.waitUntil(
+        notifyLivePets(env)
+          .then((r) => r && console.log(`pet listings: ${JSON.stringify(r)}`))
+          .catch((err) => console.error('pet listings:', err?.message ?? err))
       );
       return;
     }

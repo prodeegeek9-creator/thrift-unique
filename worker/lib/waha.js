@@ -133,7 +133,7 @@ export async function createSession(cfg, tenant, { webhookUrl, secret }) {
             // message.any rather than message: it also carries what the store
             // sends, which is how the bot steps back when the owner answers a
             // chat themselves.
-            events: ['message.any', 'session.status'],
+            events: ['message.any', 'session.status', 'call.received'],
             customHeaders: [{ name: 'X-Thrift-Secret', value: secret }],
           },
         ],
@@ -168,6 +168,29 @@ export async function ensureStoreWebhook(cfg, tenant, { webhookUrl, secret }) {
             customHeaders: [{ name: 'X-Thrift-Secret', value: secret }],
           },
         ],
+      },
+    },
+  });
+  return true;
+}
+
+// A session linked before calls were answered does not send call events.
+// Adds the one event to the hook it already has, keeping its address and its
+// secret, so nothing needs to be known about either. WAHA restarts the session
+// to apply it, which is a few seconds, and once: after this the event is there.
+// True if it had to be added.
+export async function ensureCallEvents(cfg, session) {
+  const found = await getSession(cfg, session);
+  const hooks = found?.config?.webhooks ?? [];
+  const target = hooks.find((h) => (h.events ?? []).includes('message.any'));
+  if (!found || !target || (target.events ?? []).includes('call.received')) return false;
+  const call = client(cfg);
+  await call(`/api/sessions/${encodeURIComponent(session)}`, {
+    method: 'PUT',
+    body: {
+      config: {
+        ...(found.config ?? {}),
+        webhooks: hooks.map((h) => (h === target ? { ...h, events: [...h.events, 'call.received'] } : h)),
       },
     },
   });
@@ -265,6 +288,12 @@ export async function sendText(cfg, session, to, text, { replyTo } = {}) {
   });
 }
 
+// Declines a call that is ringing: `from` and `id` are the call event's own.
+export async function rejectCall(cfg, session, { from, id }) {
+  const call = client(cfg);
+  return call('/api/rejectCall', { method: 'POST', body: { session, from, id } });
+}
+
 // A photo in a chat, by URL (WAHA fetches it). Used for the share kit.
 export async function sendImage(cfg, session, to, { url, caption = '', mimetype = 'image/jpeg' }) {
   const call = client(cfg);
@@ -338,6 +367,14 @@ export function parseEvent(body) {
       session,
       status: p.status ?? p.state ?? null,
     };
+  }
+
+  // Somebody ringing the number. Only for stores that ask for it (routes/waha.js):
+  // WhatsApp calls cannot be answered by a bot, only explained.
+  if (event === 'call.received') {
+    const from = p.from ?? null;
+    if (!from || !/@(c\.us|lid)$/.test(String(from)) || p.isGroup === true) return null;
+    return { kind: 'call', session, id: p.id ?? null, from: String(from), video: p.isVideo === true };
   }
 
   // 'message' is what the platform session sends; a store's own session sends
