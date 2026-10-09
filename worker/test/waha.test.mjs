@@ -2480,8 +2480,14 @@ async function ringStore(calls, { seedData = petSeed(), env: extraEnv = {}, secr
   return { supabase, waha, responses };
 }
 
-test('somebody who rings a pet store is told, by message, that it does not take calls', async () => {
-  const { waha, responses } = await ringStore([ring()]);
+// Somebody the bot has dealt with before: they sold a pet through it.
+const knownCallers = (...chats) => ({
+  ...petSeed(),
+  pet_sellers: chats.map((chat_id) => ({ tenant_id: TENANT, chat_id, name: 'Ade', updated_at: '2026-10-01T10:00:00Z' })),
+});
+
+test('somebody the bot has dealt with who rings a pet store is told, by message, that it does not take calls', async () => {
+  const { waha, responses } = await ringStore([ring()], { seedData: knownCallers(CONSIGNOR_CHAT) });
   assert.equal(responses[0].json.told, true);
   assert.equal(waha.sent.length, 1);
   assert.equal(waha.sent[0].chatId, CONSIGNOR_CHAT);
@@ -2492,17 +2498,17 @@ test('somebody who rings a pet store is told, by message, that it does not take 
 
 test('a video call, and a caller whose number WhatsApp hides, are told the same', async () => {
   const hidden = '40218493227115@lid';
-  const { waha } = await ringStore([ring({ isVideo: true }), ring({}, { from: hidden })]);
+  const { waha } = await ringStore([ring({ isVideo: true }), ring({}, { from: hidden })], { seedData: knownCallers(CONSIGNOR_CHAT, hidden) });
   assert.deepEqual(waha.sent.map((m) => m.chatId), [CONSIGNOR_CHAT, hidden]);
 });
 
 test('ringing again within the hour is not told again, but an hour later is', async () => {
-  const { waha, responses } = await ringStore([ring(), ring(), ring()]);
+  const { waha, responses } = await ringStore([ring(), ring(), ring()], { seedData: knownCallers(CONSIGNOR_CHAT) });
   assert.equal(waha.sent.length, 1);
   assert.match(responses[1].json.ignored, /already told this caller/);
 
   // A notice from two hours ago does not count.
-  const seed = petSeed();
+  const seed = knownCallers(CONSIGNOR_CHAT);
   seed.bot_messages.push({
     id: 'old', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.",
     created_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
@@ -2510,20 +2516,20 @@ test('ringing again within the hour is not told again, but an hour later is', as
   const later = await ringStore([ring()], { seedData: seed });
   assert.equal(later.waha.sent.length, 1);
   // And a different caller is told on their own account.
-  const other = await ringStore([ring(), ring({}, { from: '2348000000001@c.us' })]);
+  const other = await ringStore([ring(), ring({}, { from: '2348000000001@c.us' })], { seedData: knownCallers(CONSIGNOR_CHAT, '2348000000001@c.us') });
   assert.equal(other.waha.sent.length, 2);
 });
 
 test('calls to a store that takes its own, to groups, and from anyone without the secret, are not answered', async () => {
   // A store that is not a pet store keeps its calls.
-  const off = await ringStore([ring()], { seedData: petSeed(false) });
+  const off = await ringStore([ring()], { seedData: { ...knownCallers(CONSIGNOR_CHAT), tenant_features: [{ tenant_id: TENANT, flag: 'pet_listings', enabled: false }] } });
   assert.equal(off.waha.sent.length, 0);
   assert.match(off.responses[0].json.ignored, /takes its own calls/);
   // A group call is nobody's seller.
-  assert.equal((await ringStore([ring({ isGroup: true })])).waha.sent.length, 0);
-  assert.equal((await ringStore([ring({}, { from: '120363000000@g.us' })])).waha.sent.length, 0);
+  assert.equal((await ringStore([ring({ isGroup: true })], { seedData: knownCallers(CONSIGNOR_CHAT) })).waha.sent.length, 0);
+  assert.equal((await ringStore([ring({}, { from: '120363000000@g.us' })], { seedData: knownCallers('120363000000@g.us') })).waha.sent.length, 0);
   // The wrong secret is refused and nothing is sent.
-  const bad = await ringStore([ring()], { secret: 'wrong' });
+  const bad = await ringStore([ring()], { secret: 'wrong', seedData: knownCallers(CONSIGNOR_CHAT) });
   assert.equal(bad.responses[0].status, 403);
   assert.equal(bad.waha.sent.length, 0);
   // A session no store owns.
@@ -2605,17 +2611,33 @@ test('a caller who is in the middle of a conversation with the bot has the call 
   assert.match(waha.sent[0].text, /can't take calls/);
 });
 
-test('anybody else\'s call is left to ring: told, never declined', async () => {
+test('a caller the bot has dealt with, but not in a chat now, is left to ring: told, never declined', async () => {
   for (const [label, seedData] of [
-    ['no conversation at all', petSeed()],
-    ['a finished one', chatting(CONSIGNOR_CHAT, 'idle')],
+    ['a finished conversation', chatting(CONSIGNOR_CHAT, 'idle')],
     ['one left for hours', chatting(CONSIGNOR_CHAT, 'pet_breed', { updated_at: new Date(Date.now() - 7 * 3_600_000).toISOString() })],
     ['one the owner has stepped into', chatting(CONSIGNOR_CHAT, 'pet_breed', { paused_until: new Date(Date.now() + 3_600_000).toISOString() })],
-    ['somebody else\'s conversation', chatting('2348000000001@c.us')],
+    ['a pet sent earlier', { ...petSeed(), pet_listings: [{ tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, slug: 'a-1', status: 'notified' }] }],
+    ['a name given earlier', knownCallers(CONSIGNOR_CHAT)],
+    ['an invitation sent to their number', { ...petSeed(), pet_invites: [{ id: 'i1', tenant_id: TENANT, phone: CONSIGNOR_PHONE.replace(/\D/g, ''), status: 'sent' }] }],
   ]) {
     const { waha } = await ringStore([ring()], { seedData });
     assert.equal(waha.rejected.length, 0, label);
     assert.equal(waha.sent.length, 1, label);
+  }
+});
+
+test('anybody else\'s call is left entirely alone: not told, not declined', async () => {
+  for (const [label, seedData] of [
+    ['nobody has ever written', petSeed()],
+    ['somebody else\'s conversation', chatting('2348000000001@c.us')],
+    ['somebody else\'s listing', knownCallers('2348000000001@c.us')],
+    ['an invitation that was never sent', { ...petSeed(), pet_invites: [{ id: 'i1', tenant_id: TENANT, phone: CONSIGNOR_PHONE.replace(/\D/g, ''), status: 'pending' }] }],
+    ['only the call notice itself', { ...petSeed(), bot_messages: [{ id: 'm', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.", created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() }] }],
+  ]) {
+    const { waha, responses } = await ringStore([ring(), ring()], { seedData });
+    assert.equal(waha.rejected.length, 0, label);
+    assert.equal(waha.sent.length, 0, label);
+    assert.match(responses[0].json.ignored, /not somebody the bot has dealt with/, label);
   }
 });
 
@@ -2637,7 +2659,10 @@ test('the chat and the call may name the same person differently, and are still 
   // A hidden id nobody can resolve is not guessed at.
   const unknown = await ringStore([ring()], { seedData: chatting('999@lid'), waha: makeFakeWaha({ lids: {} }) });
   assert.equal(unknown.waha.rejected.length, 0);
-  assert.equal(unknown.waha.sent.length, 1);
+  assert.equal(unknown.waha.sent.length, 0);
+  // The same for a listing held under a hidden id when the call arrives under the number.
+  const listed = await ringStore([ring()], { seedData: knownCallers(hidden), waha: makeFakeWaha({ lids: { [hidden]: CONSIGNOR_CHAT } }) });
+  assert.equal(listed.waha.sent.length, 1);
 });
 
 test('a call WhatsApp will not let us decline still gets its message', async () => {
