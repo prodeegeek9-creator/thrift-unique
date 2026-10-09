@@ -268,21 +268,25 @@ deleted on the site is dropped; one nobody approved in 60 days is given up on;
 a notice WhatsApp refuses is retried up to five times; a row left `notifying`
 by a crash is never sent again.
 
-**Calls are explained, not answered.** Somebody who rings a pet store's
-WhatsApp gets a message that it does not take calls on that number, to send a
-message instead (and that *SELL* lists a pet), with the pets-for-sale link for
-buyers: at most once an hour for each caller. WAHA sends calls as the
-`call.received` event, which new sessions are set up to send; a pet store
-linked earlier is subscribed by `routes/petCalls.js` on the first fifth minute
-it is seen without it (WAHA restarts that session for a few seconds, once).
-Only stores with `pet_listings` on are answered; any other store keeps its
-calls. A call from somebody **in the middle of a conversation with the bot** (a
-live pet conversation, not finished, not left for hours, not one the owner has
-stepped into) is also declined (`POST /api/rejectCall`), every time; anyone
-else's call is left to ring and only told by message. The chat and the call
-may name the same person differently (a number and a hidden WhatsApp id), so
-when they do not match, the numbers behind them are compared. If WhatsApp will
-not decline, the message still goes.
+**Calls are explained, not answered, for people the bot has dealt with.**
+Somebody the bot knows who rings a pet store's WhatsApp gets a message that it
+does not take calls on that number, to send a message instead (and that *SELL*
+lists a pet), with the pets-for-sale link for buyers: at most once an hour for
+each caller. "Knows" means they have a conversation with the bot (any state), a
+pet or a name saved from a listing, or an invitation sent to their number
+(`knownToBot` in `routes/waha.js`). **Anybody else is left alone**: a friend,
+family, a supplier or a buyer who has never used the bot rings the owner's
+phone as normal and gets nothing. The notice itself does not make somebody
+known. WAHA sends calls as the `call.received` event, which new sessions are
+set up to send; a pet store linked earlier is subscribed by `routes/petCalls.js`
+on the first fifth minute it is seen without it (WAHA restarts that session for
+a few seconds, once). Only stores with `pet_listings` on are involved; any other
+store keeps its calls. A call from somebody **in the middle of a conversation
+with the bot** (a live pet conversation, not finished, not left for hours, not
+one the owner has stepped into) is also declined (`POST /api/rejectCall`), every
+time. The chat and the call may name the same person differently (a number and
+a hidden WhatsApp id), so when they do not match, the numbers behind them are
+compared. If WhatsApp will not decline, the message still goes.
 
 ## Structure
 

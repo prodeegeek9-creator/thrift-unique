@@ -1158,10 +1158,13 @@ async function petStore(cfg, tenant) {
   return Boolean(row?.enabled);
 }
 
-// Somebody rang a pet store's WhatsApp. A bot cannot take a call, so the caller
-// is told, in a message, that the number is not for calls and what to do
-// instead. Once an hour at most for each caller: somebody ringing four times
-// in a minute needs one message, not four. Other stores take their own calls.
+// Somebody rang a pet store's WhatsApp. A bot cannot take a call, so a caller the
+// bot has dealt with (somebody selling a pet, or invited to) is told, in a
+// message, that the number is not for calls and what to do instead. Once an hour
+// at most for each caller: somebody ringing four times in a minute needs one
+// message, not four. Anybody else (a friend, family, a buyer, a supplier) rings
+// the owner's phone as normal and hears nothing from the bot. Other stores take
+// their own calls.
 async function callReceived(cfg, event) {
   const tenant = await db(cfg).one(
     'tenants',
@@ -1172,11 +1175,18 @@ async function callReceived(cfg, event) {
   }
   if (!(await petStore(cfg, tenant))) return json({ ok: true, ignored: 'this store takes its own calls' });
 
+  // Only people the bot has dealt with are answered at all. A call from anybody
+  // else is the owner's own business and is left alone.
+  const active = await inActiveBotChat(cfg, tenant, event);
+  if (!active && !(await knownToBot(cfg, tenant, event))) {
+    return json({ ok: true, ignored: 'not somebody the bot has dealt with' });
+  }
+
   // Declined only for somebody in the middle of a conversation with the bot:
   // they are already being helped here, and a call is not how to carry on.
   // Everybody else's call is left to ring, and told only by message. Every such
   // call is declined, not once an hour.
-  const declined = (await inActiveBotChat(cfg, tenant, event))
+  const declined = active
     ? await rejectCall(cfg, tenant.waha_session, { from: event.from, id: event.id }).then(
         () => true,
         (err) => {
@@ -1199,6 +1209,39 @@ async function callReceived(cfg, event) {
   const browseUrl = cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
   await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl }), { session: tenant.waha_session });
   return json({ ok: true, declined, told: true });
+}
+
+// Has the bot dealt with this caller before: a conversation with it, a pet they
+// listed, a name they gave, or an invitation sent to their number? Somebody who
+// merely got the "can't take calls" notice is not counted, or one wrong guess
+// would make every later call from them look like business. The call arrives
+// under one id and what we hold may be under another (a number and its hidden
+// WhatsApp id), so the numbers behind them are compared.
+async function knownToBot(cfg, tenant, event) {
+  const caller = await phoneFor(cfg, event.session, event.from).catch(() => null);
+  const ids = [...new Set([event.from, caller ? chatId(caller) : null].filter(Boolean))];
+  const own = `tenant_id=eq.${tenant.id}`;
+
+  for (const id of ids) {
+    const chat = `chat_id=eq.${encodeURIComponent(id)}`;
+    for (const table of ['bot_conversations', 'pet_sellers', 'pet_listings']) {
+      if (await db(cfg).one(table, `${own}&${chat}&select=chat_id`).catch(() => null)) return true;
+    }
+  }
+  if (!caller) return false;
+
+  const invited = await db(cfg).one('pet_invites', `${own}&phone=eq.${encodeURIComponent(caller)}&status=eq.sent&select=phone`).catch(() => null);
+  if (invited) return true;
+
+  // The call came under a number and what we hold is under a hidden id.
+  if (event.from.endsWith('@lid')) return false;
+  for (const table of ['pet_sellers', 'pet_listings', 'bot_conversations']) {
+    const rows = await db(cfg).select(table, `${own}&select=chat_id&limit=200`).catch(() => []);
+    for (const id of new Set(rows.map((x) => x.chat_id).filter((c) => String(c).endsWith('@lid')))) {
+      if ((await phoneFor(cfg, event.session, id).catch(() => null)) === caller) return true;
+    }
+  }
+  return false;
 }
 
 // Is this caller partway through a conversation with the bot? A live pet
