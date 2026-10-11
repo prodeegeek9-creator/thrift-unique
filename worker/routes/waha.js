@@ -625,6 +625,26 @@ async function persist(cfg, tenant, chatId, previous, result) {
   );
 }
 
+// How many times a pet message tries to save before WAHA is asked to retry it.
+// A seller can send six photos in a second.
+const MAX_SAVE_ATTEMPTS = 12;
+
+// persist(), but only if nobody else has saved this conversation since it was
+// read (updated_at, which the database moves on every save). False means they
+// did, and the caller should read it again.
+async function persistIfUnchanged(cfg, tenant, chatId, previous, result) {
+  if (!previous?.updated_at) {
+    await persist(cfg, tenant, chatId, previous, result);
+    return true;
+  }
+  const rows = await db(cfg).update(
+    'bot_conversations',
+    `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(chatId)}&updated_at=eq.${encodeURIComponent(previous.updated_at)}`,
+    { state: result.state, draft: result.draft ?? {} }
+  );
+  return rows.length > 0;
+}
+
 // Send, and record what was sent. True if WhatsApp took it.
 //
 // From the platform number unless a session is given — the intake answers
@@ -1270,25 +1290,50 @@ async function petIntake(cfg, event, tenant, conversation) {
   const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
   const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from) };
 
-  const result = petIntakeStep(conversation, event, ctx);
-  if (!result) return json({ ok: true, ignored: 'not a pet for sale' });
+  // Photos sent together arrive as separate webhooks that this Worker handles at
+  // the same time. Each reads the conversation, adds its photo and writes it back,
+  // so without care the last to finish wins and the others' photos are lost (nine
+  // sent, two kept). The write is therefore conditional on the conversation being
+  // as it was read; one that lost the race reads the new draft and works out its
+  // answer again, so every photo lands.
+  let logged = false;
+  let result = null;
+  for (let attempt = 0; ; attempt++) {
+    result = petIntakeStep(conversation, event, ctx);
+    if (!result) return json({ ok: true, ignored: 'not a pet for sale' });
 
-  // The same replay guard as the other intakes.
-  const logged = await db(cfg).insert(
-    'bot_messages',
-    {
-      tenant_id: tenant.id,
-      chat_id: event.from,
-      external_id: inboundId(event),
-      direction: 'in',
-      body: event.body ?? null,
-      has_media: Boolean(event.hasMedia),
-    },
-    { onConflict: 'external_id' }
-  );
-  if (!logged) return json({ ok: true, replayed: true });
+    // The same replay guard as the other intakes.
+    if (!logged) {
+      const first = await db(cfg).insert(
+        'bot_messages',
+        {
+          tenant_id: tenant.id,
+          chat_id: event.from,
+          external_id: inboundId(event),
+          direction: 'in',
+          body: event.body ?? null,
+          has_media: Boolean(event.hasMedia),
+        },
+        { onConflict: 'external_id' }
+      );
+      if (!first) return json({ ok: true, replayed: true });
+      logged = true;
+    }
 
-  await persist(cfg, tenant, event.from, conversation, result);
+    if (await persistIfUnchanged(cfg, tenant, event.from, conversation, result)) break;
+
+    if (attempt + 1 >= MAX_SAVE_ATTEMPTS) {
+      // Let WAHA's retry be handled afresh rather than dropped as a replay.
+      await db(cfg).del('bot_messages', `tenant_id=eq.${tenant.id}&external_id=eq.${encodeURIComponent(inboundId(event))}`).catch(() => {});
+      console.error('pet conversation busy; asking WAHA to retry', event.from);
+      return json({ ok: false, error: 'conversation busy' }, 503);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 15 + Math.random() * 60 * (attempt + 1)));
+    conversation = await db(cfg).one(
+      'bot_conversations',
+      `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&select=state,draft,updated_at,paused_until`
+    );
+  }
 
   const own = { session: tenant.waha_session };
   for (const reply of result.replies) await say(cfg, tenant, event.from, reply, own);
