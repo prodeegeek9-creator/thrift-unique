@@ -13,6 +13,8 @@ export const SERVICE_KEY = 'service-key-for-tests';
 
 // `rpcs` answers named functions: { public_store: (args, tables) => value }.
 // Any other function answers [], as a set-returning function with no rows.
+let touches = 0;
+
 export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
   const tables = {
     tenants: [],
@@ -240,7 +242,10 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
       if (col && patch[col] != null && tables[table].some((r) => !hit.includes(r) && r[col] === patch[col])) {
         return new Response(JSON.stringify({ code: '23505' }), { status: 409 });
       }
-      for (const r of hit) Object.assign(r, patch);
+      // The database moves updated_at on every save (a trigger), which the
+      // conditional saves in the pet intake rely on.
+      const moved = table === 'bot_conversations' ? { updated_at: `${new Date().toISOString().slice(0, -1)}${String(++touches % 1000).padStart(3, '0')}+00:00` } : {};
+      for (const r of hit) Object.assign(r, patch, moved);
       return minimal
         ? new Response(null, { status: 204 })
         : new Response(JSON.stringify(hit), { status: 200 });

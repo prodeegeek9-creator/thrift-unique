@@ -2110,6 +2110,55 @@ test('a check that cannot be done never stops a listing, and the store is told w
   }
 });
 
+// ── PHOTOS SENT ALL AT ONCE ──────────────────────────────────────────────────
+
+test('photos that arrive together are all kept, not just the last to be saved', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  const e = wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' });
+
+  try {
+    // Up to the photo question, one message at a time.
+    await toPetStore(petChatThrough([]).slice(0, -1));
+    // Then six photos at once, as WhatsApp delivers a batch.
+    const batch = [1, 2, 3, 4, 5, 6].map((n) => worker.fetch(hook(pic(n), { secret: STORE_SECRET }), e, {}));
+    const responses = await Promise.all(batch);
+    assert.ok(responses.every((r) => r.status === 200));
+
+    const row = supabase.tables.bot_conversations.find((r) => r.chat_id === CONSIGNOR_CHAT);
+    assert.equal(row.draft.images.length, 6);
+    // The count the seller is told never repeats (the six-photo limit is announced instead of a count).
+    const told = textsTo(waha, CONSIGNOR_CHAT).filter((t) => /^\d photos\./.test(t));
+    assert.equal(new Set(told).size, told.length);
+    assert.ok(told.some((t) => t.startsWith('5 photos')));
+  } finally {
+    restore();
+  }
+});
+
+test('photos sent in a burst all reach the site', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  const e = wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' });
+
+  try {
+    await toPetStore(petChatThrough([]).slice(0, -1));
+    await Promise.all([1, 2, 3, 4].map((n) => worker.fetch(hook(pic(n), { secret: STORE_SECRET }), e, {})));
+    // Two more, a moment later, at the same time as each other.
+    await Promise.all([5, 6].map((n) => worker.fetch(hook(pic(n), { secret: STORE_SECRET }), e, {})));
+    await toPetStore([fromConsignor('done'), ...NAME_TO_YES]);
+
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.photos.length, 6);
+  } finally {
+    restore();
+  }
+});
+
 // ── BREED GUIDES: WRITTEN ONCE PER BREED, APPROVED BY THE OWNER ──────────────
 
 const GUIDE_ENV = { OPENAI_API_KEY: 'oa-key' };

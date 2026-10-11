@@ -204,6 +204,15 @@ Without any of them, SELL on that store is the usual item intake. The site's
 side of the contract is `docs/seller-listings-api.md` in the puppyplace-ng
 repo.
 
+**Photos sent in a burst are all kept.** WhatsApp delivers a batch of photos as
+separate webhooks that the Worker handles at the same moment, and each used to
+read the conversation, add its photo and save it back, so the last to finish
+overwrote the rest (nine sent, two listed). The pet intake now saves only if the
+conversation is unchanged since it was read (`persistIfUnchanged`, on
+`updated_at`); one that lost the race reads the new draft and works out its
+answer again. If a conversation stays busy through twelve tries the webhook
+answers 503, so WAHA retries it.
+
 **The photos are looked at.** When the seller says *done*, the photos are saved
 (WhatsApp's own links do not last, and the summary may wait for a YES) and
 `lib/petVision.js` asks OpenAI (`gpt-4o-mini` at low photo detail, as the item photo review does) about each: is a real, live pet
