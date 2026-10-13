@@ -2216,6 +2216,23 @@ test('a photo that never comes through is reported to the seller, not silently s
   }
 });
 
+// ── THE SELL PAGE'S OWN BUTTON ───────────────────────────────────────────────
+
+test("the Sell page's WhatsApp button starts a listing, and a products seller is handed to the owner", async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite: makeFakePetSite() });
+  try {
+    await toPetStore([fromConsignor("Hi PuppyPlace, I'd like to sell on PuppyPlace."), fromConsignor('4')]);
+    const seller = textsTo(waha, CONSIGNOR_CHAT);
+    assert.match(seller[0], /listing assistant/);
+    assert.match(seller.at(-1), /team will reply/);
+    assert.match(textsTo(waha, SELLER_CHAT).at(-1), /sell pet food, toys or accessories/);
+  } finally {
+    restore();
+  }
+});
+
 // ── BREED GUIDES: WRITTEN ONCE PER BREED, APPROVED BY THE OWNER ──────────────
 
 const GUIDE_ENV = { OPENAI_API_KEY: 'oa-key' };
