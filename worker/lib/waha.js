@@ -289,6 +289,17 @@ export async function sendText(cfg, session, to, text, { replyTo } = {}) {
 }
 
 // Declines a call that is ringing: `from` and `id` are the call event's own.
+// A message WhatsApp says carries a photo, but whose file WAHA had not fetched
+// when it told us (no media, or media with an error and no url). Asked for once
+// more, with the download. → { url, mimetype } or null.
+export async function messageMedia(cfg, session, chatId, messageId) {
+  const call = client(cfg);
+  const m = await call(
+    `/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}?downloadMedia=true`
+  );
+  return m?.media?.url ? { url: m.media.url, mimetype: m.media.mimetype ?? null } : null;
+}
+
 export async function rejectCall(cfg, session, { from, id }) {
   const call = client(cfg);
   return call('/api/rejectCall', { method: 'POST', body: { session, from, id } });

@@ -213,6 +213,18 @@ conversation is unchanged since it was read (`persistIfUnchanged`, on
 answer again. If a conversation stays busy through twelve tries the webhook
 answers 503, so WAHA retries it.
 
+**Answers are checked for what they should be.** A breed answer that is a
+sentence ("I have a purebred Eskimo puppy and I'm looking for a buyer") is not
+taken as the breed: the breed is picked out of it from a list of common names
+and said back (*Breed: American Eskimo*), or the seller is asked for just the
+name. A price range ("250k to 300") gets "which should I show?" with the
+seller's own amounts, not an example they might copy. A photo sent with a
+caption in answer to "anything else?" keeps both. A photo WhatsApp reports
+before WAHA has the file is asked for again (`messageMedia`, three tries,
+`MEDIA_RETRY_MS` apart, 1.5 s by default), and if it never arrives the seller is
+told to send it again. "Done" or "sorry, that's all" at the first question ends
+the chat politely.
+
 **The photos are looked at.** When the seller says *done*, the photos are saved
 (WhatsApp's own links do not last, and the summary may wait for a YES) and
 `lib/petVision.js` asks OpenAI (`gpt-4o-mini` at low photo detail, as the item photo review does) about each: is a real, live pet
