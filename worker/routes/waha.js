@@ -38,6 +38,7 @@ import {
   NO_CALLS_MARKER,
   newPetListingMessage,
   breedGuideDraftMessage,
+  petProductsOwnerMessage,
   petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
@@ -1363,6 +1364,12 @@ async function petIntake(cfg, event, tenant, conversation) {
 
   if (result.action?.type === 'pet_listing') {
     await forwardPetListing(cfg, tenant, event, result.action);
+  }
+
+  // Somebody selling pet food, toys or accessories: that is the store's to answer.
+  if (result.action?.type === 'pet_products') {
+    const owner = chatId(tenant.whatsapp_number);
+    if (owner) await say(cfg, tenant, owner, petProductsOwnerMessage({ phone: ctx.phone }), own).catch(() => {});
   }
 
   return json({ ok: true, petIntake: result.state });

@@ -28,9 +28,18 @@ const PET_WORD = /\b(dogs?|pupp(y|ies)|pups?|pets?|cats?|kittens?|birds?|parrots
 const SELL_START = /^\s*(sell|rehome)\b/i;
 const FIRST_PERSON_SELL = /\b(i|i'm|im|i'd|we|we're|my)\b[^.?!]{0,40}\b(sell|selling|rehome|rehoming|give away|giving away|list)\b/i;
 
+// "I'd like to sell on PuppyPlace" (the Sell page's own WhatsApp button names no
+// pet), "I have Boerboel puppies for sale", "does your pet store buy puppies?".
+// Still never "do you have puppies for sale?" or "do you sell puppies?": buyers.
+const SELL_HERE = /\b(sell|list|post|advertise)\b[^.?!]{0,25}\b(on|with|through|via)\s+(puppy\s*place|your\s+(site|website|store|shop|platform|page|app))\b/i;
+const FIRST_PERSON_FOR_SALE = /\b((i|we)\s+(have|got)|i'?ve|we'?ve)\b[^.?!]{0,50}\b(for sale|available|to sell)\b|\bmy\b[^.?!]{0,40}\b(is|are)\s+(for sale|available)\b/i;
+const DO_YOU_BUY = /\b(do|does|can|will|would)\s+(you|your(\s+\w+){1,2})\s+(buy|take in|accept|help (me )?sell)\b/i;
+
 export function wantsToSellPet(text) {
   const t = String(text ?? '');
-  return SELL_START.test(t) || (FIRST_PERSON_SELL.test(t) && PET_WORD.test(t));
+  if (SELL_START.test(t) || SELL_HERE.test(t)) return true;
+  if (!PET_WORD.test(t)) return false;
+  return FIRST_PERSON_SELL.test(t) || FIRST_PERSON_FOR_SALE.test(t) || DO_YOU_BUY.test(t);
 }
 
 // "Ade", "Royal Paws Kennel", "Dave_k9": yes. "my name", "none", "test", a phone
@@ -137,8 +146,9 @@ const SAY = {
   start: (store) =>
     `🐾 Hi! I'm the ${store} listing assistant. I'll help you list your pet for sale or adoption — it's free.\n\n` +
     'It takes a few quick questions and some photos. Reply *cancel* any time.',
-  askType: 'What are you listing?\n\n1 Dog\n2 Cat\n3 Another pet\n\nReply with the number.',
-  badType: 'Reply 1 for a dog, 2 for a cat or 3 for another pet.',
+  askType: 'What are you listing?\n\n1 Dog\n2 Cat\n3 Another pet\n4 Pet food, toys or accessories\n\nReply with the number.',
+  badType: 'Reply 1 for a dog, 2 for a cat, 3 for another pet or 4 for pet products.',
+  products: (store) => `Thanks! 🙌 For pet food, toys and accessories, the ${store} team will reply to you here shortly.`,
   askBreed: (d) => `What breed is your ${petWord(d)}? (e.g. Boerboel, German Shepherd, or "mixed")`,
   askAge: (d) => `How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
   askDeal:
@@ -250,6 +260,11 @@ export function newPetListingMessage({ breed, price, listing_type, location }, {
 }
 
 // To the store's owner, when a guide for a breed new to the site is waiting.
+// To the owner: somebody wants to sell pet products, which the bot does not list.
+export function petProductsOwnerMessage({ phone }) {
+  return `🛍️ Somebody wants to sell pet food, toys or accessories${phone ? ` (+${phone})` : ''}. The bot has told them you'll reply; their chat is waiting for you.`;
+}
+
 export function breedGuideDraftMessage({ breed }) {
   return (
     `📘 New breed guide to review: *${breed}*.\n\n` +
@@ -356,6 +371,9 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
   switch (live.state) {
     case 'pet_type': {
+      if (/^\s*(4|food|toys?|accessor|products?|pet products?)\b/i.test(text)) {
+        return { state: 'idle', draft: {}, replies: [SAY.products(store)], action: { type: 'pet_products' } };
+      }
       const type = typeIn(text, true);
       if (!type && NOT_NOW.test(text) && !draft.images.length) return { state: 'idle', draft: {}, replies: [SAY.notNow], action: null };
       if (!type) return reply('pet_type', draft, SAY.badType);

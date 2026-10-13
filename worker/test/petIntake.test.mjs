@@ -499,3 +499,28 @@ test('"done" or "sorry, that\'s all" at the first question ends it politely', ()
   assert.equal(petIntakeStep({ state: 'pet_type', draft: { images: [] } }, say('1'), ctx).state, 'pet_breed');
   assert.match(petSentMessage('PuppyPlace'), /Have another pet to list\? Send \*SELL\*/);
 });
+
+test('sellers are recognised however they put it, and buyers still are not', () => {
+  for (const t of [
+    "Hi PuppyPlace, I'd like to sell on PuppyPlace.",
+    'I have Boerboel puppies for sale',
+    'I have 3 puppies available for sale',
+    "I've got kittens available",
+    'My puppies are for sale',
+    'Does your pet store buy puppies?',
+    'Can I list on your site?',
+  ]) assert.equal(wantsToSellPet(t), true, t);
+  for (const t of ['Do you have puppies for sale?', 'Do you sell puppies?', 'How much is the puppy?', 'I need a dog for sale', 'Is the puppy available?']) {
+    assert.equal(wantsToSellPet(t), false, t);
+  }
+  const start = petIntakeStep(null, say("Hi PuppyPlace, I'd like to sell on PuppyPlace."), ctx);
+  assert.equal(start.state, 'pet_type');
+  assert.match(start.replies.at(-1), /4 Pet food, toys or accessories/);
+});
+
+test('somebody selling pet products is told the team will reply, and the owner is told', () => {
+  const r = petIntakeStep({ state: 'pet_type', draft: { images: [] } }, say('4'), ctx);
+  assert.equal(r.state, 'idle');
+  assert.match(r.replies[0], /PuppyPlace team will reply/);
+  assert.deepEqual(r.action, { type: 'pet_products' });
+});
