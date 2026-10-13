@@ -243,6 +243,19 @@ Worker secret; `PET_VISION_MODEL` and `PET_VISION_DETAIL` (`low`, `high`,
 a cost on each call. Every call is written to `ai_usage` with `purpose =
 'pet_photos'`, so `/admin/ai` shows what it cost next to the item reviews.
 
+**The photos are also asked what breed they look like.** The same call
+returns, for each photo, the breed it looks most like (or "mixed", or nothing
+when it cannot tell) and how sure it is. The guesses are combined, weighted by
+confidence; low-confidence guesses alone are not used. It never overrules the
+seller. When the breed given and the photos disagree ("Rottweiler" against
+"Boerboel"), the owner's new-listing alert says so; when they agree it says
+that too. A seller who answers the breed question with "I don't know" carries
+on, and after the photos is offered the breed they show ("It looks like a
+*German Shepherd* to me. Reply *YES*…"), or asked again with *mixed* as the
+fallback. Names are compared through the same list of breeds and spellings as
+the breed question ("Alsatian" fits "German Shepherd", "Turkish" fits "Turkish
+Angora").
+
 **A guide to each breed is written once.** When the site answers a new listing
 with `breed_guide: "missing"` (it has no guide for that breed yet),
 `lib/breedGuide.js` asks the same model, with text only and no photos, for three

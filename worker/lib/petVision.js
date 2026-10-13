@@ -19,6 +19,7 @@ export const DETAILS = ['low', 'high', 'auto'];
 export const MAX_CHECKED = 4;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 
+export const CONFIDENCE = ['high', 'medium', 'low'];
 export const KINDS = ['dog', 'cat', 'bird', 'rabbit', 'fish', 'reptile', 'rodent', 'other_animal', 'not_an_animal'];
 
 export const PROMPT =
@@ -29,6 +30,10 @@ export const PROMPT =
   `- kind: one of ${KINDS.join(', ')}. Use not_an_animal when shows_pet is false.\n` +
   "- face_visible: true only if the animal's face (eyes and nose) is clearly visible and in focus. " +
   'False if it faces away, is hidden, cropped, blurred or too far away to see its face.\n' +
+  '- breed: the breed it looks most like, judged only from what you can see (for example German Shepherd, ' +
+  'Boerboel, Persian, Siamese), "mixed" if it looks like a mix, or an empty string if you cannot tell ' +
+  '(a very young puppy or kitten, a poor photo, or not a dog or cat).\n' +
+  '- breed_confidence: high, medium or low. Use low for look-alike breeds you cannot tell apart from the photo.\n' +
   'Answer for every image, using its position as index starting at 0.';
 
 // OpenAI's strict structured output: every property required, no extras.
@@ -42,12 +47,14 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['index', 'shows_pet', 'kind', 'face_visible'],
+        required: ['index', 'shows_pet', 'kind', 'face_visible', 'breed', 'breed_confidence'],
         properties: {
           index: { type: 'integer' },
           shows_pet: { type: 'boolean' },
           kind: { type: 'string', enum: KINDS },
           face_visible: { type: 'boolean' },
+          breed: { type: 'string' },
+          breed_confidence: { type: 'string', enum: CONFIDENCE },
         },
       },
     },
@@ -129,7 +136,7 @@ export async function checkPetPhotos(cfg, photos) {
           },
         ],
         response_format: { type: 'json_schema', json_schema: { name: 'pet_photos', strict: true, schema: SCHEMA } },
-        max_completion_tokens: 500,
+        max_completion_tokens: 700,
       }),
       signal: AbortSignal.timeout(25_000),
     });
@@ -150,7 +157,13 @@ export async function checkPetPhotos(cfg, photos) {
     for (const a of answers) {
       const original = usable[a?.index]?.i;
       if (original === undefined || !KINDS.includes(a.kind) || typeof a.shows_pet !== 'boolean') continue;
-      verdicts[original] = { shows_pet: a.shows_pet, kind: a.shows_pet ? a.kind : 'not_an_animal', face_visible: a.face_visible === true };
+      const breed = a.shows_pet ? String(a.breed ?? '').replace(/[^\p{L}\p{N}\s'-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) : '';
+      verdicts[original] = {
+        shows_pet: a.shows_pet,
+        kind: a.shows_pet ? a.kind : 'not_an_animal',
+        face_visible: a.face_visible === true,
+        ...(breed ? { breed, breed_confidence: CONFIDENCE.includes(a.breed_confidence) ? a.breed_confidence : 'low' } : {}),
+      };
     }
 
     const u = body.usage ?? {};

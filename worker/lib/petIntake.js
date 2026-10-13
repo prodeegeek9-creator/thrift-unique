@@ -76,7 +76,7 @@ export function parseSellerName(raw) {
 
 export const PET_STATES = [
   'pet_type', 'pet_breed', 'pet_age', 'pet_deal', 'pet_price', 'pet_location',
-  'pet_health', 'pet_notes', 'pet_photos', 'pet_name', 'pet_contact', 'pet_review',
+  'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_name', 'pet_contact', 'pet_review',
 ];
 
 const TYPES = [
@@ -130,6 +130,48 @@ export function parseBreed(raw) {
   return hit ? hit[1] : null;
 }
 
+// A seller who does not know the breed: the photos are asked instead.
+const UNSURE = /^\s*(i\s*(do\s*n[o']?t|dont)\s*know|idk|not sure|no idea|unknown|unsure|don'?t know|\?+)\s*[.!]*\s*$/i;
+const BREED_FILLER = /\b(pure\s*bred|purebred|pure|pedigree|full\s*blood|breed|pupp(y|ies)|pups?|dogs?|cats?|kittens?)\b/gi;
+
+// One name for a breed, however it was written: "Alsatian" and "German
+// Shepherd" are one, "Eskimo" and "American Eskimo" are one.
+function breedKey(name) {
+  const low = ` ${String(name ?? '').toLowerCase().replace(/[^\p{L}\s-]/gu, ' ').replace(/\s+/g, ' ')} `;
+  const hit = BREED_ALIASES.find(([alias]) => low.includes(` ${alias} `));
+  if (hit) return hit[1].toLowerCase();
+  return low.replace(BREED_FILLER, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Does what the seller says fit what the photos look like? "Turkish" fits
+// "Turkish Angora"; "Rottweiler" does not fit "Boerboel".
+export function sameBreed(said, seen) {
+  const a = breedKey(said), b = breedKey(seen);
+  if (!a || !b) return true;
+  if (a === b) return true;
+  const wa = new Set(a.split(' ')), wb = b.split(' ');
+  return wb.some((w) => w.length > 3 && wa.has(w));
+}
+
+// What the photos say the breed is: the guess the photos agree on most, weighted
+// by how sure each was. Low-confidence guesses alone are not worth repeating.
+const WEIGHT = { high: 3, medium: 2, low: 1 };
+export function breedFromPhotos(images) {
+  const votes = new Map();
+  for (const img of images ?? []) {
+    const v = img?.v;
+    if (!v?.shows_pet || !v.breed) continue;
+    const key = breedKey(v.breed) || v.breed.toLowerCase();
+    const cur = votes.get(key) ?? { breed: v.breed, score: 0, best: 'low' };
+    cur.score += WEIGHT[v.breed_confidence] ?? 1;
+    if ((WEIGHT[v.breed_confidence] ?? 1) > WEIGHT[cur.best]) cur.best = v.breed_confidence;
+    votes.set(key, cur);
+  }
+  const top = [...votes.values()].sort((x, y) => y.score - x.score)[0];
+  if (!top || top.best === 'low') return null;
+  return { breed: top.breed, confidence: top.best };
+}
+
 // "250k to 300k", "250-300k", "250k or 300": the two amounts, when a seller gives a range.
 export function parsePriceRange(text) {
   const m = /^\s*₦?\s*([\d.,]+)\s*(k|m)?\s*(?:-|–|—|to|and|or|\/)\s*₦?\s*([\d.,]+)\s*(k|m)?\s*$/i.exec(String(text ?? ''));
@@ -159,6 +201,9 @@ const SAY = {
   priceRange: (a, b) => `Buyers see one price. Which should I show: *${formatNaira(a)}* or *${formatNaira(b)}*? Send just that amount.`,
   badBreed: (d) => `What breed is it? Just the breed name, like *Boerboel*, *Lhasa Apso* or *Mixed*. (Your other details come next.)`,
   photoLost: "😕 A photo didn't come through. Please send it again.",
+  breedLater: (d) => `No problem 👍 I'll look at the photos and suggest one. How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
+  suggestBreed: (b) => `🔎 From the photos, it looks like a *${b}* to me. Reply *YES* to use that, or type the breed.`,
+  askBreedAgain: (d) => `What breed should buyers see? If you're not sure, reply *mixed*.`,
   notNow: 'No problem 👍 Send *SELL* any time you have another pet to list.',
   askLocation: 'Which city and area are you in? (e.g. Lekki, Lagos)',
   askHealth:
@@ -245,7 +290,16 @@ export function petRejectedMessage(details) {
 }
 
 // For the store owner, on the platform number.
-export function newPetListingMessage({ breed, price, listing_type, location }, { verified, note } = {}) {
+function breedCheckLine(breed, c) {
+  if (!c?.guess) return '';
+  if (c.source === 'suggested') return `\n\n🔎 The seller didn't know the breed; the photos suggested *${c.guess}* and they accepted it.`;
+  if (c.matches === false) {
+    return `\n\n🔎 Breed check: the seller says *${breed}*, but the photos look more like *${c.guess}*${c.confidence ? ` (${c.confidence} confidence)` : ''}. Check before approving.`;
+  }
+  return `\n\n🔎 Breed check: the photos look like *${c.guess}*, which fits.`;
+}
+
+export function newPetListingMessage({ breed, price, listing_type, location }, { verified, note, breedCheck } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
@@ -255,7 +309,8 @@ export function newPetListingMessage({ breed, price, listing_type, location }, {
       ? ''
       : verified
         ? '\n\n📸 Photos checked: a real pet, face visible.'
-        : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`)
+        : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`) +
+    breedCheckLine(breed, breedCheck)
   );
 }
 
@@ -383,6 +438,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_breed': {
       if (!text) return reply('pet_breed', draft, SAY.askBreed(draft));
+      if (UNSURE.test(text)) return reply('pet_age', { ...draft, breed: null, breedUnsure: true }, SAY.breedLater(draft));
       const breed = parseBreed(text);
       if (!breed) return reply('pet_breed', draft, SAY.badBreed(draft));
       // Picked out of a longer message: say which, so a wrong pick can be put right at the summary.
@@ -433,6 +489,18 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       if (!draft.images.length) return reply('pet_photos', draft, text ? SAY.noPhotos : SAY.askPhotos(draft));
       if (FILLER.test(text) || YES.test(text)) return processPhotos(draft);
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
+
+    // After the photos, for a seller who did not know the breed.
+    case 'pet_breed_confirm': {
+      let breed = null, source = 'seller';
+      if (draft.breedSuggest && YES.test(text)) { breed = draft.breedSuggest; source = 'suggested'; }
+      else if (UNSURE.test(text)) breed = draft.breedSuggest ?? 'Mixed';
+      else breed = parseBreed(text);
+      if (!breed) return reply('pet_breed_confirm', draft, SAY.badBreed(draft));
+      const check = draft.breedSuggest ? { ...(draft.breedCheck ?? {}), guess: draft.breedSuggest, source } : draft.breedCheck;
+      const d = { ...draft, breed, breedUnsure: false, breedSuggest: undefined, breedCheck: check ? { ...check, matches: sameBreed(breed, check.guess) } : undefined };
+      return after('pet_photos', d, ctx, store);
+    }
 
     case 'pet_name': {
       const name = parseSellerName(text);
@@ -518,7 +586,20 @@ export function petPhotosDone(draft, images, ctx = {}) {
   const confirmed = kind
     ? `✅ Photos checked: I can see ${article(kind)} ${kind}, and its face is clearly visible.`
     : null;
-  return after('pet_photos', { ...draft, images: ordered, verified: kind ? { kind } : undefined }, ctx, store, [droppedNote, confirmed].filter(Boolean).join('\n\n'));
+  const guess = breedFromPhotos(keep);
+  const next = {
+    ...draft,
+    images: ordered,
+    verified: kind ? { kind } : undefined,
+    breedCheck: guess ? { guess: guess.breed, confidence: guess.confidence, matches: draft.breed ? sameBreed(draft.breed, guess.breed) : null } : undefined,
+  };
+  const prefix = [droppedNote, confirmed].filter(Boolean).join('\n\n');
+  // The seller did not know the breed: suggest what the photos show, or ask again.
+  if (!draft.breed) {
+    if (guess) return reply('pet_breed_confirm', { ...next, breedSuggest: guess.breed }, prefix, SAY.suggestBreed(guess.breed));
+    return reply('pet_breed_confirm', next, prefix, SAY.askBreedAgain(draft));
+  }
+  return after('pet_photos', next, ctx, store, prefix);
 }
 
 function typeIn(text, answer = false) {
@@ -555,6 +636,7 @@ function next(state, draft, note, ctx, store) {
     pet_health: SAY.askHealth,
     pet_notes: SAY.askNotes,
     pet_photos: 'Type *done* to carry on.',
+    pet_breed_confirm: draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
     pet_name: SAY.askName,
     pet_contact: SAY.askContact(ctx.phone),
   }[state];
@@ -587,6 +669,7 @@ function submit(draft) {
       type: 'pet_listing',
       verified: Boolean(draft.verified),
       checkNote: draft.checkNote ?? null,
+      breedCheck: draft.breedCheck ?? null,
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,
