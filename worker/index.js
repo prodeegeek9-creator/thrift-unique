@@ -7,6 +7,7 @@
 
 import { sendPetInvites } from './routes/petInvites.js';
 import { notifyLivePets } from './routes/petListings.js';
+import { handlePetStoreSend } from './routes/petStore.js';
 import { ensurePetCallEvents } from './routes/petCalls.js';
 import { ConfigError } from './lib/env.js';
 import { json } from './lib/http.js';
@@ -135,6 +136,11 @@ async function api(request, env, path) {
   const method = request.method;
 
   if (method === 'OPTIONS') return new Response(null, { status: 204 });
+
+  // The pet site sending a seller their log-in code or a notice (routes/petStore.js).
+  if (path === '/api/pet-store/send' && method === 'POST') {
+    return handlePetStoreSend(request, env);
+  }
 
   if (path === '/api/paystack/webhook' && method === 'POST') {
     return handlePaystackWebhook(request, env);

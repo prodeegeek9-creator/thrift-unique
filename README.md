@@ -282,6 +282,16 @@ the next listing from that chat uses it without asking ("I'll list this under
 *Ade*, as last time"). The summary shows it with "(as before)", and replying
 *NAME* there asks for a different one.
 
+**Seller accounts on the pet site.** Each listing carries `owner_phone`, the
+number of the chat it came from as WhatsApp gives it. The site makes that the
+seller's account and answers with a one-tap log-in link (`manage_url`), which
+the "✅ Sent!" message passes on. The site sends sellers their log-in codes and
+"your changes are approved" notices through the store's own number, by POSTing
+to `/api/pet-store/send` with the same shared key (`routes/petStore.js`):
+`{ phone, text }`, or `{ to: "owner", text }` for the owner. Only stores with
+`pet_listings` on can be sent from, and a number gets at most 8 an hour (the
+owner 60).
+
 **People who messaged before the bot was on** can be invited. A row in
 `pet_invites` (migration 0050: store, phone number) is picked up by the
 every-minute sweep (`routes/petInvites.js`), which sends the bot's opening

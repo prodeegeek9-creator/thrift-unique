@@ -2216,6 +2216,64 @@ test('a photo that never comes through is reported to the seller, not silently s
   }
 });
 
+// ── THE SITE SENDING THROUGH THE STORE'S NUMBER ─────────────────────────────
+
+const storeSend = (body, key = 'pet-key') =>
+  new Request('https://app.test/api/pet-store/send', { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+test('the pet site can send a code or a notice from the store\'s number, and only with the key', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  const e = wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' });
+  try {
+    assert.equal((await worker.fetch(storeSend({ phone: '2348031112222', text: 'hi' }, 'wrong'), e, {})).status, 401);
+    assert.equal((await worker.fetch(storeSend({ phone: '2348031112222', text: '' }), e, {})).status, 400);
+    assert.equal((await worker.fetch(storeSend({ phone: 'abc', text: 'hi' }), e, {})).status, 400);
+
+    const ok = await worker.fetch(storeSend({ phone: '2348031112222', text: '🔐 Your PuppyPlace code is *123456*' }), e, {});
+    assert.equal(ok.status, 200);
+    const sent = waha.sent.at(-1);
+    assert.equal(sent.chatId, '2348031112222@c.us');
+    assert.equal(sent.session, STORE_SESSION);
+    assert.match(sent.text, /123456/);
+
+    await worker.fetch(storeSend({ to: 'owner', text: 'A change is waiting' }), e, {});
+    assert.equal(waha.sent.at(-1).chatId, SELLER_CHAT);
+
+    // A handful an hour to one number, then refused.
+    let last;
+    for (let i = 0; i < 9; i++) last = await worker.fetch(storeSend({ phone: '2348039990000', text: `n${i}` }), e, {});
+    assert.equal(last.status, 429);
+  } finally {
+    restore();
+  }
+});
+
+test('a store without pet listings cannot be sent from', async () => {
+  const restore = installFetch({ supabase: makeFakeSupabase(petSeed(false)), waha: makeFakeWaha(), tokens: TOKENS });
+  try {
+    const res = await worker.fetch(storeSend({ phone: '2348031112222', text: 'hi' }), wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key' }), {});
+    assert.equal(res.status, 404);
+  } finally {
+    restore();
+  }
+});
+
+test("a listing carries the seller's own number, and the site's log-in link goes in the Sent! message", async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ body: { ok: true, status: 'pending', id: 'pet-1', slug: 'boerboel-1', manage_url: 'https://puppyplace.ng/login-link?t=abcdefghijklmnopqrstuvwx' } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(PET_CHAT);
+    assert.equal(petSite.received[0].body.owner_phone, CONSIGNOR_PHONE.replace(/\D/g, ''));
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).find((t) => /Sent!/.test(t)), /Your listings, to change the price or photos or mark one sold:\nhttps:\/\/puppyplace\.ng\/login-link\?t=/);
+  } finally {
+    restore();
+  }
+});
+
 // ── THE BREED FROM THE PHOTOS ────────────────────────────────────────────────
 
 test('the store is told when the photos look like a different breed from the one given', async () => {
