@@ -68,6 +68,8 @@ export function config(env) {
     // intake is off for every store, whatever their flag says.
     petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
     petListingsKey: env.PET_LISTINGS_KEY ? env.PET_LISTINGS_KEY.trim() : null,
+    // How long to wait between asking WAHA again for a photo it had not fetched yet.
+    mediaRetryMs: env.MEDIA_RETRY_MS != null && env.MEDIA_RETRY_MS !== '' ? Number(env.MEDIA_RETRY_MS) : 1500,
 
     // Looking at the photos of a pet being listed (lib/petVision.js): OpenAI,
     // as the item photo review does. OPENAI_API_KEY is a Worker secret (the

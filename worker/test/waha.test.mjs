@@ -59,8 +59,10 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200 } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {} } = {}) {
   const sent = [];
+  // Messages asked for again by id, with their media: id → [{ url, mimetype } | null, …] answered in turn.
+  const messageFetches = [];
   const mediaFetches = [];
   const typing = [];
   // Typing and sending, in the order they happened.
@@ -84,6 +86,16 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         status: 200,
         headers: { 'content-type': 'image/jpeg' },
       });
+    }
+
+    const msg = path.match(/^\/api\/([^/]+)\/chats\/([^/]+)\/messages\/([^/]+)$/);
+    if (msg) {
+      const id = decodeURIComponent(msg[3]);
+      messageFetches.push({ session: decodeURIComponent(msg[1]), chat: decodeURIComponent(msg[2]), id, download: new URL(url).searchParams.get('downloadMedia') });
+      const answers = messages[id];
+      if (!answers) return new Response('not found', { status: 404 });
+      const media = answers.length > 1 ? answers.shift() : answers[0];
+      return new Response(JSON.stringify({ id, media }), { status: 200 });
     }
 
     if (path === '/api/rejectCall') {
@@ -174,7 +186,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, messageFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -2154,6 +2166,51 @@ test('photos sent in a burst all reach the site', async () => {
 
     assert.equal(petSite.received.length, 1);
     assert.equal(petSite.received[0].body.photos.length, 6);
+  } finally {
+    restore();
+  }
+});
+
+// ── PHOTOS WAHA REPORTS BEFORE IT HAS THE FILE ──────────────────────────────
+
+// A photo message whose file WAHA had not fetched: hasMedia, but no url.
+function lostPic(id) {
+  const m = fromConsignor('', { id });
+  m.payload.hasMedia = true;
+  m.payload.media = { url: null, mimetype: 'image/jpeg', error: { message: 'download failed' } };
+  return m;
+}
+
+test('a photo WAHA had not fetched yet is asked for again, and kept', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha({ messages: { 'late-1': [null, { url: `${WAHA_URL}/api/files/${STORE_SESSION}/late.jpg`, mimetype: 'image/jpeg' }] } });
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    await toPetStore(petChatThrough([lostPic('late-1')], NAME_TO_YES), { MEDIA_RETRY_MS: '0' });
+    // Asked twice: not there the first time, there the second, with the download.
+    assert.deepEqual(waha.messageFetches.map((f) => [f.id, f.chat, f.download]), [['late-1', CONSIGNOR_CHAT, 'true'], ['late-1', CONSIGNOR_CHAT, 'true']]);
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.photos.length, 1);
+    assert.ok(waha.mediaFetches.some((f) => f.path.endsWith('/late.jpg')));
+  } finally {
+    restore();
+  }
+});
+
+test('a photo that never comes through is reported to the seller, not silently skipped', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite: makeFakePetSite() });
+
+  try {
+    await toPetStore(petChatThrough([pic(1), lostPic('gone-1')]).slice(0, -1), { MEDIA_RETRY_MS: '0' });
+    assert.equal(waha.messageFetches.length, 3);
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).at(-1), /A photo didn't come through\. Please send it again/);
+    const row = supabase.tables.bot_conversations.find((r) => r.chat_id === CONSIGNOR_CHAT);
+    assert.equal(row.state, 'pet_photos');
+    assert.equal(row.draft.images.length, 1);
   } finally {
     restore();
   }

@@ -13,6 +13,9 @@ import {
   petInviteMessage,
   petRejectedMessage,
   petFailedOwnerMessage,
+  petSentMessage,
+  parseBreed,
+  parsePriceRange,
 } from '../lib/petIntake.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
 
@@ -415,4 +418,84 @@ test('a first-time seller is still asked, and NAME at the summary works for them
   const summary = run(DOG).at(-1);
   assert.doesNotMatch(summary.replies[0], /as before/);
   assert.equal(petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('NAME'), ctx).state, 'pet_name');
+});
+
+// ── BREEDS, PRICE RANGES, CAPTIONS, LOST PHOTOS, "DONE" ─────────────────────
+
+test('a breed is kept as typed when it is short, and picked out of a sentence when it is not', () => {
+  for (const [typed, breed] of [
+    ['Boerboel', 'Boerboel'],
+    ['Purebred Lhasa Apso', 'Purebred Lhasa Apso'],
+    ['Boerboel puppies', 'Boerboel'],
+    ['Eskimo puppy', 'Eskimo'],
+    ['mixed', 'mixed'],
+    ['Please, I would like to make an enquiry. I have a purebred Eskimo puppy, and I’m looking for a buyer.', 'American Eskimo'],
+    ['I have a German shepherd', 'German Shepherd'],
+    ['I want to sell my alsatian and her pups', 'German Shepherd'],
+    ['Hello I have pit bull puppies for sale in Lagos', 'American Pit Bull Terrier'],
+  ]) assert.equal(parseBreed(typed), breed, typed);
+  for (const typed of ['', 'puppy', 'Dogs', 'Please can you help me sell my dog?', 'I am looking for a buyer for my puppy, she is lovely']) {
+    assert.equal(parseBreed(typed), null, typed);
+  }
+});
+
+test('a breed picked out of a message is said back; one that cannot be found is asked for again', () => {
+  const conv = { state: 'pet_breed', draft: { type: 'Dog', images: [] } };
+  const picked = petIntakeStep(conv, say('Please, I would like to make an enquiry. I have a purebred Eskimo puppy, and I’m looking for a buyer.'), ctx);
+  assert.equal(picked.state, 'pet_age');
+  assert.equal(picked.draft.breed, 'American Eskimo');
+  assert.match(picked.replies[0], /Breed: \*American Eskimo\*/);
+  const plain = petIntakeStep(conv, say('Boerboel'), ctx);
+  assert.equal(plain.replies.length, 1);
+  const unclear = petIntakeStep(conv, say('Please can you help me find a buyer for my dog?'), ctx);
+  assert.equal(unclear.state, 'pet_breed');
+  assert.match(unclear.replies[0], /Just the breed name/);
+});
+
+test('a price range is answered with a question using the seller\'s own amounts, not an example to copy', () => {
+  assert.deepEqual(parsePriceRange('250k to 300'), [250000, 300000]);
+  assert.deepEqual(parsePriceRange('250-300k'), [250000, 300000]);
+  assert.deepEqual(parsePriceRange('₦300,000 - ₦250,000'), [250000, 300000]);
+  assert.equal(parsePriceRange('150k'), null);
+  assert.equal(parsePriceRange('call me'), null);
+  const conv = { state: 'pet_price', draft: { type: 'Dog', images: [], listing_type: 'sale' } };
+  const r = petIntakeStep(conv, say('250k to 300'), ctx);
+  assert.equal(r.state, 'pet_price');
+  assert.match(r.replies[0], /one price.*₦250,000.*₦300,000/s);
+  const bad = petIntakeStep(conv, say('negotiable'), ctx);
+  assert.ok(!/150/.test(bad.replies[0]), bad.replies[0]);
+});
+
+test('a photo sent with its caption as the answer to "anything else" keeps both', () => {
+  const conv = { state: 'pet_notes', draft: { type: 'Dog', images: [] } };
+  const r = petIntakeStep(conv, { ...photo(1), body: 'She is a female, 8 weeks old.' }, ctx);
+  assert.equal(r.state, 'pet_photos');
+  assert.equal(r.draft.notes, 'She is a female, 8 weeks old.');
+  assert.equal(r.draft.images.length, 1);
+  assert.match(r.replies[0], /Got it/);
+});
+
+test('a photo that did not come through is reported, and its caption still counts', () => {
+  const lost = { hasMedia: true, mediaUrl: null, mimetype: 'image/jpeg' };
+  const inPhotos = petIntakeStep({ state: 'pet_photos', draft: { type: 'Dog', images: [{ url: 'u' }] } }, lost, ctx);
+  assert.equal(inPhotos.state, 'pet_photos');
+  assert.equal(inPhotos.draft.images.length, 1);
+  assert.match(inPhotos.replies[0], /didn't come through/);
+  const inNotes = petIntakeStep({ state: 'pet_notes', draft: { type: 'Dog', images: [] } }, { ...lost, body: 'Female, white' }, ctx);
+  assert.equal(inNotes.state, 'pet_photos');
+  assert.equal(inNotes.draft.notes, 'Female, white');
+  assert.match(inNotes.replies.join(' '), /didn't come through[\s\S]*send clear, recent photos/);
+  // A voice note or video is not a lost photo.
+  const voice = petIntakeStep({ state: 'pet_photos', draft: { type: 'Dog', images: [{ url: 'u' }] } }, { hasMedia: true, mediaUrl: null, mimetype: 'audio/ogg' }, ctx);
+  assert.ok(!/didn't come through/.test(voice.replies.join(' ')));
+});
+
+test('"done" or "sorry, that\'s all" at the first question ends it politely', () => {
+  for (const t of ['Done', "Sorry I'm done, I only what to sell the one I have show you", 'no thanks', "that's all"]) {
+    const r = petIntakeStep({ state: 'pet_type', draft: { images: [] } }, say(t), ctx);
+    assert.equal(r.state, 'idle', t);
+    assert.match(r.replies[0], /No problem/, t);
+  }
+  assert.equal(petIntakeStep({ state: 'pet_type', draft: { images: [] } }, say('1'), ctx).state, 'pet_breed');
+  assert.match(petSentMessage('PuppyPlace'), /Have another pet to list\? Send \*SELL\*/);
 });

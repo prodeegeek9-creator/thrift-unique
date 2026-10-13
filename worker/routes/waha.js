@@ -79,6 +79,7 @@ import {
   WahaError,
   ensureStoreWebhook,
   rejectCall,
+  messageMedia,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -1286,7 +1287,25 @@ async function inActiveBotChat(cfg, tenant, event) {
   return false;
 }
 
+// WAHA sometimes reports a photo before it has the file (no url yet, or a failed
+// download). Ask for it a few times before treating the photo as lost.
+const MEDIA_TRIES = 3;
+async function withMedia(cfg, event) {
+  if (!event.hasMedia || event.mediaUrl || !event.id) return event;
+  for (let i = 0; i < MEDIA_TRIES; i++) {
+    if (i) await new Promise((resolve) => setTimeout(resolve, cfg.mediaRetryMs));
+    const media = await messageMedia(cfg, event.session, event.from, event.id).catch((err) => {
+      console.warn('photo not fetched from WAHA:', err?.status ?? '', err?.message ?? err);
+      return null;
+    });
+    if (media) return { ...event, mediaUrl: media.url, mimetype: event.mimetype ?? media.mimetype };
+  }
+  console.warn('photo still missing after', MEDIA_TRIES, 'tries', event.id);
+  return event;
+}
+
 async function petIntake(cfg, event, tenant, conversation) {
+  event = await withMedia(cfg, event);
   const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
   const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from) };
 

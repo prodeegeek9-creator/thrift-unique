@@ -15,7 +15,7 @@ import { normalizeNumber } from './phone.js';
 // The pet site's limit, not lib/bot.js's MAX_IMAGES: buyers want to see a
 // litter, and the site stores up to six.
 export const MAX_PET_PHOTOS = 6;
-const MAX_BREED = 80;
+const MAX_BREED = 40;
 const MAX_AGE = 40;
 const MAX_LOCATION = 80;
 const MAX_NOTES = 600;
@@ -82,6 +82,54 @@ const HEALTH = [
   [{ vaccinated: false, dewormed: false }, /^(4|neither|none|no|not yet)\b/i],
 ];
 const SKIP = /^(skip|no|none|nothing|nil|n\/a)\b/i;
+// Somebody who has nothing (more) to list, answering the first question.
+const NOT_NOW = /^\s*(done|no|nope|nothing|that'?s all|i'?m done|sorry|ok(ay)?|thanks?|thank you|not now|later)\b/i;
+
+// Breeds as people write them, for picking one out of a sentence. A short answer
+// is kept as the seller typed it; this is only for "I have a purebred Eskimo
+// puppy and I'm looking for a buyer…". Canonical name first, then other spellings.
+const BREEDS = [
+  ['Boerboel', 'boerbull', 'boer boel'], ['German Shepherd', 'alsatian', 'gsd', 'german shepard'], ['Rottweiler', 'rottie', 'rott'],
+  ['Caucasian Shepherd', 'caucasian', 'caucasian ovcharka'], ['Lhasa Apso', 'lhasa', 'lasa apso'], ['Shih Tzu', 'shihtzu', 'shih-tzu'],
+  ['Chihuahua'], ['American Eskimo', 'eskimo', 'american eskimo dog'], ['Samoyed'], ['Siberian Husky', 'husky'], ['Alaskan Malamute', 'malamute'],
+  ['Pomeranian', 'pom'], ['Poodle', 'toy poodle'], ['Maltese'], ['Yorkshire Terrier', 'yorkie'], ['American Pit Bull Terrier', 'pitbull', 'pit bull'],
+  ['American Bully', 'bully'], ['Bullmastiff', 'bull mastiff'], ['Cane Corso'], ['Doberman', 'dobermann', 'doberman pinscher'],
+  ['Golden Retriever', 'golden'], ['Labrador Retriever', 'labrador', 'lab'], ['Great Dane'], ['Dachshund', 'sausage dog'], ['Pug'],
+  ['English Bulldog', 'bulldog'], ['French Bulldog', 'frenchie'], ['Beagle'], ['Jack Russell Terrier', 'jack russell'], ['Chow Chow', 'chow'],
+  ['Shar Pei', 'sharpei'], ['Akita'], ['Dalmatian'], ['Belgian Malinois', 'malinois'], ['Basenji'], ['Bichon Frise', 'bichon'],
+  ['Cocker Spaniel'], ['Border Collie'], ['Tibetan Mastiff'], ['Neapolitan Mastiff'], ['English Mastiff', 'mastiff'], ['Kangal'],
+  ['Dogo Argentino'], ['Presa Canario'], ['Mixed', 'mixed breed', 'mix', 'cross', 'crossbreed', 'local', 'mongrel'],
+  ['Persian'], ['Siamese'], ['Maine Coon'], ['British Shorthair'], ['Ragdoll'], ['Bengal'], ['Sphynx'], ['Scottish Fold'], ['Himalayan'],
+];
+const BREED_ALIASES = BREEDS.flatMap(([name, ...more]) => [name, ...more].map((a) => [a.toLowerCase(), name]))
+  .sort((a, b) => b[0].length - a[0].length);
+const SENTENCE = /[.?!]\s+\S|\b(please|would|like|enquiry|inquiry|looking|buyer|help|interested|i have|i'm|i am|want|wanna|selling|sell)\b/i;
+const TRAILING_PET = /\s+(pupp(y|ies)|pups?|dogs?|kittens?|cats?|breed)$/i;
+
+// "Boerboel" → Boerboel. "Eskimo puppy" → Eskimo. A sentence → the breed named in
+// it, or null when none can be found (the seller is asked again).
+export function parseBreed(raw) {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  if (t.length <= MAX_BREED && t.split(' ').length <= 4 && !SENTENCE.test(t)) {
+    const short = t.replace(TRAILING_PET, '').trim();
+    if (/^(pupp(y|ies)|pups?|dogs?|cats?|kittens?|pets?|breed|purebred|pure ?breed)$/i.test(short)) return null;
+    return (short.match(/\p{L}/gu) ?? []).length >= 2 ? short : null;
+  }
+  const low = ` ${t.toLowerCase().replace(/[^\p{L}\s-]/gu, ' ').replace(/\s+/g, ' ')} `;
+  const hit = BREED_ALIASES.find(([alias]) => low.includes(` ${alias} `));
+  return hit ? hit[1] : null;
+}
+
+// "250k to 300k", "250-300k", "250k or 300": the two amounts, when a seller gives a range.
+export function parsePriceRange(text) {
+  const m = /^\s*₦?\s*([\d.,]+)\s*(k|m)?\s*(?:-|–|—|to|and|or|\/)\s*₦?\s*([\d.,]+)\s*(k|m)?\s*$/i.exec(String(text ?? ''));
+  if (!m) return null;
+  const unitA = m[2] || (m[4] && Number(m[1].replace(/,/g, '')) < 1000 ? m[4] : '');
+  const unitB = m[4] || (m[2] && Number(m[3].replace(/,/g, '')) < 1000 ? m[2] : '');
+  const a = parsePrice(m[1] + (unitA || '')), b = parsePrice(m[3] + (unitB || ''));
+  return a && b ? [Math.min(a, b), Math.max(a, b)] : null;
+}
 
 const petWord = (draft) => (draft.type === 'Cat' ? 'cat' : draft.type === 'Dog' ? 'dog' : 'pet');
 
@@ -97,7 +145,11 @@ const SAY = {
     'Are you selling or giving it up for adoption?\n\n1 Selling\n2 Adoption (free to a good home)\n\nReply with the number.',
   badDeal: 'Reply 1 if you are selling, or 2 for adoption.',
   askPrice: 'How much are you asking? (e.g. 150000 or 150k). For a litter, the price per puppy.',
-  badPrice: "I didn't catch a price. Send the amount on its own — 150000, or 150k.",
+  badPrice: "I didn't catch a price. Send your price in numbers on its own, like 85000 or 85k.",
+  priceRange: (a, b) => `Buyers see one price. Which should I show: *${formatNaira(a)}* or *${formatNaira(b)}*? Send just that amount.`,
+  badBreed: (d) => `What breed is it? Just the breed name, like *Boerboel*, *Lhasa Apso* or *Mixed*. (Your other details come next.)`,
+  photoLost: "😕 A photo didn't come through. Please send it again.",
+  notNow: 'No problem 👍 Send *SELL* any time you have another pet to list.',
   askLocation: 'Which city and area are you in? (e.g. Lekki, Lagos)',
   askHealth:
     'Vaccinations and deworming:\n\n1 Vaccinated and dewormed\n2 Vaccinated only\n3 Dewormed only\n4 Neither yet\n\nReply with the number.',
@@ -147,7 +199,7 @@ function healthLine(d) {
 export function petSentMessage(store) {
   return (
     `✅ Sent! ${store} will check your listing and publish it soon. Buyers will message you directly on WhatsApp.\n\n` +
-    'Send *SELL* to list another pet.'
+    'Have another pet to list? Send *SELL*.'
   );
 }
 
@@ -272,6 +324,16 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
   if (CANCEL.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
 
+  // A photo WhatsApp said was there but that could not be fetched: the seller
+  // is asked to send it again, instead of the bot carrying on as if none came.
+  if (!image && message?.hasMedia && !message.mediaUrl && !/^(video|audio)\//.test(String(message.mimetype ?? '')) && live.state !== 'pet_review') {
+    if (live.state === 'pet_notes' && text && !SKIP.test(text)) {
+      const d = { ...draft, notes: text.slice(0, MAX_NOTES) };
+      return reply('pet_photos', d, SAY.photoLost, d.images.length ? SAY.morePhotos(d.images.length) : SAY.askPhotos(d));
+    }
+    return reply(live.state, draft, SAY.photoLost);
+  }
+
   // A photo is welcome at any point before the summary.
   if (image && live.state !== 'pet_review') {
     if (draft.images.length >= MAX_PET_PHOTOS) {
@@ -279,6 +341,12 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return next(live.state, { ...draft, limit_noted: true }, SAY.photoLimit, ctx, store);
     }
     draft.images.push(image);
+    // A photo with its caption in answer to "anything else buyers should know?"
+    if (live.state === 'pet_notes' && text && !SKIP.test(text)) {
+      const d = { ...draft, notes: text.slice(0, MAX_NOTES) };
+      if (d.images.length >= MAX_PET_PHOTOS) return processPhotos(d, SAY.photoLimit);
+      return reply('pet_photos', d, SAY.morePhotos(d.images.length));
+    }
     if (live.state === 'pet_photos') {
       if (draft.images.length >= MAX_PET_PHOTOS) return processPhotos(draft, SAY.photoLimit);
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
@@ -289,14 +357,21 @@ export function petIntakeStep(conversation, message, ctx = {}) {
   switch (live.state) {
     case 'pet_type': {
       const type = typeIn(text, true);
+      if (!type && NOT_NOW.test(text) && !draft.images.length) return { state: 'idle', draft: {}, replies: [SAY.notNow], action: null };
       if (!type) return reply('pet_type', draft, SAY.badType);
       const d = { ...draft, type };
       return reply('pet_breed', d, SAY.askBreed(d));
     }
 
-    case 'pet_breed':
-      if (!text || wantsToSellPet(text)) return reply('pet_breed', draft, SAY.askBreed(draft));
-      return reply('pet_age', { ...draft, breed: text.replace(/\s+/g, ' ').slice(0, MAX_BREED) }, SAY.askAge(draft));
+    case 'pet_breed': {
+      if (!text) return reply('pet_breed', draft, SAY.askBreed(draft));
+      const breed = parseBreed(text);
+      if (!breed) return reply('pet_breed', draft, SAY.badBreed(draft));
+      // Picked out of a longer message: say which, so a wrong pick can be put right at the summary.
+      const typed = text.replace(/\s+/g, ' ').trim().replace(TRAILING_PET, '').toLowerCase();
+      const picked = breed.toLowerCase() !== typed ? `Breed: *${breed}* 👍` : null;
+      return reply('pet_age', { ...draft, breed }, picked, SAY.askAge(draft));
+    }
 
     case 'pet_age':
       if (!text) return reply('pet_age', draft, SAY.askAge(draft));
@@ -312,6 +387,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_price': {
       const price = parsePrice(text);
+      const range = price == null ? parsePriceRange(text) : null;
+      if (range) return reply('pet_price', draft, SAY.priceRange(range[0], range[1]));
       if (price == null) return reply('pet_price', draft, SAY.badPrice);
       return reply('pet_location', { ...draft, price }, SAY.askLocation);
     }
