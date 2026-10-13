@@ -136,3 +136,27 @@ test('saved photos are read back, and only what is a usable image counts', async
     }
   );
 });
+
+test('each photo also gets a breed guess and how sure it is, tidied, and none for a photo with no pet', async () => {
+  await withFetch(
+    () => answer([
+      { index: 0, shows_pet: true, kind: 'dog', face_visible: true, breed: 'German Shepherd', breed_confidence: 'high' },
+      { index: 1, shows_pet: true, kind: 'dog', face_visible: false, breed: '  Boerboel <b>', breed_confidence: 'nonsense' },
+      { index: 2, shows_pet: false, kind: 'not_an_animal', face_visible: false, breed: 'Poodle', breed_confidence: 'high' },
+      { index: 3, shows_pet: true, kind: 'dog', face_visible: true, breed: '', breed_confidence: 'low' },
+    ]),
+    async (calls) => {
+      const out = await checkPetPhotos(cfg, [photo(1), photo(2), photo(3), photo(4)]);
+      const sent = JSON.parse(calls[0].init.body);
+      const props = sent.response_format.json_schema.schema.properties.photos.items;
+      assert.ok(props.required.includes('breed') && props.required.includes('breed_confidence'));
+      assert.match(sent.messages[0].content[0].text, /breed: the breed it looks most like/);
+      assert.equal(out.verdicts[0].breed, 'German Shepherd');
+      assert.equal(out.verdicts[0].breed_confidence, 'high');
+      assert.equal(out.verdicts[1].breed, 'Boerboel b');
+      assert.equal(out.verdicts[1].breed_confidence, 'low');
+      assert.equal(out.verdicts[2].breed, undefined);
+      assert.equal(out.verdicts[3].breed, undefined);
+    }
+  );
+});

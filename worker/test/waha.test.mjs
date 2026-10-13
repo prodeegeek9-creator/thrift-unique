@@ -2216,6 +2216,25 @@ test('a photo that never comes through is reported to the seller, not silently s
   }
 });
 
+// ── THE BREED FROM THE PHOTOS ────────────────────────────────────────────────
+
+test('the store is told when the photos look like a different breed from the one given', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const vision = makeFakeVision([[{ ...DOGFACE, breed: 'Rottweiler', breed_confidence: 'medium' }]]);
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+  try {
+    await toPetStore(petChatThrough([pic(1)], NAME_TO_YES), { OPENAI_API_KEY: 'oa-key' });
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.breed, 'Boerboel');
+    assert.match(textsTo(waha, SELLER_CHAT).find((t) => /New pet listing/.test(t)), /seller says \*Boerboel\*, but the photos look more like \*Rottweiler\* \(medium confidence\)/);
+    assert.ok(!textsTo(waha, CONSIGNOR_CHAT).some((t) => /Rottweiler/.test(t)));
+  } finally {
+    restore();
+  }
+});
+
 // ── THE SELL PAGE'S OWN BUTTON ───────────────────────────────────────────────
 
 test("the Sell page's WhatsApp button starts a listing, and a products seller is handed to the owner", async () => {
