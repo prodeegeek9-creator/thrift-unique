@@ -254,7 +254,11 @@ on, and after the photos is offered the breed they show ("It looks like a
 *German Shepherd* to me. Reply *YES*…"), or asked again with *mixed* as the
 fallback. Names are compared through the same list of breeds and spellings as
 the breed question ("Alsatian" fits "German Shepherd", "Turkish" fits "Turkish
-Angora").
+Angora"). A breed family rather than a breed ("Turkish",
+"Shepherd", "Terrier", "Mastiff", "Bulldog", "Poodle"…) is asked about after
+the photos: "Which *Turkish* breed is it? 1 Turkish Van (what the photos look
+like) 2 Turkish Angora 3 Not sure, keep *Turkish*", with the one the photos
+match first.
 
 **A guide to each breed is written once.** When the site answers a new listing
 with `breed_guide: "missing"` (it has no guide for that breed yet),

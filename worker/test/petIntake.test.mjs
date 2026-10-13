@@ -581,3 +581,32 @@ test("a seller who doesn't know the breed is offered the one the photos show, an
   assert.match(none.replies.at(-1), /If you're not sure, reply \*mixed\*/);
   assert.equal(petIntakeStep({ state: none.state, draft: none.draft }, say('not sure'), ctx).draft.breed, 'Mixed');
 });
+
+test('"Turkish" is asked about after the photos: which Turkish breed, with what the photos look like first', async () => {
+  const { breedFamily } = await import('../lib/petIntake.js');
+  assert.deepEqual(breedFamily('Turkish'), ['Turkish Angora', 'Turkish Van']);
+  assert.deepEqual(breedFamily('turkish cat'), ['Turkish Angora', 'Turkish Van']);
+  assert.equal(breedFamily('Turkish Angora'), null);
+  assert.equal(breedFamily('German Shepherd'), null);
+  assert.ok(breedFamily('Shepherd').includes('German Shepherd'));
+
+  const cat = (breed, breed_confidence = 'high') => ({ stored: 'p', v: { shows_pet: true, kind: 'cat', face_visible: true, breed, breed_confidence } });
+  const draft = { type: 'Cat', breed: 'Turkish', age: '4 months', listing_type: 'sale', price: 300000, location: 'Surulere', images: [{ url: 'u' }] };
+  const asked = petPhotosDone(draft, [cat('Turkish Van')], ctx);
+  assert.equal(asked.state, 'pet_breed_confirm');
+  const q = asked.replies.at(-1);
+  assert.match(q, /Which \*Turkish\* breed is it\?\n\n1 Turkish Van \(what the photos look like\)\n2 Turkish Angora\n3 Not sure, keep \*Turkish\*/);
+
+  assert.equal(petIntakeStep({ state: asked.state, draft: asked.draft }, say('1'), ctx).draft.breed, 'Turkish Van');
+  assert.equal(petIntakeStep({ state: asked.state, draft: asked.draft }, say('2'), ctx).draft.breed, 'Turkish Angora');
+  const keep = petIntakeStep({ state: asked.state, draft: asked.draft }, say('3'), ctx);
+  assert.equal(keep.draft.breed, 'Turkish');
+  assert.equal(keep.state, 'pet_name');
+  assert.equal(petIntakeStep({ state: asked.state, draft: asked.draft }, say('Turkish Angora'), ctx).draft.breed, 'Turkish Angora');
+
+  // Photos that could not tell: the same question, in the usual order.
+  const blind = petPhotosDone(draft, [{ stored: 'p', v: { shows_pet: true, kind: 'cat', face_visible: true } }], ctx);
+  assert.match(blind.replies.at(-1), /1 Turkish Angora\n2 Turkish Van\n3 Not sure/);
+  // A breed that names one breed is not asked about.
+  assert.notEqual(petPhotosDone({ ...draft, breed: 'Persian' }, [cat('Persian')], { ...ctx, knownName: 'Ade' }).state, 'pet_breed_confirm');
+});

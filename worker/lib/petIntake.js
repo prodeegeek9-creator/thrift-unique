@@ -153,6 +153,27 @@ export function sameBreed(said, seen) {
   return wb.some((w) => w.length > 3 && wa.has(w));
 }
 
+// A word that names a family of breeds, not one: "Turkish" is a Turkish Angora
+// or a Turkish Van. Asked about after the photos, with the one they look like first.
+const BREED_FAMILIES = {
+  turkish: ['Turkish Angora', 'Turkish Van'],
+  shepherd: ['German Shepherd', 'Caucasian Shepherd', 'Anatolian Shepherd', 'Belgian Malinois'],
+  terrier: ['Yorkshire Terrier', 'Jack Russell Terrier', 'American Pit Bull Terrier', 'Bull Terrier'],
+  retriever: ['Golden Retriever', 'Labrador Retriever'],
+  bulldog: ['English Bulldog', 'French Bulldog', 'American Bulldog'],
+  mastiff: ['English Mastiff', 'Bullmastiff', 'Tibetan Mastiff', 'Neapolitan Mastiff'],
+  spaniel: ['Cocker Spaniel', 'Cavalier King Charles Spaniel'],
+  poodle: ['Toy Poodle', 'Miniature Poodle', 'Standard Poodle'],
+  shorthair: ['British Shorthair', 'American Shorthair', 'Exotic Shorthair'],
+  angora: ['Turkish Angora', 'Angora Rabbit'],
+};
+
+// The breeds a vague answer could mean, or null when it already names one.
+export function breedFamily(said) {
+  const key = String(said ?? '').toLowerCase().replace(BREED_FILLER, ' ').replace(/[^\p{L}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  return BREED_FAMILIES[key] ?? null;
+}
+
 // What the photos say the breed is: the guess the photos agree on most, weighted
 // by how sure each was. Low-confidence guesses alone are not worth repeating.
 const WEIGHT = { high: 3, medium: 2, low: 1 };
@@ -204,6 +225,10 @@ const SAY = {
   breedLater: (d) => `No problem 👍 I'll look at the photos and suggest one. How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
   suggestBreed: (b) => `🔎 From the photos, it looks like a *${b}* to me. Reply *YES* to use that, or type the breed.`,
   askBreedAgain: (d) => `What breed should buyers see? If you're not sure, reply *mixed*.`,
+  whichOf: (said, options, seen) =>
+    `Which *${said}* breed is it?\n\n` +
+    options.map((o, i) => `${i + 1} ${o}${seen && o === seen ? ' (what the photos look like)' : ''}`).join('\n') +
+    `\n${options.length + 1} Not sure, keep *${said}*\n\nReply with the number, or type the breed.`,
   notNow: 'No problem 👍 Send *SELL* any time you have another pet to list.',
   askLocation: 'Which city and area are you in? (e.g. Lekki, Lagos)',
   askHealth:
@@ -493,12 +518,16 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     // After the photos, for a seller who did not know the breed.
     case 'pet_breed_confirm': {
       let breed = null, source = 'seller';
-      if (draft.breedSuggest && YES.test(text)) { breed = draft.breedSuggest; source = 'suggested'; }
+      const options = draft.breedOptions;
+      const n = options ? Number(/^\s*(\d+)\s*$/.exec(text)?.[1]) : NaN;
+      if (options && n >= 1 && n <= options.length) breed = options[n - 1];
+      else if (options && (n === options.length + 1 || UNSURE.test(text))) breed = draft.breed;
+      else if (draft.breedSuggest && YES.test(text)) { breed = draft.breedSuggest; source = 'suggested'; }
       else if (UNSURE.test(text)) breed = draft.breedSuggest ?? 'Mixed';
       else breed = parseBreed(text);
       if (!breed) return reply('pet_breed_confirm', draft, SAY.badBreed(draft));
       const check = draft.breedSuggest ? { ...(draft.breedCheck ?? {}), guess: draft.breedSuggest, source } : draft.breedCheck;
-      const d = { ...draft, breed, breedUnsure: false, breedSuggest: undefined, breedCheck: check ? { ...check, matches: sameBreed(breed, check.guess) } : undefined };
+      const d = { ...draft, breed, breedUnsure: false, breedSuggest: undefined, breedOptions: undefined, breedCheck: check ? { ...check, matches: sameBreed(breed, check.guess) } : undefined };
       return after('pet_photos', d, ctx, store);
     }
 
@@ -594,6 +623,13 @@ export function petPhotosDone(draft, images, ctx = {}) {
     breedCheck: guess ? { guess: guess.breed, confidence: guess.confidence, matches: draft.breed ? sameBreed(draft.breed, guess.breed) : null } : undefined,
   };
   const prefix = [droppedNote, confirmed].filter(Boolean).join('\n\n');
+  // A breed family ("Turkish"): which one, with what the photos look like first.
+  const family = draft.breed ? breedFamily(draft.breed) : null;
+  if (family) {
+    const seenIn = guess ? family.find((o) => sameBreed(o, guess.breed) && breedKey(o) === breedKey(guess.breed)) ?? null : null;
+    const options = seenIn ? [seenIn, ...family.filter((o) => o !== seenIn)] : family;
+    return reply('pet_breed_confirm', { ...next, breedOptions: options }, prefix, SAY.whichOf(draft.breed, options, seenIn));
+  }
   // The seller did not know the breed: suggest what the photos show, or ask again.
   if (!draft.breed) {
     if (guess) return reply('pet_breed_confirm', { ...next, breedSuggest: guess.breed }, prefix, SAY.suggestBreed(guess.breed));
@@ -636,7 +672,9 @@ function next(state, draft, note, ctx, store) {
     pet_health: SAY.askHealth,
     pet_notes: SAY.askNotes,
     pet_photos: 'Type *done* to carry on.',
-    pet_breed_confirm: draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
+    pet_breed_confirm: draft.breedOptions
+      ? SAY.whichOf(draft.breed, draft.breedOptions, null)
+      : draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
     pet_name: SAY.askName,
     pet_contact: SAY.askContact(ctx.phone),
   }[state];
