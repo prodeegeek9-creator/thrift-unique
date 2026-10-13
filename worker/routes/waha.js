@@ -1453,13 +1453,16 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     return false;
   }
 
+  const ownerPhone = await phoneFor(cfg, event.session, event.from).catch(() => null);
   let res = null;
   let body = null;
   try {
     res = await fetch(cfg.petListingsUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
-      body: JSON.stringify({ ...action.listing, photos }),
+      // owner_phone: the number this chat is (WhatsApp's own), the seller's
+      // account on the site; whatsapp in the listing is the one buyers are given.
+      body: JSON.stringify({ ...action.listing, photos, ...(ownerPhone ? { owner_phone: ownerPhone } : {}) }),
     });
     // The site answers in JSON; anything else (a firewall page) is just noted.
     body = await res.json().catch(() => null);
@@ -1523,7 +1526,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       .catch((err) => console.error('pet listing not recorded:', err?.message ?? err));
   }
 
-  await say(cfg, tenant, event.from, petSentMessage(tenant.name), own);
+  await say(cfg, tenant, event.from, petSentMessage(tenant.name, typeof body?.manage_url === 'string' ? body.manage_url : null), own);
 
   const owner = chatId(tenant.whatsapp_number);
   if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck }));

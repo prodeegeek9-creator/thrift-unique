@@ -276,9 +276,13 @@ function healthLine(d) {
   return 'Not yet vaccinated or dewormed';
 }
 
-export function petSentMessage(store) {
+// manageUrl: the site's one-tap log-in to the seller's listings, when it gave one.
+export function petSentMessage(store, manageUrl = null) {
   return (
     `✅ Sent! ${store} will check your listing and publish it soon. Buyers will message you directly on WhatsApp.\n\n` +
+    (manageUrl && /^https:\/\//.test(manageUrl)
+      ? `👤 Your listings, to change the price or photos or mark one sold:\n${manageUrl}\n\n`
+      : '') +
     'Have another pet to list? Send *SELL*.'
   );
 }
