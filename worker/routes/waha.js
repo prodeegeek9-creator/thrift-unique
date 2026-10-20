@@ -42,6 +42,8 @@ import {
   petPhotosDone,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
+  asksAboutApproval,
+  petPendingMessage,
   PET_STATES,
 } from '../lib/petIntake.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
@@ -771,6 +773,11 @@ async function storeSession(cfg, event) {
   if (wantsToSellPet(body) && (await petListingsOn(cfg, tenant))) {
     return petIntake(cfg, event, tenant, conversation);
   }
+  // "When will my listing be approved?" from a seller whose pet is waiting.
+  if (asksAboutApproval(body) && (await petStore(cfg, tenant))) {
+    const answered = await petPendingAnswer(cfg, event, tenant);
+    if (answered) return answered;
+  }
 
   // Where a consignor is paid (lib/consignorBank.js). SELL always starts an
   // item, even halfway through giving bank details.
@@ -1180,6 +1187,29 @@ async function petStore(cfg, tenant) {
   return Boolean(row?.enabled);
 }
 
+// Where buyers browse the store's pets, for the bot to point people at.
+function petBrowseUrl(cfg) {
+  return cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
+}
+
+// A seller asking when the listing they sent will be approved, outside a
+// conversation with the bot: told it is waiting, and that they will hear here.
+// null when this chat has nothing waiting, which leaves the question to the owner.
+async function petPendingAnswer(cfg, event, tenant) {
+  const waiting = await db(cfg)
+    .one('pet_listings', `tenant_id=eq.${tenant.id}&chat_id=eq.${encodeURIComponent(event.from)}&status=eq.pending&select=breed&order=created_at.desc`)
+    .catch(() => null);
+  if (!waiting) return null;
+  const logged = await db(cfg).insert(
+    'bot_messages',
+    { tenant_id: tenant.id, chat_id: event.from, external_id: inboundId(event), direction: 'in', body: event.body ?? null, has_media: Boolean(event.hasMedia) },
+    { onConflict: 'external_id' }
+  );
+  if (!logged) return json({ ok: true, replayed: true });
+  await say(cfg, tenant, event.from, petPendingMessage({ store: tenant.name, breed: waiting.breed }), { session: tenant.waha_session });
+  return json({ ok: true, answered: 'pet pending' });
+}
+
 // Somebody rang a pet store's WhatsApp. A bot cannot take a call, so a caller the
 // bot has dealt with (somebody selling a pet, or invited to) is told, in a
 // message, that the number is not for calls and what to do instead. Once an hour
@@ -1228,10 +1258,20 @@ async function callReceived(cfg, event) {
     return json({ ok: true, declined, ignored: 'already told this caller in the last hour' });
   }
 
-  const browseUrl = cfg.petListingsUrl ? `${new URL(cfg.petListingsUrl).origin}/pets.html` : null;
-  await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl }), { session: tenant.waha_session });
+  await say(cfg, tenant, event.from, petNoCallsMessage({ store: tenant.name, browseUrl: petBrowseUrl(cfg) }), { session: tenant.waha_session });
   return json({ ok: true, declined, told: true });
 }
+
+// Where a dealing with the bot is recorded. A conversation counts only once it
+// has been more than the owner typing in the chat (which files an idle one to
+// keep the bot out): otherwise every friend the owner chats with is told the
+// number takes no calls. A message the bot handled from them counts too.
+const DEALT_WITH = [
+  ['pet_sellers', ''],
+  ['pet_listings', ''],
+  ['bot_conversations', '&state=neq.idle'],
+  ['bot_messages', '&direction=eq.in'],
+];
 
 // Has the bot dealt with this caller before: a conversation with it, a pet they
 // listed, a name they gave, or an invitation sent to their number? Somebody who
@@ -1246,8 +1286,8 @@ async function knownToBot(cfg, tenant, event) {
 
   for (const id of ids) {
     const chat = `chat_id=eq.${encodeURIComponent(id)}`;
-    for (const table of ['bot_conversations', 'pet_sellers', 'pet_listings']) {
-      if (await db(cfg).one(table, `${own}&${chat}&select=chat_id`).catch(() => null)) return true;
+    for (const [table, more] of DEALT_WITH) {
+      if (await db(cfg).one(table, `${own}&${chat}${more}&select=chat_id`).catch(() => null)) return true;
     }
   }
   if (!caller) return false;
@@ -1257,8 +1297,8 @@ async function knownToBot(cfg, tenant, event) {
 
   // The call came under a number and what we hold is under a hidden id.
   if (event.from.endsWith('@lid')) return false;
-  for (const table of ['pet_sellers', 'pet_listings', 'bot_conversations']) {
-    const rows = await db(cfg).select(table, `${own}&select=chat_id&limit=200`).catch(() => []);
+  for (const [table, more] of DEALT_WITH) {
+    const rows = await db(cfg).select(table, `${own}${more}&select=chat_id&limit=200`).catch(() => []);
     for (const id of new Set(rows.map((x) => x.chat_id).filter((c) => String(c).endsWith('@lid')))) {
       if ((await phoneFor(cfg, event.session, id).catch(() => null)) === caller) return true;
     }
@@ -1308,7 +1348,7 @@ async function withMedia(cfg, event) {
 async function petIntake(cfg, event, tenant, conversation) {
   event = await withMedia(cfg, event);
   const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
-  const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from) };
+  const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from), browseUrl: petBrowseUrl(cfg) };
 
   // Photos sent together arrive as separate webhooks that this Worker handles at
   // the same time. Each reads the conversation, adds its photo and writes it back,

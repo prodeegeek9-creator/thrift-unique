@@ -15,6 +15,9 @@ import { normalizeNumber } from './phone.js';
 // The pet site's limit, not lib/bot.js's MAX_IMAGES: buyers want to see a
 // litter, and the site stores up to six.
 export const MAX_PET_PHOTOS = 6;
+// A seller who has gone to take the photos ("later, it's dark now") keeps their
+// answers this long, instead of the usual few hours.
+export const PHOTOS_WAIT_HOURS = 48;
 const MAX_BREED = 40;
 const MAX_AGE = 40;
 const MAX_LOCATION = 80;
@@ -26,6 +29,7 @@ const PET_WORD = /\b(dogs?|pupp(y|ies)|pups?|pets?|cats?|kittens?|birds?|parrots
 // that they want to sell or rehome a pet: "Hi, I want to sell my dog". It has
 // to be them selling — "do you sell puppies?" is a buyer and is left alone.
 const SELL_START = /^\s*(sell|rehome)\b/i;
+const GREETING = /^\s*(hi|hello|hey|good (morning|afternoon|evening))\b/i;
 const FIRST_PERSON_SELL = /\b(i|i'm|im|i'd|we|we're|my)\b[^.?!]{0,40}\b(sell|selling|rehome|rehoming|give away|giving away|list)\b/i;
 
 // "I'd like to sell on PuppyPlace" (the Sell page's own WhatsApp button names no
@@ -53,13 +57,41 @@ const NOT_A_NAME = new Set([
   'i', 'you', 'anything', 'whatever', 'any', 'unknown', 'seller', 'owner', 'hello', 'hi', 'hey', 'hmm', 'asdf', 'qwerty',
   'xxx', 'abc', 'abcd', 'sample', 'example', 'dog', 'puppy', 'pet', 'sale', 'for sale', 'sell', 'private', 'anonymous',
   'nobody', 'somebody', 'someone', 'person', 'admin', 'no name', 'your name', 'my kennel', 'kennel',
+  // Typed while the bot was still busy with the photos, or a word sent on its own.
+  'done', 'or', 'and', 'thanks', 'thank you', 'tq', 'later', 'wait',
 ]);
-const FILLER_WORDS = new Set(['my', 'name', 'kennel', 'your', 'the', 'no', 'none', 'a', 'an', 'is', 'of', 'i', 'me', 'myself', 'you', 'seller', 'owner', 'person', 'unknown', 'anything', 'whatever']);
+const FILLER_WORDS = new Set([
+  'my', 'name', 'kennel', 'your', 'the', 'no', 'none', 'a', 'an', 'is', 'of', 'i', 'me', 'myself', 'you', 'seller', 'owner',
+  'person', 'unknown', 'anything', 'whatever', 'brand', 'business', 'shop', 'store', 'company', 'or', 'and',
+]);
+// "Zoe is her name", "her name is Zoe": the pet's name, which sellers often give
+// when asked for theirs. Kept as the pet's name, and theirs is asked for again.
+const PET_NAMED = /^\s*([\p{L}][\p{L}'’-]{1,30})\s+is\s+(?:her|his|its|their|the\s+(?:dog|puppy|pet|cat|kitten)'?s?|the\s+pet)\s+name\b/iu;
+const NAMED_PET = /\b(?:her|his|its|the\s+(?:dog|puppy|pet|cat|kitten)'?s?)\s+name\s+is\s+([\p{L}][\p{L}'’-]{1,30})/iu;
+const PET_NAME_TALK = /\b(?:her|his|its|the\s+(?:dog|puppy|pet|cat|kitten)'?s?|pet'?s?)\s+name\b/i;
+// "Can I use my kennel name?" is a question, not a name. "Will Smith" and "May" are names.
+const NAME_QUESTION = /\?|^\s*(can|could|should|do|does|how|what|when|where|why|is|are|will|may)\s+(i|you|we|it|my|the|this|that|they|he|she)\b/i;
+
+export function petNameIn(text) {
+  const s = String(text ?? '').replace(/\s+/g, ' ');
+  const m = PET_NAMED.exec(s) ?? NAMED_PET.exec(s);
+  return m ? capitalise(m[1]) : null;
+}
+
+// "remina" → "Remina", "golden kennels" → "Golden Kennels"; anything with a
+// capital in it is left as the seller wrote it.
+function capitalise(s) {
+  return s === s.toLowerCase() ? s.replace(/(^|\s)(\p{L})/gu, (_, a, b) => a + b.toUpperCase()) : s;
+}
 
 export function parseSellerName(raw) {
-  const t = String(raw ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
+  let s = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  // "Raya is the pet name, my name is Remina": the part that is theirs.
+  const mine = /\bmy\s+name\s+is\s+(.+)$/i.exec(s);
+  if (mine && mine.index > 0) s = mine[1];
+  else if (PET_NAME_TALK.test(s) || PET_NAMED.test(s)) return null;
+  if (NAME_QUESTION.test(s)) return null;
+  const t = s
     .replace(NAME_LEAD, '')
     .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
     .trim();
@@ -71,7 +103,7 @@ export function parseSellerName(raw) {
   if (!key || NOT_A_NAME.has(key)) return null;
   if (key.split(' ').every((w) => FILLER_WORDS.has(w))) return null;
   if (/^(.)\1+$/u.test(key.replace(/\s/g, ''))) return null;
-  return t;
+  return capitalise(t);
 }
 
 export const PET_STATES = [
@@ -117,10 +149,12 @@ const TRAILING_PET = /\s+(pupp(y|ies)|pups?|dogs?|kittens?|cats?|breed)$/i;
 
 // "Boerboel" → Boerboel. "Eskimo puppy" → Eskimo. A sentence → the breed named in
 // it, or null when none can be found (the seller is asked again).
+const shortAnswer = (t) => t.length <= MAX_BREED && t.split(' ').length <= 4 && !SENTENCE.test(t);
+
 export function parseBreed(raw) {
   const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!t) return null;
-  if (t.length <= MAX_BREED && t.split(' ').length <= 4 && !SENTENCE.test(t)) {
+  if (shortAnswer(t)) {
     const short = t.replace(TRAILING_PET, '').trim();
     if (/^(pupp(y|ies)|pups?|dogs?|cats?|kittens?|pets?|breed|purebred|pure ?breed)$/i.test(short)) return null;
     return (short.match(/\p{L}/gu) ?? []).length >= 2 ? short : null;
@@ -128,6 +162,28 @@ export function parseBreed(raw) {
   const low = ` ${t.toLowerCase().replace(/[^\p{L}\s-]/gu, ' ').replace(/\s+/g, ' ')} `;
   const hit = BREED_ALIASES.find(([alias]) => low.includes(` ${alias} `));
   return hit ? hit[1] : null;
+}
+
+// Every breed a message names, longest spelling first so "Labrador" is not also a "lab".
+export function breedsNamedIn(raw) {
+  let low = ` ${String(raw ?? '').toLowerCase().replace(/[^\p{L}\s-]/gu, ' ').replace(/\s+/g, ' ')} `;
+  const found = [];
+  for (const [alias, name] of BREED_ALIASES) {
+    if (!low.includes(` ${alias} `)) continue;
+    if (!found.includes(name)) found.push(name);
+    low = low.split(` ${alias} `).join('  ');
+  }
+  return found;
+}
+
+// A breeder's whole list ("Boerboel, Eskimo, Husky, Rottweiler…") rather than this
+// listing's breed. A cross ("Rottweiler and Boerboel mix") is one dog, and a short
+// answer is kept as typed.
+function severalBreeds(text) {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (shortAnswer(t) || /\b(mix|mixed|cross|crossbreed|crossed|x)\b/i.test(t)) return null;
+  const named = breedsNamedIn(t).filter((b) => b !== 'Mixed');
+  return named.length >= 2 ? named : null;
 }
 
 // A seller who does not know the breed: the photos are asked instead.
@@ -203,6 +259,45 @@ export function parsePriceRange(text) {
   return a && b ? [Math.min(a, b), Math.max(a, b)] : null;
 }
 
+// "50k per puppy", "45000 for female", "200k, we can negotiate": the amounts in a
+// sentence, each once. An age or a count ("10 weeks", "3 pups", "2females") is
+// not a price, and small numbers beside a real price ("2 males, 50k each") are counts.
+const AMOUNT = /(?<![\p{L}\d_.,])(?:₦|ngn|n)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|m)?(?![\p{L}\d])(?!\s*(?:weeks?|wks?|months?|mths?|years?|yrs?|days?|males?|females?|pups?|pupp(?:y|ies)|kittens?|old|litters?)\b)/giu;
+export function pricesIn(text) {
+  const found = [];
+  for (const m of String(text ?? '').matchAll(AMOUNT)) {
+    const n = parsePrice(m[1] + (m[2] ?? ''));
+    if (n != null && !found.includes(n)) found.push(n);
+  }
+  const real = found.filter((n) => n >= 1000);
+  return real.length ? real : found;
+}
+const NEGOTIABLE_IN = /\b(negotia\w*|nego|open to offers?|offers? welcome|we (can )?(talk|discuss))\b/i;
+// Below this a price is almost always "70" meaning ₦70,000, so it is checked.
+const LOW_PRICE = 1000;
+
+// ── QUESTIONS PARTWAY THROUGH ─────────────────────────────────────────────────
+// What sellers ask while listing, answered before the question they were on is
+// asked again. A question is never kept as an answer: "When does my listing get
+// approved" is not an age, and "Can I add video" is not a photo.
+
+// Shaped like a question: a question mark, a question word first, or "I'd like to know".
+const QUESTION = /\?|^\s*(please[,\s]+)?(can|could|may|should|do|does|did|is|are|how|what|when|where|which|why|will|would|has|have)\b|\b(i'?d like to know|i would like to know|i want to know|enquiry|inquiry|wondering)\b/i;
+const ASK_APPROVAL = /\b(when|how long|how soon|what time)\b[^.?!]{0,40}\b(approv\w*|review\w*|live|publish\w*|posted|visible|on the (site|website))\b/i;
+const ASK_BUY = /\b(do|does|can|will|would)\s+(you|your(\s+\w+){1,2})\s+(buy|purchase|take in)\b|\byour(\s+\w+){0,2}\s+(buys|purchases)\b|\b(connect|link)\s+(me\s+)?(with|to)\s+(a\s+|the\s+)?(\w+\s+)?buyers?\b|\bfind\s+(me\s+)?(a\s+)?buyers?\b/i;
+const ASK_FEE = /\b(is it free|free of charge|(how much|what)\s+(does it|do you|will it|would it|do i|will i)\s+(cost|charge|pay)|(any|a|the)\s+(fee|fees|charges?|commission)|do (i|we) (have to |need to )?pay|listing fee|cost to list)\b/i;
+const ASK_VIDEO = /\b(videos?|vids?|clips?)\b/i;
+const PHOTOS_LATER = /\b(later|tomorrow|tmrw|tonight|in the morning|when i (get|reach|come) (home|back)|not with (him|her|it|them|the (dog|puppy|puppies|cat|pet))|(it'?s|its|it is) (dark|night)|don'?t have (any |the )?(photos?|pictures?|pics?))\b/i;
+const MANY_BREEDS = /\b(many|different|several|various|multiple)\s+(kinds? of |types? of )?breeds\b|\ball (kinds?|types?) of (dogs|breeds)\b|\bbreeder\b/i;
+const ASK_PRICE_ADVICE = /\b(how much|what)\b[^.?!]{0,30}\b(should|can|do|to)\s+(i\s+)?(sell|charge|ask|price|put)\b|\bgood price\b|\b(market|normal|usual|average|current) price\b/i;
+
+// After the listing has gone: "when will it be approved?" The store's routes
+// answer it with the listing that is waiting (routes/waha.js).
+export function asksAboutApproval(text) {
+  const t = String(text ?? '');
+  return QUESTION.test(t) && ASK_APPROVAL.test(t);
+}
+
 const petWord = (draft) => (draft.type === 'Cat' ? 'cat' : draft.type === 'Dog' ? 'dog' : 'pet');
 
 const SAY = {
@@ -212,7 +307,10 @@ const SAY = {
   askType: 'What are you listing?\n\n1 Dog\n2 Cat\n3 Another pet\n4 Pet food, toys or accessories\n\nReply with the number.',
   badType: 'Reply 1 for a dog, 2 for a cat, 3 for another pet or 4 for pet products.',
   products: (store) => `Thanks! 🙌 For pet food, toys and accessories, the ${store} team will reply to you here shortly.`,
-  askBreed: (d) => `What breed is your ${petWord(d)}? (e.g. Boerboel, German Shepherd, or "mixed")`,
+  askBreed: (d) =>
+    d.type === 'Other'
+      ? 'What kind of pet is it, and what breed? (e.g. African Grey parrot, Lionhead rabbit)'
+      : `What breed is your ${petWord(d)}? (e.g. ${d.type === 'Cat' ? 'Persian, Siamese' : 'Boerboel, German Shepherd'}, or "mixed")`,
   askAge: (d) => `How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
   askDeal:
     'Are you selling or giving it up for adoption?\n\n1 Selling\n2 Adoption (free to a good home)\n\nReply with the number.',
@@ -220,7 +318,30 @@ const SAY = {
   askPrice: 'How much are you asking? (e.g. 150000 or 150k). For a litter, the price per puppy.',
   badPrice: "I didn't catch a price. Send your price in numbers on its own, like 85000 or 85k.",
   priceRange: (a, b) => `Buyers see one price. Which should I show: *${formatNaira(a)}* or *${formatNaira(b)}*? Send just that amount.`,
-  badBreed: (d) => `What breed is it? Just the breed name, like *Boerboel*, *Lhasa Apso* or *Mixed*. (Your other details come next.)`,
+  priceCheck: (guess) => `Did you mean *${formatNaira(guess)}*? Reply *YES*, or send the full price (like ${guess} or ${guess / 1000}k).`,
+  badBreed: (d) =>
+    `What breed is it? Just the breed name, like ${d.type === 'Cat' ? '*Persian*, *Siamese*' : '*Boerboel*, *Lhasa Apso*'} or *Mixed*. (Your other details come next.)`,
+  whichBreed: (named) =>
+    `One breed per listing 🙂 Which one is this listing for? (${named.slice(0, 5).join(', ')}${named.length > 5 ? '…' : ''})\n\n` +
+    'When it has been sent, reply *SELL* to list the next.',
+  welcomeBack: (d) => `👋 Welcome back! I still have your *${d.breed}* listing from before. Carry on below, or reply *NEW* to start a different one.`,
+  // Answers to what sellers ask partway through.
+  approval: (store) =>
+    `${store} checks every listing before it goes live, usually within a day. Once you've finished here, I'll message you in this chat with your link as soon as it's live.`,
+  approvalAtReview: (store) =>
+    `It hasn't been sent yet 🙂 Reply *YES* and it goes to ${store} for review. They check every listing, usually within a day, and I'll message you here with your link as soon as it's live.`,
+  weDontBuy: (store) =>
+    `${store} doesn't buy pets itself. We list yours free, and buyers message you directly on WhatsApp to ask questions and arrange to see it.`,
+  free: (store) => `Listing on ${store} is free 🙌 There's no fee.`,
+  video: (d) =>
+    `Videos can't go on the listing, only photos 📸 Tip: pause your video where the ${petWord(d)}'s face is clear, take a screenshot, and send that.`,
+  voiceNote: "I can't listen to voice notes 🙏 Please type your answer.",
+  photosLater: (d) =>
+    `No problem 👍 I'll keep your answers for ${PHOTOS_WAIT_HOURS / 24} days. When you're with your ${petWord(d)}, send the photos here (daylight is best) and type *done*.`,
+  manyBreeds: 'Great 🙌 Each listing is for one breed (a whole litter is fine). Let\'s do one now. When it has been sent, reply *SELL* to list the next.',
+  priceAdvice: (browseUrl) =>
+    'You choose the price, and buyers can still make you an offer.' +
+    (browseUrl ? ` To compare, see what similar pets are listed for:\n${browseUrl}` : ''),
   photoLost: "😕 A photo didn't come through. Please send it again.",
   breedLater: (d) => `No problem 👍 I'll look at the photos and suggest one. How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
   suggestBreed: (b) => `🔎 From the photos, it looks like a *${b}* to me. Reply *YES* to use that, or type the breed.`,
@@ -245,8 +366,11 @@ const SAY = {
   photosNotSaved: "I couldn't save those photos. Please send them again 📸",
   needFace: (d) =>
     `I can see your ${petWord(d)}, but not its face clearly 🐾. Please send a photo where the face is visible (eyes and nose), then type *done*.`,
-  askName: 'What name should buyers see? (your name or your kennel)',
+  askName: (d) => `What name should buyers see as the seller? *Your* name or your kennel's, not the ${petWord(d)}'s.`,
   badName: "That doesn't look like a real name 🤔. Please send your name or your kennel's name, for example *Ade* or *Royal Paws Kennel*.",
+  petNameNotSeller: (d, petName) =>
+    (petName ? `Thanks, I'll show *${petName}* as the ${petWord(d)}'s name 🐾 ` : `That sounds like your ${petWord(d)}'s name 🐾 `) +
+    "And what's *your* name, or your kennel's? Buyers see it as the seller.",
   knownName: (name) => `👤 I'll list this under *${name}*, as last time. You can change it at the summary.`,
   askContact: (phone) =>
     phone
@@ -257,7 +381,8 @@ const SAY = {
     `Here's your listing for ${store}:\n\n` +
     [
       `*${d.breed}* (${d.type === 'Other' ? 'pet' : d.type.toLowerCase()}), ${d.age}`,
-      d.listing_type === 'adoption' ? 'For adoption' : `Price: ${formatNaira(d.price)}`,
+      d.petName ? `🐾 Name: ${d.petName}` : null,
+      d.listing_type === 'adoption' ? 'For adoption' : `Price: ${formatNaira(d.price)}${d.negotiable ? ' (negotiable)' : ''}`,
       `📍 ${d.location}`,
       healthLine(d),
       d.notes ? `Notes: ${d.notes}` : null,
@@ -284,6 +409,14 @@ export function petSentMessage(store, manageUrl = null) {
       ? `👤 Your listings, to change the price or photos or mark one sold:\n${manageUrl}\n\n`
       : '') +
     'Have another pet to list? Send *SELL*.'
+  );
+}
+
+// "When will it be approved?" from a seller whose listing is waiting.
+export function petPendingMessage({ store, breed }) {
+  return (
+    `⏳ Your *${breed ?? 'pet'}* listing is with ${store} for review. They check every listing, usually within a day, ` +
+    "and I'll message you here with your link as soon as it's live."
   );
 }
 
@@ -405,12 +538,18 @@ export function petInviteMessage({ store, browseUrl }) {
 export function petIntakeStep(conversation, message, ctx = {}) {
   const store = ctx.store ?? 'the store';
   const live =
-    conversation && PET_STATES.includes(conversation.state) && !staleness(conversation, ctx)
+    conversation && PET_STATES.includes(conversation.state) && !petStale(conversation, ctx)
       ? conversation
       : null;
 
   const text = String(message?.body ?? '').trim();
   const image = imageFrom(message);
+  // Hours after the seller went to take the photos: only the photos, "done" for
+  // ones already sent, or their opening line again, carry on. Anything else they
+  // say is for the owner.
+  const resumed = Boolean(live && staleness(live, ctx));
+  const finishing = Boolean(live?.draft?.images?.length) && (FILLER.test(text) || YES.test(text));
+  if (resumed && !image && !finishing && !wantsToSellPet(text)) return null;
 
   if (!live) {
     if (!wantsToSellPet(text)) return null;
@@ -422,6 +561,25 @@ export function petIntakeStep(conversation, message, ctx = {}) {
   const draft = { ...(live.draft ?? {}), images: [...(live.draft?.images ?? [])] };
 
   if (CANCEL.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
+  if (/^\s*(new|start (again|over|afresh)|restart)\s*[.!]*$/i.test(text)) return reply('pet_type', { images: [] }, SAY.askType);
+
+  // A video or a voice note can't go on a listing; say so instead of acting as if nothing came.
+  const mime = String(message?.mimetype ?? '');
+  if (message?.hasMedia && /^video\//i.test(mime) && live.state !== 'pet_review') {
+    return reply(live.state, draft, SAY.video(draft), live.state === 'pet_photos' ? (draft.images.length ? SAY.morePhotos(draft.images.length) : null) : question(live.state, draft, ctx));
+  }
+  if (message?.hasMedia && /^audio\//i.test(mime)) {
+    return reply(live.state, draft, SAY.voiceNote, question(live.state, draft, ctx));
+  }
+
+  // Back to a listing started earlier ("Hi, I want to sell my dog" again): an
+  // opening line is never an answer, so the answers kept are offered back. Only
+  // a greeting or SELL, or after a while away: "I am selling them because we're
+  // moving" is an answer to "anything else buyers should know?".
+  const opener = wantsToSellPet(text) && (resumed || SELL_START.test(text) || GREETING.test(text));
+  if (!image && draft.breed && !['pet_type', 'pet_breed', 'pet_deal'].includes(live.state) && opener) {
+    return reply(live.state, draft, SAY.welcomeBack(draft), question(live.state, draft, ctx));
+  }
 
   // A photo WhatsApp said was there but that could not be fetched: the seller
   // is asked to send it again, instead of the bot carrying on as if none came.
@@ -453,6 +611,14 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     return next(live.state, draft, '📸 Photo saved.', ctx, store);
   }
 
+  // A question, answered. YES at the summary still sends it, and "done, I'll send
+  // more later" still finishes the photos.
+  const settled = (live.state === 'pet_review' && YES.test(text)) || (live.state === 'pet_photos' && draft.images.length && (FILLER.test(text) || YES.test(text)));
+  if (text && !settled) {
+    const answered = answerQuestion(live.state, draft, text, ctx, store);
+    if (answered) return answered;
+  }
+
   switch (live.state) {
     case 'pet_type': {
       if (/^\s*(4|food|toys?|accessor|products?|pet products?)\b/i.test(text)) {
@@ -468,6 +634,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     case 'pet_breed': {
       if (!text) return reply('pet_breed', draft, SAY.askBreed(draft));
       if (UNSURE.test(text)) return reply('pet_age', { ...draft, breed: null, breedUnsure: true }, SAY.breedLater(draft));
+      const several = severalBreeds(text);
+      if (several) return reply('pet_breed', draft, SAY.whichBreed(several));
       const breed = parseBreed(text);
       if (!breed) return reply('pet_breed', draft, SAY.badBreed(draft));
       // Picked out of a longer message: say which, so a wrong pick can be put right at the summary.
@@ -481,19 +649,34 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return reply('pet_deal', { ...draft, age: text.replace(/\s+/g, ' ').slice(0, MAX_AGE) }, SAY.askDeal);
 
     case 'pet_deal': {
-      if (/^(1|sell|selling|sale)\b/i.test(text)) return reply('pet_price', { ...draft, listing_type: 'sale' }, SAY.askPrice);
-      if (/^(2|adopt|adoption|free|rehome|rehoming|give)/i.test(text)) {
-        return reply('pet_location', { ...draft, listing_type: 'adoption', price: null }, SAY.askLocation);
-      }
+      // "1", or in their own words: "Am selling", "for adoption".
+      const sale = /^\s*1\b/.test(text) || (!/^\s*2\b/.test(text) && /\b(sell|selling|sale)\b/i.test(text));
+      const adopt = /^\s*2\b/.test(text) || /\b(adopt\w*|free|rehom\w*|give\s+(\w+\s+)?away|giving\s+(\w+\s+)?away)\b/i.test(text);
+      if (sale && !adopt) return reply('pet_price', { ...draft, listing_type: 'sale' }, SAY.askPrice);
+      if (adopt && !sale) return reply('pet_location', { ...draft, listing_type: 'adoption', price: null }, SAY.askLocation);
       return reply('pet_deal', draft, SAY.badDeal);
     }
 
     case 'pet_price': {
-      const price = parsePrice(text);
-      const range = price == null ? parsePriceRange(text) : null;
-      if (range) return reply('pet_price', draft, SAY.priceRange(range[0], range[1]));
-      if (price == null) return reply('pet_price', draft, SAY.badPrice);
-      return reply('pet_location', { ...draft, price }, SAY.askLocation);
+      // "Did you mean ₦70,000?" answered yes.
+      if (draft.priceGuess && YES.test(text)) {
+        return reply('pet_location', { ...draft, price: draft.priceGuess, priceGuess: undefined }, SAY.askLocation);
+      }
+      const d = NEGOTIABLE_IN.test(text) ? { ...draft, negotiable: true } : draft;
+      const range = parsePriceRange(text);
+      if (range) return reply('pet_price', d, SAY.priceRange(range[0], range[1]));
+      const prices = pricesIn(text);
+      if (prices.length > 1) {
+        const [a, b] = [...prices].sort((x, y) => x - y);
+        return reply('pet_price', d, SAY.priceRange(a, b));
+      }
+      if (!prices.length) return reply('pet_price', d, SAY.badPrice);
+      const price = prices[0];
+      // Asked once; the same small amount sent again is taken as meant.
+      if (price < LOW_PRICE && d.priceGuess !== price * 1000) {
+        return reply('pet_price', { ...d, priceGuess: price * 1000 }, SAY.priceCheck(price * 1000));
+      }
+      return reply('pet_location', { ...d, price, priceGuess: undefined }, SAY.askLocation);
     }
 
     case 'pet_location':
@@ -508,7 +691,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_notes': {
       if (!text) return reply('pet_notes', draft, SAY.askNotes);
-      const d = { ...draft, notes: SKIP.test(text) ? null : text.slice(0, MAX_NOTES) };
+      const petName = SKIP.test(text) ? null : petNameIn(text);
+      const d = { ...draft, notes: SKIP.test(text) ? null : text.slice(0, MAX_NOTES), ...(petName ? { petName } : {}) };
       // Photos sent earlier in the chat already count.
       if (d.images.length >= MAX_PET_PHOTOS) return processPhotos(d);
       return reply('pet_photos', d, d.images.length ? SAY.morePhotos(d.images.length) : SAY.askPhotos(d));
@@ -528,7 +712,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       else if (options && (n === options.length + 1 || UNSURE.test(text))) breed = draft.breed;
       else if (draft.breedSuggest && YES.test(text)) { breed = draft.breedSuggest; source = 'suggested'; }
       else if (UNSURE.test(text)) breed = draft.breedSuggest ?? 'Mixed';
-      else breed = parseBreed(text);
+      // "No, Purebred American Eskimo": the breed, without the no.
+      else breed = parseBreed(text.replace(/^\s*(no|nope|not)\b[\s,.!:-]*/i, ''));
       if (!breed) return reply('pet_breed_confirm', draft, SAY.badBreed(draft));
       const check = draft.breedSuggest ? { ...(draft.breedCheck ?? {}), guess: draft.breedSuggest, source } : draft.breedCheck;
       const d = { ...draft, breed, breedUnsure: false, breedSuggest: undefined, breedOptions: undefined, breedCheck: check ? { ...check, matches: sameBreed(breed, check.guess) } : undefined };
@@ -536,9 +721,11 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     }
 
     case 'pet_name': {
+      const petName = petNameIn(text);
+      const d = petName ? { ...draft, petName } : draft;
       const name = parseSellerName(text);
-      if (!name) return reply('pet_name', draft, SAY.badName);
-      return after('pet_name', { ...draft, name, nameKnown: false }, ctx, store);
+      if (!name) return reply('pet_name', d, petName || PET_NAME_TALK.test(text) ? SAY.petNameNotSeller(d, petName) : SAY.badName);
+      return after('pet_name', { ...d, name, nameKnown: false }, ctx, store);
     }
 
     case 'pet_contact': {
@@ -548,11 +735,17 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return review({ ...draft, whatsapp: number }, store);
     }
 
-    case 'pet_review':
+    case 'pet_review': {
       if (YES.test(text)) return submit(draft);
-      if (/^\s*(name|change (?:the )?(?:seller )?name|edit name)\s*$/i.test(text)) return reply('pet_name', draft, SAY.askName);
+      if (/^\s*(name|change (?:the )?(?:seller )?name|edit name)\s*$/i.test(text)) return reply('pet_name', draft, SAY.askName(draft));
+      // "Change the seller name Kenny", "Add my name Remina", "Raya is the pet name, my name is Remina".
+      const renamed = RENAME.exec(text)?.[1] ?? (/\bmy\s+name\s+is\b/i.test(text) ? text : null);
+      const name = renamed ? parseSellerName(renamed) : null;
+      const petName = petNameIn(text);
+      if (name || petName) return review({ ...draft, ...(name ? { name, nameKnown: false } : {}), ...(petName ? { petName } : {}) }, store);
       if (NO.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
       return reply('pet_review', draft, SAY.reviewAgain);
+    }
 
     default:
       return null;
@@ -656,7 +849,7 @@ function after(state, draft, ctx, store, prefix) {
   // when coming from the photos: a seller who has just been asked is not asked twice.
   let note = null;
   if (state === 'pet_photos' && !draft.name) {
-    if (!ctx.knownName) return reply('pet_name', draft, prefix, SAY.askName);
+    if (!ctx.knownName) return reply('pet_name', draft, prefix, SAY.askName(draft));
     draft = { ...draft, name: ctx.knownName, nameKnown: true };
     note = SAY.knownName(ctx.knownName);
   }
@@ -664,25 +857,71 @@ function after(state, draft, ctx, store, prefix) {
   return review(draft, store);
 }
 
-// Re-ask the current question, after a note.
-function next(state, draft, note, ctx, store) {
-  const question = {
+// The question a conversation is waiting on, to ask again after a note.
+function question(state, draft, ctx) {
+  return {
     pet_type: SAY.askType,
     pet_breed: SAY.askBreed(draft),
     pet_age: SAY.askAge(draft),
     pet_deal: SAY.askDeal,
-    pet_price: SAY.askPrice,
+    pet_price: draft.priceGuess ? SAY.priceCheck(draft.priceGuess) : SAY.askPrice,
     pet_location: SAY.askLocation,
     pet_health: SAY.askHealth,
     pet_notes: SAY.askNotes,
-    pet_photos: 'Type *done* to carry on.',
+    pet_photos: draft.images.length >= MAX_PET_PHOTOS ? 'Type *done* to carry on.' : draft.images.length ? SAY.morePhotos(draft.images.length) : SAY.askPhotos(draft),
     pet_breed_confirm: draft.breedOptions
       ? SAY.whichOf(draft.breed, draft.breedOptions, null)
       : draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
-    pet_name: SAY.askName,
+    pet_name: SAY.askName(draft),
     pet_contact: SAY.askContact(ctx.phone),
+    pet_review: SAY.reviewAgain,
   }[state];
-  return reply(state, draft, note, question);
+}
+
+// Re-ask the current question, after a note.
+function next(state, draft, note, ctx, store) {
+  return reply(state, draft, note, question(state, draft, ctx));
+}
+
+// A seller waiting to take the photos keeps their answers for days; anywhere else,
+// a conversation left for hours starts over as before.
+export function petStale(conversation, ctx = {}) {
+  if (conversation?.state !== 'pet_photos') return staleness(conversation, ctx);
+  if (!conversation.updated_at) return false;
+  const now = ctx.now ? new Date(ctx.now).getTime() : Date.now();
+  const then = new Date(conversation.updated_at).getTime();
+  return Number.isFinite(then) && now - then > PHOTOS_WAIT_HOURS * 3_600_000;
+}
+
+// "Change the seller name Kenny", "add my name Remina", "my name is Remina".
+const RENAME = /^\s*(?:(?:please\s+)?(?:change|edit|update|correct|add|use|put)\s+(?:the\s+|my\s+)?(?:seller'?s?\s+)?name\s*(?:to|as|:|-)?\s+|my\s+name\s+is\s+)(.+)$/i;
+
+// What a seller asked partway through, answered, then the question they were on
+// asked again; null when the message is not one of these questions.
+function answerQuestion(state, draft, text, ctx, store) {
+  const asked = QUESTION.test(text);
+  const noPhotosYet = state === 'pet_photos' && !draft.images.length;
+  let said = null;
+  // Whether the answer already says what to do next, so the question is not repeated.
+  let complete = false;
+  if (asked && ASK_APPROVAL.test(text)) {
+    complete = state === 'pet_review';
+    said = complete ? SAY.approvalAtReview(store) : SAY.approval(store);
+  } else if (asked && ASK_BUY.test(text)) said = SAY.weDontBuy(store);
+  else if (asked && ASK_FEE.test(text)) said = SAY.free(store);
+  else if ((asked || state === 'pet_photos') && ASK_VIDEO.test(text)) [said, complete] = [SAY.video(draft), noPhotosYet];
+  else if (state === 'pet_photos' && PHOTOS_LATER.test(text)) [said, complete] = [SAY.photosLater(draft), noPhotosYet];
+  else if (state === 'pet_breed' && MANY_BREEDS.test(text)) said = SAY.manyBreeds;
+  else if (state === 'pet_price' && ASK_PRICE_ADVICE.test(text) && (asked || /good price/i.test(text))) said = SAY.priceAdvice(ctx.browseUrl);
+  if (!said) return null;
+
+  // A breed named in the same message still counts: "I have a purebred Eskimo
+  // puppy… does your store buy puppies?"
+  if (state === 'pet_breed') {
+    const named = breedsNamedIn(text).filter((b) => b !== 'Mixed');
+    if (named.length === 1) return reply('pet_age', { ...draft, breed: named[0] }, said, `Breed: *${named[0]}* 👍`, SAY.askAge(draft));
+  }
+  return reply(state, draft, said, complete ? null : question(state, draft, ctx));
 }
 
 function review(draft, store) {
@@ -724,9 +963,11 @@ function submit(draft) {
         location: draft.location,
         vaccinated: Boolean(draft.vaccinated),
         dewormed: Boolean(draft.dewormed),
-        description: draft.notes ?? null,
+        description: [draft.notes, draft.negotiable && draft.listing_type === 'sale' ? 'Price is negotiable.' : null].filter(Boolean).join('\n') || null,
         seller_name: draft.name,
         whatsapp: draft.whatsapp,
+        // The pet's own name, when the seller gave one ("Zoe is her name").
+        ...(draft.petName ? { name: draft.petName } : {}),
       },
       images: draft.images,
     },

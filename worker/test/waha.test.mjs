@@ -2657,6 +2657,26 @@ test('the every-minute job tells sellers their pet is live', async () => {
   }
 });
 
+test('a seller asking when the listing they sent will be approved is told it is waiting', async () => {
+  const seed = { ...petSeed(), pet_listings: [{ tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, slug: 'boerboel-1', breed: 'Boerboel', listing_type: 'sale', status: 'pending', created_at: '2026-10-20T09:00:00Z' }] };
+  const supabase = makeFakeSupabase(seed);
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await toPetStore([fromConsignor('When will my listing be approved?')]);
+    const told = textsTo(waha, CONSIGNOR_CHAT);
+    assert.equal(told.length, 1);
+    assert.match(told[0], /Your \*Boerboel\* listing is with PuppyPlace for review/);
+    // Anything else they say is still the owner's, and so is the question once nothing waits.
+    await toPetStore([fromConsignor('Thanks')]);
+    supabase.tables.pet_listings[0].status = 'notified';
+    await toPetStore([fromConsignor('When will my listing be approved?')]);
+    assert.equal(textsTo(waha, CONSIGNOR_CHAT).length, 1);
+  } finally {
+    restore();
+  }
+});
+
 // ── PEOPLE WHO RING THE STORE'S WHATSAPP ─────────────────────────────────────
 
 const ring = (extra = {}, { session = STORE_SESSION, from = CONSIGNOR_CHAT } = {}) => ({
@@ -2813,7 +2833,7 @@ test('a caller who is in the middle of a conversation with the bot has the call 
 
 test('a caller the bot has dealt with, but not in a chat now, is left to ring: told, never declined', async () => {
   for (const [label, seedData] of [
-    ['a finished conversation', chatting(CONSIGNOR_CHAT, 'idle')],
+    ['a finished conversation', { ...chatting(CONSIGNOR_CHAT, 'idle'), bot_messages: [{ id: 'm', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'in', body: 'I want to sell my dog', created_at: '2026-10-01T10:00:00Z' }] }],
     ['one left for hours', chatting(CONSIGNOR_CHAT, 'pet_breed', { updated_at: new Date(Date.now() - 7 * 3_600_000).toISOString() })],
     ['one the owner has stepped into', chatting(CONSIGNOR_CHAT, 'pet_breed', { paused_until: new Date(Date.now() + 3_600_000).toISOString() })],
     ['a pet sent earlier', { ...petSeed(), pet_listings: [{ tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, slug: 'a-1', status: 'notified' }] }],
@@ -2832,6 +2852,8 @@ test('anybody else\'s call is left entirely alone: not told, not declined', asyn
     ['somebody else\'s conversation', chatting('2348000000001@c.us')],
     ['somebody else\'s listing', knownCallers('2348000000001@c.us')],
     ['an invitation that was never sent', { ...petSeed(), pet_invites: [{ id: 'i1', tenant_id: TENANT, phone: CONSIGNOR_PHONE.replace(/\D/g, ''), status: 'pending' }] }],
+    // The owner chatting with a friend files an idle conversation, to keep the bot out of it.
+    ['a chat the owner typed in, and nothing more', chatting(CONSIGNOR_CHAT, 'idle', { paused_note: 'How is your health?' })],
     ['only the call notice itself', { ...petSeed(), bot_messages: [{ id: 'm', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.", created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() }] }],
   ]) {
     const { waha, responses } = await ringStore([ring(), ring()], { seedData });
