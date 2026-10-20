@@ -7,6 +7,7 @@
 
 import { sendPetInvites } from './routes/petInvites.js';
 import { notifyLivePets } from './routes/petListings.js';
+import { remindPetSellers } from './routes/petReminders.js';
 import { handlePetStoreSend } from './routes/petStore.js';
 import { ensurePetCallEvents } from './routes/petCalls.js';
 import { ConfigError } from './lib/env.js';
@@ -101,6 +102,12 @@ export default {
           ensurePetCallEvents(env)
             .then((r) => r && console.log(`pet call events: ${JSON.stringify(r)}`))
             .catch((err) => console.error('pet call events:', err?.message ?? err))
+        );
+        // Sellers who stopped at the photos, reminded once (routes/petReminders.js).
+        ctx.waitUntil(
+          remindPetSellers(env, { now: new Date(event.scheduledTime ?? Date.now()) })
+            .then((r) => r && console.log(`pet reminders: ${JSON.stringify(r)}`))
+            .catch((err) => console.error('pet reminders:', err?.message ?? err))
         );
       }
       // Sellers whose pet the store has just approved (routes/petListings.js).

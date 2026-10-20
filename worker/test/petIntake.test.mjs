@@ -21,6 +21,9 @@ import {
   asksAboutApproval,
   petPendingMessage,
   PHOTOS_WAIT_HOURS,
+  petReminderDue,
+  petReminderMessage,
+  REMIND_AFTER_HOURS,
 } from '../lib/petIntake.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
 
@@ -848,4 +851,27 @@ test('"No, <breed>" to a breed the photos suggested keeps the breed without the 
 test('a cat or another pet is asked for its breed with examples that fit', () => {
   assert.match(petIntakeStep(null, say('I want to sell my kitten'), ctx).replies[1], /What breed is your cat\? \(e\.g\. Persian, Siamese, or "mixed"\)/);
   assert.match(petIntakeStep(at('pet_type'), say('3'), ctx).replies[0], /What kind of pet is it, and what breed\?/);
+});
+
+test('a seller who stopped at the photos is due one reminder, hours later, in the Lagos daytime', () => {
+  // 13:00 in Lagos is 12:00 UTC.
+  const noon = Date.parse('2026-10-20T12:00:00Z');
+  const conv = (hoursAgo, draft = {}, extra = {}) => ({
+    state: 'pet_photos', draft: { type: 'Dog', breed: 'Boerboel', images: [], ...draft },
+    updated_at: new Date(noon - hoursAgo * 3_600_000).toISOString(), paused_until: null, ...extra,
+  });
+  assert.equal(petReminderDue(conv(REMIND_AFTER_HOURS + 0.1), noon), true);
+  assert.equal(petReminderDue(conv(REMIND_AFTER_HOURS - 0.5), noon), false, 'too soon');
+  assert.equal(petReminderDue(conv(PHOTOS_WAIT_HOURS + 1), noon), false, 'answers no longer kept');
+  assert.equal(petReminderDue(conv(5, { remindedAt: '2026-10-20T08:00:00Z' }), noon), false, 'reminded already');
+  assert.equal(petReminderDue(conv(5, {}, { paused_until: new Date(noon + 3_600_000).toISOString() }), noon), false, 'owner is in the chat');
+  assert.equal(petReminderDue({ ...conv(5), state: 'pet_age' }, noon), false, 'only the photos step');
+  // Not at night: 23:00 and 06:00 in Lagos wait for the morning.
+  const at = (iso) => { const t = Date.parse(iso); return [{ ...conv(0), updated_at: new Date(t - 5 * 3_600_000).toISOString() }, t]; };
+  assert.equal(petReminderDue(...at('2026-10-20T22:00:00Z')), false, '23:00 in Lagos');
+  assert.equal(petReminderDue(...at('2026-10-20T05:00:00Z')), false, '06:00 in Lagos');
+  assert.equal(petReminderDue(...at('2026-10-20T07:00:00Z')), true, '08:00 in Lagos');
+
+  assert.match(petReminderMessage({ store: 'PuppyPlace', draft: conv(5).draft }), /Your \*Boerboel\* listing on PuppyPlace is nearly done\. It just needs photos.*type \*done\*.*nothing to fill in again.*\*CANCEL\*/s);
+  assert.match(petReminderMessage({ store: 'PuppyPlace', draft: { type: 'Cat', images: [{ url: 'u' }, { url: 'v' }] } }), /Your cat listing on PuppyPlace is nearly done\. You've sent 2 photos\. Send any more, then type \*done\*/);
 });

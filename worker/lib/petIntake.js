@@ -506,6 +506,37 @@ export function petShareMessage({ breed, listing_type, url }) {
   return `🐾 ${breed} ${listing_type === 'adoption' ? 'available for adoption' : 'for sale'} on PuppyPlace. See photos and details:\n${url}`;
 }
 
+// ── REMINDING A SELLER WHO STOPPED AT THE PHOTOS ─────────────────────────────
+// The photos are where sellers most often stop ("later, it's dark now"). Each
+// listing gets one reminder, a few hours after their last message, and only in
+// the daytime in Lagos: a seller is not woken for it. routes/petReminders.js
+// sends it.
+export const REMIND_AFTER_HOURS = 3;
+const LAGOS_UTC_OFFSET = 1;
+const DAY_STARTS = 8;
+const DAY_ENDS = 21;
+
+export function petReminderDue(conversation, now = Date.now()) {
+  if (conversation?.state !== 'pet_photos' || conversation.draft?.remindedAt) return false;
+  if (conversation.paused_until && new Date(conversation.paused_until).getTime() > now) return false;
+  const quiet = now - new Date(conversation.updated_at).getTime();
+  if (!(quiet >= REMIND_AFTER_HOURS * 3_600_000) || petStale(conversation, { now })) return false;
+  const hour = (new Date(now).getUTCHours() + LAGOS_UTC_OFFSET) % 24;
+  return hour >= DAY_STARTS && hour < DAY_ENDS;
+}
+
+export function petReminderMessage({ store, draft }) {
+  const pet = petWord(draft ?? {});
+  const n = draft?.images?.length ?? 0;
+  return (
+    `📸 Hi! Your ${draft?.breed ? `*${draft.breed}*` : pet} listing on ${store} is nearly done. ` +
+    (n
+      ? `You've sent ${n} photo${n === 1 ? '' : 's'}. Send any more, then type *done* and it goes for review.`
+      : `It just needs photos: send a few clear ones (daylight is best, with the ${pet}'s face showing), then type *done* and it goes for review.`) +
+    "\n\nI've kept your answers, so there's nothing to fill in again. Changed your mind? Reply *CANCEL*."
+  );
+}
+
 // Said to somebody who rings the store's WhatsApp. The marker is what the
 // once-an-hour check looks for in what was already sent.
 export const NO_CALLS_MARKER = "can't take calls";

@@ -203,6 +203,12 @@ gone, "when will it be approved?" from that chat is answered while the site
 still has it waiting (`petPendingAnswer` in `routes/waha.js`); anything else
 they say stays the owner's.
 
+**A seller who stops at the photos** (where most stop) is reminded once, from
+the store's number, 3 hours after their last message and only between 8am and
+9pm Lagos time, with their answers kept so there is nothing to fill in again
+(`routes/petReminders.js`, every fifth minute). Not while the owner is in the
+chat, and never twice for one listing (`remindedAt` in the draft).
+
 Answers are read the way sellers write them: "Am selling", a price inside a
 sentence ("50k per puppy", "200k, we can negotiate", which adds "Price is
 negotiable." to the notes), a price under ₦1,000 checked ("Did you mean

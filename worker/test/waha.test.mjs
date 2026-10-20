@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
 import { notifyLivePets } from '../routes/petListings.js';
+import { remindPetSellers } from '../routes/petReminders.js';
 import { ensurePetCallEvents } from '../routes/petCalls.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
@@ -2672,6 +2673,62 @@ test('a seller asking when the listing they sent will be approved is told it is 
     supabase.tables.pet_listings[0].status = 'notified';
     await toPetStore([fromConsignor('When will my listing be approved?')]);
     assert.equal(textsTo(waha, CONSIGNOR_CHAT).length, 1);
+  } finally {
+    restore();
+  }
+});
+
+// ── REMINDING SELLERS WHO STOPPED AT THE PHOTOS ─────────────────────────────
+
+test('a seller who stopped at the photos is reminded once, from the store number, and nobody else is', async () => {
+  const noon = new Date('2026-10-20T12:00:00Z');
+  const ago = (h) => new Date(noon.getTime() - h * 3_600_000).toISOString();
+  const conv = (chat_id, hours, extra = {}) => ({
+    tenant_id: TENANT, chat_id, state: 'pet_photos', draft: { type: 'Dog', breed: 'Boerboel', age: '10 weeks', images: [] }, updated_at: ago(hours), paused_until: null, ...extra,
+  });
+  const supabase = makeFakeSupabase({
+    ...petSeed(),
+    bot_conversations: [
+      conv(SELLER_A, 4),
+      conv(SELLER_B, 1), // wrote an hour ago
+      conv('2348000000001@c.us', 4, { paused_until: ago(-2) }), // the owner is in this chat
+      conv('2348000000002@c.us', 4, { state: 'idle' }),
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    assert.deepEqual(await remindPetSellers(inviteEnv(), { now: noon }), { sent: 1, failed: 0, skipped: 0 });
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].chatId, SELLER_A);
+    assert.equal(waha.sent[0].session, STORE_SESSION);
+    assert.match(waha.sent[0].text, /Your \*Boerboel\* listing on PuppyPlace is nearly done/);
+    const reminded = supabase.tables.bot_conversations.find((c) => c.chat_id === SELLER_A);
+    assert.equal(reminded.draft.remindedAt, noon.toISOString());
+    assert.equal(reminded.draft.breed, 'Boerboel', 'the answers are kept');
+    // Logged as the bot's own, so the echo is not taken for the owner typing.
+    assert.ok(supabase.tables.bot_messages.some((m) => m.chat_id === SELLER_A && m.direction === 'out'));
+
+    // Once: hours later the others are due in their turn, and SELLER_A is not reminded again.
+    reminded.updated_at = ago(0);
+    await remindPetSellers(inviteEnv(), { now: new Date(noon.getTime() + 4 * 3_600_000) });
+    assert.deepEqual(waha.sent.slice(1).map((m) => m.chatId).sort(), [SELLER_B, '2348000000001@c.us'].sort());
+  } finally {
+    restore();
+  }
+});
+
+test('a store without pet listings on sends no reminders', async () => {
+  const noon = new Date('2026-10-20T12:00:00Z');
+  const supabase = makeFakeSupabase({
+    ...petSeed(false),
+    bot_conversations: [{ tenant_id: TENANT, chat_id: SELLER_A, state: 'pet_photos', draft: { type: 'Dog', images: [] }, updated_at: new Date(noon.getTime() - 4 * 3_600_000).toISOString(), paused_until: null }],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    assert.deepEqual(await remindPetSellers(inviteEnv(), { now: noon }), { sent: 0, failed: 0, skipped: 1 });
+    assert.equal(waha.sent.length, 0);
   } finally {
     restore();
   }
