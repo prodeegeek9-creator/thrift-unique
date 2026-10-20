@@ -190,6 +190,31 @@ store approves it there. Nothing is filed here: no submission, no product,
 no payout. Buyers ("do you sell puppies?") are left to the store, as on any
 store's own number.
 
+**Questions partway through** are answered, then the question the seller was
+on is asked again; a question is never kept as an answer ("When does my listing
+get approved" is not an age). Answered: when a listing is approved (at the
+summary: that YES sends it), whether the store buys pets itself, whether
+listing is free, whether videos can go on (photos only, with how to screenshot
+one), "I'll take the photos later" (the answers are kept for 48 hours while it
+waits for photos; the seller is welcomed back), a breeder with many breeds
+(one per listing), and what price to ask (the pets page to compare). A video or
+a voice note sent instead of an answer is called out. After the listing has
+gone, "when will it be approved?" from that chat is answered while the site
+still has it waiting (`petPendingAnswer` in `routes/waha.js`); anything else
+they say stays the owner's.
+
+**A seller who stops at the photos** (where most stop) is reminded once, from
+the store's number, 3 hours after their last message and only between 8am and
+9pm Lagos time, with their answers kept so there is nothing to fill in again
+(`routes/petReminders.js`, every fifth minute). Not while the owner is in the
+chat, and never twice for one listing (`remindedAt` in the draft).
+
+Answers are read the way sellers write them: "Am selling", a price inside a
+sentence ("50k per puppy", "200k, we can negotiate", which adds "Price is
+negotiable." to the notes), a price under ₦1,000 checked ("Did you mean
+₦70,000?"), a breeder's list of breeds asked down to one, "No, <breed>" to a
+suggested breed.
+
 It is on for a store when all three hold:
 
 - the store's `tenant_features` row `pet_listings` is enabled — set by hand,
@@ -275,8 +300,12 @@ means no guide, and the next dog of that breed tries again.
 
 **The seller's name** is asked once. It is checked by plain rules
 (`parseSellerName` in `lib/petIntake.js`): a lead-in such as "my name is" is
-taken off, and "my name", "none", "test", a phone number, a web address or a
-single letter is refused with an example of what to send. Once a listing has
+taken off, and "my name", "none", "test", "done", "or", a question, a phone
+number, a web address or a single letter is refused with an example of what to
+send. The pet's name given instead ("Zoe is her name") is kept as the pet's
+(`name` on the site, shown in the summary) and the seller's is asked for again;
+"Raya is the pet name, my name is Remina" gives both. At the summary, "change
+the seller name Kenny" or "my name is Kenny" changes it in one message. Once a listing has
 reached the site the name is kept in `pet_sellers` (migration 0052), by chat, and
 the next listing from that chat uses it without asking ("I'll list this under
 *Ade*, as last time"). The summary shows it with "(as before)", and replying
@@ -320,9 +349,11 @@ by a crash is never sent again.
 Somebody the bot knows who rings a pet store's WhatsApp gets a message that it
 does not take calls on that number, to send a message instead (and that *SELL*
 lists a pet), with the pets-for-sale link for buyers: at most once an hour for
-each caller. "Knows" means they have a conversation with the bot (any state), a
-pet or a name saved from a listing, or an invitation sent to their number
-(`knownToBot` in `routes/waha.js`). **Anybody else is left alone**: a friend,
+each caller. "Knows" means a message from them the bot handled, a conversation
+with the bot that got past idle, a pet or a name saved from a listing, or an
+invitation sent to their number (`knownToBot` in `routes/waha.js`). The idle
+conversation filed when the owner types in a chat (to keep the bot out of it)
+does not count, or every friend the owner chats with would be told. **Anybody else is left alone**: a friend,
 family, a supplier or a buyer who has never used the bot rings the owner's
 phone as normal and gets nothing. The notice itself does not make somebody
 known. WAHA sends calls as the `call.received` event, which new sessions are

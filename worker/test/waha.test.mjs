@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
 import { notifyLivePets } from '../routes/petListings.js';
+import { remindPetSellers } from '../routes/petReminders.js';
 import { ensurePetCallEvents } from '../routes/petCalls.js';
 import { makeFakeSupabase, installFetch, env, SUPABASE_URL } from './fake-supabase.mjs';
 import { mediaRequest } from '../lib/media.js';
@@ -2657,6 +2658,82 @@ test('the every-minute job tells sellers their pet is live', async () => {
   }
 });
 
+test('a seller asking when the listing they sent will be approved is told it is waiting', async () => {
+  const seed = { ...petSeed(), pet_listings: [{ tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, slug: 'boerboel-1', breed: 'Boerboel', listing_type: 'sale', status: 'pending', created_at: '2026-10-20T09:00:00Z' }] };
+  const supabase = makeFakeSupabase(seed);
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    await toPetStore([fromConsignor('When will my listing be approved?')]);
+    const told = textsTo(waha, CONSIGNOR_CHAT);
+    assert.equal(told.length, 1);
+    assert.match(told[0], /Your \*Boerboel\* listing is with PuppyPlace for review/);
+    // Anything else they say is still the owner's, and so is the question once nothing waits.
+    await toPetStore([fromConsignor('Thanks')]);
+    supabase.tables.pet_listings[0].status = 'notified';
+    await toPetStore([fromConsignor('When will my listing be approved?')]);
+    assert.equal(textsTo(waha, CONSIGNOR_CHAT).length, 1);
+  } finally {
+    restore();
+  }
+});
+
+// ── REMINDING SELLERS WHO STOPPED AT THE PHOTOS ─────────────────────────────
+
+test('a seller who stopped at the photos is reminded once, from the store number, and nobody else is', async () => {
+  const noon = new Date('2026-10-20T12:00:00Z');
+  const ago = (h) => new Date(noon.getTime() - h * 3_600_000).toISOString();
+  const conv = (chat_id, hours, extra = {}) => ({
+    tenant_id: TENANT, chat_id, state: 'pet_photos', draft: { type: 'Dog', breed: 'Boerboel', age: '10 weeks', images: [] }, updated_at: ago(hours), paused_until: null, ...extra,
+  });
+  const supabase = makeFakeSupabase({
+    ...petSeed(),
+    bot_conversations: [
+      conv(SELLER_A, 4),
+      conv(SELLER_B, 1), // wrote an hour ago
+      conv('2348000000001@c.us', 4, { paused_until: ago(-2) }), // the owner is in this chat
+      conv('2348000000002@c.us', 4, { state: 'idle' }),
+    ],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    assert.deepEqual(await remindPetSellers(inviteEnv(), { now: noon }), { sent: 1, failed: 0, skipped: 0 });
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].chatId, SELLER_A);
+    assert.equal(waha.sent[0].session, STORE_SESSION);
+    assert.match(waha.sent[0].text, /Your \*Boerboel\* listing on PuppyPlace is nearly done/);
+    const reminded = supabase.tables.bot_conversations.find((c) => c.chat_id === SELLER_A);
+    assert.equal(reminded.draft.remindedAt, noon.toISOString());
+    assert.equal(reminded.draft.breed, 'Boerboel', 'the answers are kept');
+    // Logged as the bot's own, so the echo is not taken for the owner typing.
+    assert.ok(supabase.tables.bot_messages.some((m) => m.chat_id === SELLER_A && m.direction === 'out'));
+
+    // Once: hours later the others are due in their turn, and SELLER_A is not reminded again.
+    reminded.updated_at = ago(0);
+    await remindPetSellers(inviteEnv(), { now: new Date(noon.getTime() + 4 * 3_600_000) });
+    assert.deepEqual(waha.sent.slice(1).map((m) => m.chatId).sort(), [SELLER_B, '2348000000001@c.us'].sort());
+  } finally {
+    restore();
+  }
+});
+
+test('a store without pet listings on sends no reminders', async () => {
+  const noon = new Date('2026-10-20T12:00:00Z');
+  const supabase = makeFakeSupabase({
+    ...petSeed(false),
+    bot_conversations: [{ tenant_id: TENANT, chat_id: SELLER_A, state: 'pet_photos', draft: { type: 'Dog', images: [] }, updated_at: new Date(noon.getTime() - 4 * 3_600_000).toISOString(), paused_until: null }],
+  });
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+  try {
+    assert.deepEqual(await remindPetSellers(inviteEnv(), { now: noon }), { sent: 0, failed: 0, skipped: 1 });
+    assert.equal(waha.sent.length, 0);
+  } finally {
+    restore();
+  }
+});
+
 // ── PEOPLE WHO RING THE STORE'S WHATSAPP ─────────────────────────────────────
 
 const ring = (extra = {}, { session = STORE_SESSION, from = CONSIGNOR_CHAT } = {}) => ({
@@ -2813,7 +2890,7 @@ test('a caller who is in the middle of a conversation with the bot has the call 
 
 test('a caller the bot has dealt with, but not in a chat now, is left to ring: told, never declined', async () => {
   for (const [label, seedData] of [
-    ['a finished conversation', chatting(CONSIGNOR_CHAT, 'idle')],
+    ['a finished conversation', { ...chatting(CONSIGNOR_CHAT, 'idle'), bot_messages: [{ id: 'm', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'in', body: 'I want to sell my dog', created_at: '2026-10-01T10:00:00Z' }] }],
     ['one left for hours', chatting(CONSIGNOR_CHAT, 'pet_breed', { updated_at: new Date(Date.now() - 7 * 3_600_000).toISOString() })],
     ['one the owner has stepped into', chatting(CONSIGNOR_CHAT, 'pet_breed', { paused_until: new Date(Date.now() + 3_600_000).toISOString() })],
     ['a pet sent earlier', { ...petSeed(), pet_listings: [{ tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, slug: 'a-1', status: 'notified' }] }],
@@ -2832,6 +2909,8 @@ test('anybody else\'s call is left entirely alone: not told, not declined', asyn
     ['somebody else\'s conversation', chatting('2348000000001@c.us')],
     ['somebody else\'s listing', knownCallers('2348000000001@c.us')],
     ['an invitation that was never sent', { ...petSeed(), pet_invites: [{ id: 'i1', tenant_id: TENANT, phone: CONSIGNOR_PHONE.replace(/\D/g, ''), status: 'pending' }] }],
+    // The owner chatting with a friend files an idle conversation, to keep the bot out of it.
+    ['a chat the owner typed in, and nothing more', chatting(CONSIGNOR_CHAT, 'idle', { paused_note: 'How is your health?' })],
     ['only the call notice itself', { ...petSeed(), bot_messages: [{ id: 'm', tenant_id: TENANT, chat_id: CONSIGNOR_CHAT, direction: 'out', body: "PuppyPlace can't take calls on this number.", created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() }] }],
   ]) {
     const { waha, responses } = await ringStore([ring(), ring()], { seedData });

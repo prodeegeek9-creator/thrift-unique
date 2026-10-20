@@ -16,6 +16,14 @@ import {
   petSentMessage,
   parseBreed,
   parsePriceRange,
+  pricesIn,
+  petNameIn,
+  asksAboutApproval,
+  petPendingMessage,
+  PHOTOS_WAIT_HOURS,
+  petReminderDue,
+  petReminderMessage,
+  REMIND_AFTER_HOURS,
 } from '../lib/petIntake.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
 
@@ -447,9 +455,14 @@ test('a breed picked out of a message is said back; one that cannot be found is 
   assert.match(picked.replies[0], /Breed: \*American Eskimo\*/);
   const plain = petIntakeStep(conv, say('Boerboel'), ctx);
   assert.equal(plain.replies.length, 1);
-  const unclear = petIntakeStep(conv, say('Please can you help me find a buyer for my dog?'), ctx);
+  const unclear = petIntakeStep(conv, say('I am looking for a buyer for my puppy, she is lovely'), ctx);
   assert.equal(unclear.state, 'pet_breed');
   assert.match(unclear.replies[0], /Just the breed name/);
+  // A question is answered, and the breed asked for again.
+  const asked = petIntakeStep(conv, say('Please can you help me find a buyer for my dog?'), ctx);
+  assert.equal(asked.state, 'pet_breed');
+  assert.match(asked.replies[0], /doesn't buy pets itself/);
+  assert.match(asked.replies[1], /What breed is your dog/);
 });
 
 test('a price range is answered with a question using the seller\'s own amounts, not an example to copy', () => {
@@ -609,4 +622,256 @@ test('"Turkish" is asked about after the photos: which Turkish breed, with what 
   assert.match(blind.replies.at(-1), /1 Turkish Angora\n2 Turkish Van\n3 Not sure/);
   // A breed that names one breed is not asked about.
   assert.notEqual(petPhotosDone({ ...draft, breed: 'Persian' }, [cat('Persian')], { ...ctx, knownName: 'Ade' }).state, 'pet_breed_confirm');
+});
+
+// ── WHAT SELLERS ASKED AND TYPED IN REAL CHATS ───────────────────────────────
+
+const at = (state, draft = {}) => ({ state, draft: { type: 'Dog', images: [], ...draft } });
+const browse = { ...ctx, browseUrl: 'https://pets.test/pets.html' };
+
+test('"when does my listing get approved?" is answered, and never kept as the age', () => {
+  const r = petIntakeStep(at('pet_age', { breed: 'American Eskimo' }), say('When does my listing get approved'), ctx);
+  assert.equal(r.state, 'pet_age');
+  assert.equal(r.draft.age, undefined);
+  assert.match(r.replies[0], /PuppyPlace checks every listing before it goes live, usually within a day/);
+  assert.match(r.replies[1], /How old is your dog/);
+  // At the summary it has not been sent yet: say so, and that YES sends it.
+  const review = petIntakeStep(at('pet_review', { breed: 'Boerboel' }), say('When can I get review'), ctx);
+  assert.equal(review.state, 'pet_review');
+  assert.equal(review.action, null);
+  assert.deepEqual(review.replies.length, 1);
+  assert.match(review.replies[0], /hasn't been sent yet.*Reply \*YES\*/s);
+  // YES with a question still sends it.
+  const done = run([...DOG, say('Yes, when will it be live?')]).at(-1);
+  assert.equal(done.action.type, 'pet_listing');
+  assert.ok(asksAboutApproval('When will my listing be approved?'));
+  assert.ok(!asksAboutApproval('Lekki, Lagos'));
+  assert.match(petPendingMessage({ store: 'PuppyPlace', breed: 'Boerboel' }), /Your \*Boerboel\* listing is with PuppyPlace for review/);
+});
+
+test('a seller asking about videos is told photos only, with how to get one from the video', () => {
+  for (const body of ['Can I add video', 'I have the vid only']) {
+    const r = petIntakeStep(at('pet_photos'), say(body), ctx);
+    assert.equal(r.state, 'pet_photos', body);
+    assert.deepEqual(r.replies, ["Videos can't go on the listing, only photos 📸 Tip: pause your video where the dog's face is clear, take a screenshot, and send that."], body);
+  }
+  // A video that is sent, rather than asked about, is answered the same, not met with the photo question again.
+  const sent = petIntakeStep(at('pet_photos'), { hasMedia: true, mediaUrl: 'https://waha.test/v.mp4', mimetype: 'video/mp4', body: '' }, ctx);
+  assert.match(sent.replies[0], /Videos can't go on the listing/);
+  assert.equal(sent.replies.length, 1);
+  const withPhotos = petIntakeStep(at('pet_photos', { images: [{ url: 'u' }] }), { hasMedia: true, mediaUrl: 'https://waha.test/v.mp4', mimetype: 'video/mp4' }, ctx);
+  assert.match(withPhotos.replies[1], /Send more, or type \*done\*/);
+  // A voice note is not taken as an answer either.
+  const voice = petIntakeStep(at('pet_age'), { hasMedia: true, mediaUrl: 'https://waha.test/a.ogg', mimetype: 'audio/ogg; codecs=opus' }, ctx);
+  assert.equal(voice.state, 'pet_age');
+  assert.match(voice.replies[0], /can't listen to voice notes/);
+  assert.match(voice.replies[1], /How old/);
+});
+
+test('a seller who will take the photos later keeps their answers for days, and is welcomed back', () => {
+  for (const body of ["Can I snap it when I get home later If it's not late for Me to do that because am not with her", 'Later its dark now']) {
+    const r = petIntakeStep(at('pet_photos', { breed: 'Lhasa' }), say(body), ctx);
+    assert.equal(r.state, 'pet_photos', body);
+    assert.deepEqual(r.replies, [`No problem 👍 I'll keep your answers for ${PHOTOS_WAIT_HOURS / 24} days. When you're with your dog, send the photos here (daylight is best) and type *done*.`], body);
+  }
+  const now = Date.parse('2026-10-20T10:00:00Z');
+  const hoursAgo = (h) => new Date(now - h * 3_600_000).toISOString();
+  const waiting = (h, state = 'pet_photos') => ({ ...at(state, { breed: 'Lhasa', age: '1yr' }), updated_at: hoursAgo(h) });
+  // Next morning: the photo carries on where they left off.
+  const back = petIntakeStep(waiting(20), photo(1), { ...ctx, now });
+  assert.equal(back.state, 'pet_photos');
+  assert.match(back.replies[0], /Got it/);
+  // Or they open with the site's message again: offered their answers back.
+  const opener = petIntakeStep(waiting(20), say('Hi PuppyPlace, I want to sell my dog.'), { ...ctx, now });
+  assert.equal(opener.state, 'pet_photos');
+  assert.match(opener.replies[0], /Welcome back! I still have your \*Lhasa\* listing.*reply \*NEW\*/s);
+  assert.match(opener.replies[1], /Now send clear, recent photos/);
+  const fresh = petIntakeStep(opener, say('new'), ctx);
+  assert.equal(fresh.state, 'pet_type');
+  assert.deepEqual(fresh.draft, { images: [] });
+  // Anything else, hours later, is left for the owner rather than met with a reminder.
+  assert.equal(petIntakeStep(waiting(20), say('Good morning sir, how is business?'), { ...ctx, now }), null);
+  // Photos sent last night and "done" this morning: checked as usual.
+  const sentLastNight = { ...waiting(20), draft: { ...waiting(20).draft, images: [{ url: 'u' }] } };
+  assert.equal(petIntakeStep(sentLastNight, say('Done'), { ...ctx, now }).action.type, 'process_photos');
+  // Within the hour, "done, more later" still finishes the photos.
+  const finish = petIntakeStep(at('pet_photos', { breed: 'Lhasa', images: [{ url: 'u' }] }), say("Done, I'll send more later"), ctx);
+  assert.equal(finish.action.type, 'process_photos');
+  // And a seller telling buyers why they are selling is answering, not starting over.
+  const notes = petIntakeStep(at('pet_notes', { breed: 'Lhasa' }), say("I am selling my puppies because we're relocating"), ctx);
+  assert.equal(notes.state, 'pet_photos');
+  assert.equal(notes.draft.notes, "I am selling my puppies because we're relocating");
+  // Past the wait, or left for hours at any other question, it starts over as before.
+  assert.equal(petIntakeStep(waiting(PHOTOS_WAIT_HOURS + 1), photo(1), { ...ctx, now }), null);
+  assert.equal(petIntakeStep(waiting(STALE_AFTER_HOURS + 1, 'pet_age'), say('10 weeks'), { ...ctx, now }), null);
+});
+
+test('"does your store buy puppies?" is answered, and the breed in the same message is kept', () => {
+  const r = petIntakeStep(
+    at('pet_breed'),
+    say('Please, I would like to make an enquiry. I have a purebred Eskimo puppy, and I’m looking for a buyer. I would like to know if your pet store buys puppies directly or if you could help me connect with buyers'),
+    ctx
+  );
+  assert.equal(r.state, 'pet_age');
+  assert.equal(r.draft.breed, 'American Eskimo');
+  assert.match(r.replies[0], /PuppyPlace doesn't buy pets itself. We list yours free/);
+  assert.match(r.replies[1], /Breed: \*American Eskimo\*/);
+  assert.match(r.replies[2], /How old/);
+});
+
+test('a breeder with many breeds lists one at a time', () => {
+  const many = petIntakeStep(at('pet_breed'), say('Am a dog breeder So I sell many breeds'), ctx);
+  assert.equal(many.state, 'pet_breed');
+  assert.match(many.replies[0], /Each listing is for one breed.*reply \*SELL\* to list the next/s);
+  assert.match(many.replies[1], /What breed is your dog/);
+  const list = petIntakeStep(at('pet_breed'), say('Borehole Eskimo Husky German Shepherd Lhasa apso Rottweiler Cane corso'), ctx);
+  assert.equal(list.state, 'pet_breed');
+  assert.match(list.replies[0], /Which one is this listing for\? \(.*German Shepherd.*Lhasa Apso/);
+  // A cross is one dog, and a short answer is kept as typed.
+  assert.equal(petIntakeStep(at('pet_breed'), say('Eskimo husky mix'), ctx).draft.breed, 'Eskimo husky mix');
+  assert.equal(petIntakeStep(at('pet_breed'), say('Rottweiler and Boerboel cross, 2 pups'), ctx).state, 'pet_age');
+  // Two puppies are not a breeder's list.
+  const two = petIntakeStep(at('pet_breed'), say('2 different puppies, both females and are rottweiler crossbreed.'), ctx);
+  assert.ok(!/one breed/.test(two.replies.join(' ')), two.replies.join(' '));
+});
+
+test('"is it free?" and "what price should I sell?" are answered', () => {
+  const free = petIntakeStep(at('pet_type'), say('Is it free to list?'), ctx);
+  assert.equal(free.state, 'pet_type');
+  assert.match(free.replies[0], /Listing on PuppyPlace is free/);
+  assert.match(free.replies[1], /What are you listing/);
+  const advice = petIntakeStep(at('pet_price', { listing_type: 'sale' }), say('How much should I sell it?'), browse);
+  assert.equal(advice.state, 'pet_price');
+  assert.equal(advice.draft.price, undefined);
+  assert.match(advice.replies[0], /You choose the price.*https:\/\/pets\.test\/pets\.html/s);
+  assert.match(advice.replies[1], /How much are you asking/);
+});
+
+test('a price with words around it is found, and "negotiable" is kept for buyers', () => {
+  assert.deepEqual(pricesIn('50k per puppy'), [50000]);
+  assert.deepEqual(pricesIn('45000 for female'), [45000]);
+  assert.deepEqual(pricesIn('2 males, 50k each'), [50000]);
+  assert.deepEqual(pricesIn('8weeks 150k'), [150000]);
+  assert.deepEqual(pricesIn('₦200,000'), [200000]);
+  assert.deepEqual(pricesIn('call me'), []);
+  assert.deepEqual(pricesIn('N150k'), [150000]);
+  for (const body of ['10 weeks', 'Around 12 weeks I guess', '3 pups', '1male 2females', 'Dave_k9']) assert.deepEqual(pricesIn(body), [], body);
+  assert.equal(petIntakeStep(at('pet_price', { listing_type: 'sale' }), say('10 weeks'), ctx).replies[0], "I didn't catch a price. Send your price in numbers on its own, like 85000 or 85k.");
+  const sale = at('pet_price', { listing_type: 'sale' });
+  for (const [body, price] of [['50k per puppy', 50000], ['45000 for female', 45000], ['200,000', 200000]]) {
+    const r = petIntakeStep(sale, say(body), ctx);
+    assert.equal(r.state, 'pet_location', body);
+    assert.equal(r.draft.price, price, body);
+  }
+  const nego = petIntakeStep(sale, say('200k the we negotiate'), ctx);
+  assert.equal(nego.draft.price, 200000);
+  assert.equal(nego.draft.negotiable, true);
+  // Two prices: which one buyers see.
+  const two = petIntakeStep(sale, say('45k for female, 40k for male'), ctx);
+  assert.equal(two.state, 'pet_price');
+  assert.match(two.replies[0], /₦40,000.*₦45,000/);
+  // Negotiable shows at the summary and goes to the site with the notes.
+  const out = run([...DOG.slice(0, 4), say('150k negotiable'), ...DOG.slice(5), say('yes')]);
+  assert.match(out.at(-2).replies[0], /Price: ₦150,000 \(negotiable\)/);
+  assert.equal(out.at(-1).action.listing.description, '3 males, 2 females\nPrice is negotiable.');
+});
+
+test('a price under ₦1,000 is checked: "70" is far more often ₦70,000', () => {
+  const sale = at('pet_price', { listing_type: 'sale' });
+  const asked = petIntakeStep(sale, say('70'), ctx);
+  assert.equal(asked.state, 'pet_price');
+  assert.match(asked.replies[0], /Did you mean \*₦70,000\*\? Reply \*YES\*, or send the full price \(like 70000 or 70k\)/);
+  const yes = petIntakeStep(asked, say('yes'), ctx);
+  assert.equal(yes.state, 'pet_location');
+  assert.equal(yes.draft.price, 70000);
+  assert.equal(yes.draft.priceGuess, undefined);
+  assert.equal(petIntakeStep(asked, say('75k'), ctx).draft.price, 75000);
+  // The same small amount again is taken as meant.
+  assert.equal(petIntakeStep(asked, say('70'), ctx).draft.price, 70);
+});
+
+test('"Am selling" and "for adoption" are understood without the number', () => {
+  const deal = at('pet_deal');
+  for (const body of ['Am selling', 'Selling', 'I want to sell', '1']) assert.equal(petIntakeStep(deal, say(body), ctx).draft.listing_type, 'sale', body);
+  for (const body of ['for adoption', 'Free to a good home', 'I want to give her away', '2']) assert.equal(petIntakeStep(deal, say(body), ctx).draft.listing_type, 'adoption', body);
+  assert.equal(petIntakeStep(deal, say('maybe'), ctx).state, 'pet_deal');
+});
+
+test("the pet's name given as the seller's is kept as the pet's, and the seller's asked for", () => {
+  assert.equal(petNameIn('Zoe is her name'), 'Zoe');
+  assert.equal(petNameIn("She's female, color white mix with black and her name is Zoe"), 'Zoe');
+  assert.equal(petNameIn('Raya is the pet name my name is remina'), 'Raya');
+  assert.equal(petNameIn('Ade Kennels'), null);
+  for (const body of ['Zoe is her name', 'Lucy is her name']) {
+    const r = petIntakeStep(at('pet_name', { breed: 'Lhasa' }), say(body), ctx);
+    assert.equal(r.state, 'pet_name', body);
+    assert.equal(r.draft.name, undefined, body);
+    assert.match(r.replies[0], /I'll show \*(Zoe|Lucy)\* as the dog's name 🐾 And what's \*your\* name/, body);
+  }
+  const both = petIntakeStep(at('pet_name', { breed: 'Husky' }), say('Raya is the pet name my name is remina'), ctx);
+  assert.equal(both.state, 'pet_contact');
+  assert.equal(both.draft.name, 'Remina');
+  assert.equal(both.draft.petName, 'Raya');
+  // Sent to the site as the pet's name; the summary shows it.
+  const out = run([...DOG.slice(0, 7), say('Female, her name is Zoe'), ...DOG.slice(8), say('yes')]);
+  assert.match(out.at(-2).replies[0], /🐾 Name: Zoe/);
+  assert.equal(out.at(-1).action.listing.name, 'Zoe');
+  assert.equal(run([...DOG, say('yes')]).at(-1).action.listing.name, undefined);
+});
+
+test('words typed in passing are not names: "Done", "Or", "My kennel Brand name", a question', () => {
+  for (const body of ['Done', 'Or', 'My kennel Brand name', 'My name is', 'Can I use my kennel name?', 'TQ']) {
+    assert.equal(parseSellerName(body), null, body);
+  }
+  assert.equal(parseSellerName('Will Smith Kennels'), 'Will Smith Kennels');
+  assert.equal(parseSellerName('golden kennels'), 'Golden Kennels');
+  assert.equal(parseSellerName('Dave_k9'), 'Dave_k9');
+  assert.match(petIntakeStep(at('pet_name'), say('Done'), ctx).replies[0], /doesn't look like a real name/);
+});
+
+test('the seller name can be changed at the summary in one message', () => {
+  const summary = at('pet_review', { breed: 'Lhasa', age: '1yr', listing_type: 'sale', price: 70000, location: 'Mowe', name: 'Zoe is her name', whatsapp: '2348031234567', images: [{ url: 'u' }] });
+  for (const [body, name] of [['Change the seller name Kenny', 'Kenny'], ['Add my name remina', 'Remina'], ['my name is Kenny', 'Kenny']]) {
+    const r = petIntakeStep(summary, say(body), ctx);
+    assert.equal(r.state, 'pet_review', body);
+    assert.equal(r.draft.name, name, body);
+    assert.match(r.replies[0], new RegExp(`Seller: ${name}, \\+2348031234567`), body);
+  }
+  const both = petIntakeStep(summary, say('Raya is the pet name my name is remina'), ctx);
+  assert.equal(both.draft.name, 'Remina');
+  assert.equal(both.draft.petName, 'Raya');
+  assert.equal(petIntakeStep(summary, say('TQ'), ctx).draft.name, 'Zoe is her name');
+});
+
+test('"No, <breed>" to a breed the photos suggested keeps the breed without the no', () => {
+  const r = petIntakeStep(at('pet_breed_confirm', { breed: null, breedSuggest: 'mixed', age: '1-3months', images: [{ stored: 'p0' }] }), say('No Purebreed American Eskimo'), ctx);
+  assert.equal(r.draft.breed, 'Purebreed American Eskimo');
+});
+
+test('a cat or another pet is asked for its breed with examples that fit', () => {
+  assert.match(petIntakeStep(null, say('I want to sell my kitten'), ctx).replies[1], /What breed is your cat\? \(e\.g\. Persian, Siamese, or "mixed"\)/);
+  assert.match(petIntakeStep(at('pet_type'), say('3'), ctx).replies[0], /What kind of pet is it, and what breed\?/);
+});
+
+test('a seller who stopped at the photos is due one reminder, hours later, in the Lagos daytime', () => {
+  // 13:00 in Lagos is 12:00 UTC.
+  const noon = Date.parse('2026-10-20T12:00:00Z');
+  const conv = (hoursAgo, draft = {}, extra = {}) => ({
+    state: 'pet_photos', draft: { type: 'Dog', breed: 'Boerboel', images: [], ...draft },
+    updated_at: new Date(noon - hoursAgo * 3_600_000).toISOString(), paused_until: null, ...extra,
+  });
+  assert.equal(petReminderDue(conv(REMIND_AFTER_HOURS + 0.1), noon), true);
+  assert.equal(petReminderDue(conv(REMIND_AFTER_HOURS - 0.5), noon), false, 'too soon');
+  assert.equal(petReminderDue(conv(PHOTOS_WAIT_HOURS + 1), noon), false, 'answers no longer kept');
+  assert.equal(petReminderDue(conv(5, { remindedAt: '2026-10-20T08:00:00Z' }), noon), false, 'reminded already');
+  assert.equal(petReminderDue(conv(5, {}, { paused_until: new Date(noon + 3_600_000).toISOString() }), noon), false, 'owner is in the chat');
+  assert.equal(petReminderDue({ ...conv(5), state: 'pet_age' }, noon), false, 'only the photos step');
+  // Not at night: 23:00 and 06:00 in Lagos wait for the morning.
+  const at = (iso) => { const t = Date.parse(iso); return [{ ...conv(0), updated_at: new Date(t - 5 * 3_600_000).toISOString() }, t]; };
+  assert.equal(petReminderDue(...at('2026-10-20T22:00:00Z')), false, '23:00 in Lagos');
+  assert.equal(petReminderDue(...at('2026-10-20T05:00:00Z')), false, '06:00 in Lagos');
+  assert.equal(petReminderDue(...at('2026-10-20T07:00:00Z')), true, '08:00 in Lagos');
+
+  assert.match(petReminderMessage({ store: 'PuppyPlace', draft: conv(5).draft }), /Your \*Boerboel\* listing on PuppyPlace is nearly done\. It just needs photos.*type \*done\*.*nothing to fill in again.*\*CANCEL\*/s);
+  assert.match(petReminderMessage({ store: 'PuppyPlace', draft: { type: 'Cat', images: [{ url: 'u' }, { url: 'v' }] } }), /Your cat listing on PuppyPlace is nearly done\. You've sent 2 photos\. Send any more, then type \*done\*/);
 });
