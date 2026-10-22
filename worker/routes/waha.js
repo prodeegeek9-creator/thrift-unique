@@ -83,6 +83,7 @@ import {
   ensureStoreWebhook,
   rejectCall,
   messageMedia,
+  recentOwnMessages,
 } from '../lib/waha.js';
 
 // WhatsApp, in both directions.
@@ -257,8 +258,14 @@ async function message(cfg, event) {
     `whatsapp_number=eq.${phone}&select=id,slug,name,tier,status,store_type,whatsapp_number,waha_session,waha_status,billing_status,paid_until,plan_price,auto_renew`
   );
 
-  // A number no store is registered to: the sign-up conversation.
-  if (!tenant) return signup(cfg, event, phone);
+  // A number no store is registered to: the sign-up conversation, unless it is
+  // answering a message another service sent from this number.
+  if (!tenant) {
+    if (await borrowedChat(cfg, event, phone)) {
+      return json({ ok: true, ignored: 'reply to a message another service sent' });
+    }
+    return signup(cfg, event, phone);
+  }
 
   if (tenant.status === 'suspended') {
     await say(cfg, tenant, event.from, 'This store is suspended. Please get in touch with support.');
@@ -2026,6 +2033,49 @@ export async function setConversation(cfg, tenant, chat, { state, draft }) {
 // The sign-up conversation for a number with no store; see signupStep() in
 // lib/bot.js for what is asked. Stored in `signups`, since there is no tenant
 // yet to scope a bot_conversations row by.
+// The platform number is lent to another service that sends from it: Automate
+// Naija's student reminders and build-partner invites (see whatsapp_footer()
+// in that project). Every message it sends says replies to it are not read,
+// and somebody answering one is a student, not a business asking for a store.
+// Without this the sign-up asked them for their business name.
+//
+// Recognised from WAHA's own record of what this number said in the chat, so
+// the other service needs no access to this database and no secret is shared.
+// A sign-up such a reply already started, still on its first question, is
+// dropped so the next reply does not carry on with it; one with answers in it
+// is left for a person to look at. A web sign-up code still goes through (whatever
+// else we sent them, that person is asking for a store), and so does
+// everything when the history cannot be read: in doubt, Vendwyze behaves as it
+// always has.
+const NOT_READ = /replies (here )?are not read/i;
+
+async function borrowedChat(cfg, event, phone) {
+  if (webCodeIn(event.body)) return false;
+
+  // A reply can arrive from a privacy id (…@lid) while the message it answers
+  // went to the number, and WAHA files the two as separate chats.
+  const chats = [...new Set([event.from, chatId(phone)].filter(Boolean))];
+  let borrowed = false;
+  try {
+    for (const chat of chats) {
+      const own = await recentOwnMessages(cfg, event.session, chat);
+      if (own.some((m) => NOT_READ.test(m.body))) {
+        borrowed = true;
+        break;
+      }
+    }
+  } catch (err) {
+    console.warn('waha chat history unreadable, treating as a sign-up:', err?.message ?? err);
+    return false;
+  }
+  if (!borrowed) return false;
+
+  await db(cfg)
+    .del('signups', `phone=eq.${phone}&state=eq.name`)
+    .catch((err) => console.warn('stale sign-up not cleared:', err?.message ?? err));
+  return true;
+}
+
 async function signup(cfg, event, phone) {
   const messageId = inboundId(event);
   const current = await db(cfg).one(

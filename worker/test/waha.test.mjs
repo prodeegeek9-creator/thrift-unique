@@ -60,8 +60,11 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {} } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null } = {}) {
   const sent = [];
+  // Chats whose history was read. `history` is what each one holds:
+  // chat → [{ fromMe, body }], newest first.
+  const historyFetches = [];
   // Messages asked for again by id, with their media: id → [{ url, mimetype } | null, …] answered in turn.
   const messageFetches = [];
   const mediaFetches = [];
@@ -87,6 +90,14 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         status: 200,
         headers: { 'content-type': 'image/jpeg' },
       });
+    }
+
+    const chat = path.match(/^\/api\/([^/]+)\/chats\/([^/]+)\/messages$/);
+    if (chat) {
+      const key = decodeURIComponent(chat[2]);
+      historyFetches.push({ session: decodeURIComponent(chat[1]), chat: key });
+      if (historyStatus) return new Response('store off', { status: historyStatus });
+      return new Response(JSON.stringify(history[key] ?? []), { status: 200 });
     }
 
     const msg = path.match(/^\/api\/([^/]+)\/chats\/([^/]+)\/messages\/([^/]+)$/);
@@ -187,7 +198,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, messageFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, messageFetches, historyFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
 }
 
 function wahaEnv(extra = {}) {
@@ -301,6 +312,71 @@ test('a number belonging to no store is offered one, and nothing else is created
     assert.equal(supabase.tables.signups[0].state, 'name');
     assert.equal(supabase.tables.tenants.length, 1);
     assert.equal(supabase.tables.bot_messages.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+// What Automate Naija's messages from the platform number end with (its
+// whatsapp_footer()).
+const LENT = {
+  fromMe: true,
+  body:
+    'Hi Ada 👋\n\nWant a *build partner* on Automate Naija?\n\n👉 https://app.automatenaija.com/partner\n\n' +
+    '_This number only sends Automate Naija updates, so replies here are not read. Questions? Ask in the community:_ https://chat.whatsapp.com/x',
+};
+
+test('a reply to a message another service sent from the platform number starts no sign-up', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha({ history: { [NEWCOMER_CHAT]: [{ fromMe: false, body: 'Yes!' }, LENT] } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(hook(incoming('Yes!', { from: NEWCOMER_CHAT })), wahaEnv(), {});
+
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).ignored, 'reply to a message another service sent');
+    assert.equal(waha.sent.length, 0, 'nobody was asked for a business name');
+    assert.equal((supabase.tables.signups ?? []).length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a borrowed chat is recognised when the reply comes from a privacy id', async () => {
+  const lid = '201164171788478@lid';
+  const supabase = makeFakeSupabase({
+    ...seed(),
+    // The sign-up an earlier reply started, before this was recognised.
+    signups: [{ phone: NEWCOMER, chat_id: lid, state: 'name', updated_at: new Date().toISOString() }],
+  });
+  const waha = makeFakeWaha({ lids: { [lid]: NEWCOMER_CHAT }, history: { [NEWCOMER_CHAT]: [LENT] } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(hook(incoming('Ada', { from: lid })), wahaEnv(), {});
+
+    assert.equal(res.status, 200);
+    assert.equal(waha.sent.length, 0);
+    // Both chats were looked at: the reply's own, and the number's.
+    assert.deepEqual(waha.historyFetches.map((f) => f.chat), [lid, NEWCOMER_CHAT]);
+    assert.equal(supabase.tables.signups.length, 0, 'the half-started sign-up is gone');
+  } finally {
+    restore();
+  }
+});
+
+test('a sign-up goes ahead when the chat history cannot be read', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha({ historyStatus: 400 });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(hook(incoming('hello', { from: NEWCOMER_CHAT })), wahaEnv(), {});
+
+    assert.equal(res.status, 200);
+    assert.match(waha.sent[0].text, /business name/i);
+    assert.equal(supabase.tables.signups[0].state, 'name');
   } finally {
     restore();
   }

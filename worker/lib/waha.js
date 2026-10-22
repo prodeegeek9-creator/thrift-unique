@@ -300,6 +300,20 @@ export async function messageMedia(cfg, session, chatId, messageId) {
   return m?.media?.url ? { url: m.media.url, mimetype: m.media.mimetype ?? null } : null;
 }
 
+// What this session itself last said in a chat, newest first: [{ body }].
+// Read from WAHA's own store, which the platform session keeps (see
+// deploy/waha/pair.sh); a chat it has no record of answers []. Only the
+// session's own messages come back, whoever sent them through it.
+export async function recentOwnMessages(cfg, session, chat, limit = 20) {
+  const call = client(cfg);
+  const found = await call(
+    `/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chat)}/messages?limit=${limit}&downloadMedia=false`
+  );
+  return (Array.isArray(found) ? found : [])
+    .filter((m) => m?.fromMe === true)
+    .map((m) => ({ body: typeof m.body === 'string' ? m.body : '' }));
+}
+
 export async function rejectCall(cfg, session, { from, id }) {
   const call = client(cfg);
   return call('/api/rejectCall', { method: 'POST', body: { session, from, id } });
