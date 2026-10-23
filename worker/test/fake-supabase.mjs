@@ -286,6 +286,8 @@ export function installFetch({
   petSite = null,
   // The photo-checking model (OpenAI): { handler(url, init) }.
   vision = null,
+  // Automate Naija's Supabase (AUTOMATE_NAIJA_SUPABASE_URL): { url, handler(url, init) }.
+  automateNaija = null,
 }) {
   const real = globalThis.fetch;
 
@@ -320,6 +322,8 @@ export function installFetch({
     if (petSite && url.startsWith(new URL(petSite.url).origin)) return petSite.handler(url, init);
 
     if (vision && url.startsWith('https://api.openai.com/')) return vision.handler(url, init);
+
+    if (automateNaija && url.startsWith(automateNaija.url)) return automateNaija.handler(url, init);
 
     if (url === `${SUPABASE_URL}/auth/v1/user`) {
       const auth = init?.headers?.Authorization ?? '';

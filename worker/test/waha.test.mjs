@@ -382,6 +382,87 @@ test('a sign-up goes ahead when the chat history cannot be read', async () => {
   }
 });
 
+// Automate Naija's Supabase, answering confirm_whatsapp_optin() the way the
+// real one does: always with the reply to send.
+const AN_URL = 'https://automate-naija.test';
+const AN_REPLY =
+  '✅ Hi Ada, your Automate Naija WhatsApp alerts are on.\n\n' +
+  '_This number only sends Automate Naija updates, so replies here are not read._';
+
+function fakeAutomateNaija({ status = 200 } = {}) {
+  const calls = [];
+  return {
+    url: AN_URL,
+    calls,
+    handler: async (url, init) => {
+      calls.push({ path: new URL(url).pathname, body: JSON.parse(init.body), apikey: init.headers?.apikey ?? null });
+      if (status !== 200) return new Response('down', { status });
+      return new Response(JSON.stringify({ ok: true, reply: AN_REPLY }), { status: 200 });
+    },
+  };
+}
+
+function automateNaijaEnv() {
+  return wahaEnv({ AUTOMATE_NAIJA_SUPABASE_URL: AN_URL, AUTOMATE_NAIJA_ANON_KEY: 'an-anon-key' });
+}
+
+test('a student opt-in code is passed to Automate Naija and its reply sent back', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const an = fakeAutomateNaija();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, automateNaija: an });
+
+  try {
+    const res = await worker.fetch(
+      hook(incoming('Turn on my Automate Naija WhatsApp alerts. Code: an-7k3p9q', { from: NEWCOMER_CHAT })),
+      automateNaijaEnv(),
+      {}
+    );
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(an.calls.map((c) => c.path), ['/rest/v1/rpc/confirm_whatsapp_optin']);
+    assert.deepEqual(an.calls[0].body, { p_code: 'AN-7K3P9Q', p_phone: NEWCOMER });
+    assert.equal(an.calls[0].apikey, 'an-anon-key');
+    assert.equal(waha.sent.length, 1);
+    assert.equal(waha.sent[0].text, AN_REPLY);
+    assert.equal(waha.sent[0].chatId, NEWCOMER_CHAT);
+    assert.equal(waha.sent[0].session, PLATFORM);
+    assert.equal((supabase.tables.signups ?? []).length, 0, 'no sign-up started');
+  } finally {
+    restore();
+  }
+});
+
+test('a student whose opt-in cannot reach Automate Naija is asked to send it again', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, automateNaija: fakeAutomateNaija({ status: 503 }) });
+
+  try {
+    const res = await worker.fetch(hook(incoming('Code: AN-7K3P9Q', { from: NEWCOMER_CHAT })), automateNaijaEnv(), {});
+
+    assert.equal(res.status, 200);
+    assert.equal(waha.sent.length, 1);
+    assert.match(waha.sent[0].text, /send the same message again/i);
+  } finally {
+    restore();
+  }
+});
+
+test('without the Automate Naija settings an opt-in code is an ordinary message', async () => {
+  const supabase = makeFakeSupabase(seed());
+  const waha = makeFakeWaha();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    await worker.fetch(hook(incoming('Code: AN-7K3P9Q', { from: NEWCOMER_CHAT })), wahaEnv(), {});
+
+    assert.match(waha.sent[0].text, /business name/i);
+  } finally {
+    restore();
+  }
+});
+
 test('a business opens a store over WhatsApp, and it waits for approval', async () => {
   const supabase = makeFakeSupabase(seed());
   const waha = makeFakeWaha();
