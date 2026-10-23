@@ -85,6 +85,13 @@ export function config(env) {
     priceCached: env.OPENAI_PRICE_CACHED_PER_M ? Number(env.OPENAI_PRICE_CACHED_PER_M) : NaN,
     priceOutput: env.OPENAI_PRICE_OUTPUT_PER_M ? Number(env.OPENAI_PRICE_OUTPUT_PER_M) : NaN,
 
+    // Automate Naija's Supabase, which decides what a student's opt-in code
+    // (AN-XXXXXX, sent to the platform number) means: lib/automateNaija.js.
+    // The URL and the project's public anon key, neither a secret, so
+    // wrangler.jsonc `vars`. Unset means an AN- code is an ordinary message.
+    automateNaijaUrl: env.AUTOMATE_NAIJA_SUPABASE_URL ? env.AUTOMATE_NAIJA_SUPABASE_URL.trim().replace(/\/+$/, '') : null,
+    automateNaijaKey: env.AUTOMATE_NAIJA_ANON_KEY ? env.AUTOMATE_NAIJA_ANON_KEY.trim() : null,
+
     // How long the bot shows "typing…" before a reply, in ms. Unset means a
     // beat scaled to the reply's length; 0 switches it off.
     wahaTypingMs:

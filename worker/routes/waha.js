@@ -27,6 +27,7 @@ import { generateInvite } from '../lib/accounts.js';
 import { ensureInvoice, pausedMessage } from '../lib/billing.js';
 import { provisionStore } from '../lib/provision.js';
 import { accountForCode } from './signup.js';
+import { optinCodeIn, optinConfigured, confirmOptin } from '../lib/automateNaija.js';
 import { intakeStep, receivedMessage, newSubmissionMessage, INTAKE_STATES, SELL } from '../lib/intake.js';
 import { photoIntakeStep, photoStatusMessage, PHOTO_STATES } from '../lib/photoIntake.js';
 import {
@@ -252,6 +253,11 @@ async function message(cfg, event) {
     console.warn('waha webhook: no phone number for sender', event.from);
     return json({ ok: true, ignored: 'no sender' });
   }
+
+  // A student turning on Automate Naija's alerts, whoever else they are: the
+  // code is only ever typed for that. See lib/automateNaija.js.
+  const optin = optinConfigured(cfg) ? optinCodeIn(event.body) : null;
+  if (optin) return automateNaijaOptin(cfg, event, phone, optin);
 
   const tenant = await db(cfg).one(
     'tenants',
@@ -2048,6 +2054,22 @@ export async function setConversation(cfg, tenant, chat, { state, draft }) {
 // everything when the history cannot be read: in doubt, Vendwyze behaves as it
 // always has.
 const NOT_READ = /replies (here )?are not read/i;
+
+// The opt-in reply comes from Automate Naija word for word, and carries the
+// same "replies here are not read" line, so whatever the student says next
+// lands in borrowedChat() rather than the sign-up. WAHA retrying the webhook
+// sends the reply again; confirm_whatsapp_optin() answers a repeat from the
+// same number the same way, so the student sees it twice at worst.
+async function automateNaijaOptin(cfg, event, phone, code) {
+  const reply = await confirmOptin(cfg, code, phone);
+  await say(
+    cfg,
+    null,
+    event.from,
+    reply ?? "Sorry, that didn't go through. Please send the same message again in a minute."
+  );
+  return json({ ok: true, optin: reply ? 'relayed' : 'unreachable' });
+}
 
 async function borrowedChat(cfg, event, phone) {
   if (webCodeIn(event.body)) return false;
