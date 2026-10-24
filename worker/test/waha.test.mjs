@@ -2141,16 +2141,30 @@ test('a site that cannot be reached, or answers with a firewall page, is explain
 // order; each is one entry per photo sent in that call.
 const GUIDE = { is_breed: true, about: 'A powerful Italian mastiff.', temperament: 'Loyal and calm with its family.', best_home: 'An experienced owner with a secure yard.' };
 
-function makeFakeVision(verdicts, { status = 200, guide = {} } = {}) {
+function makeFakeVision(verdicts, { status = 200, guide = {}, details = { issues: [] } } = {}) {
   const queue = [...verdicts];
   const calls = [];
   const guideCalls = [];
+  const detailCalls = [];
   guide = { status: 200, answer: GUIDE, ...guide };
   return {
     calls,
     guideCalls,
+    detailCalls,
     async handler(url, init) {
       const body = JSON.parse(init.body);
+      // The summary check of a listing's answers, text only.
+      if (typeof body.messages[0].content === 'string' && body.messages[0].content.startsWith('You check a pet listing')) {
+        detailCalls.push({ prompt: body.messages[0].content });
+        return new Response(
+          JSON.stringify({
+            model: 'gpt-4o-mini-2024-07-18',
+            choices: [{ message: { content: JSON.stringify(details) } }],
+            usage: { prompt_tokens: 380, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 0 } },
+          }),
+          { status: 200 }
+        );
+      }
       // A breed guide is a text-only request.
       if (typeof body.messages[0].content === 'string') {
         guideCalls.push({ prompt: body.messages[0].content, key: init.headers.Authorization });
@@ -2832,6 +2846,70 @@ test('a seller asking when the listing they sent will be approved is told it is 
     assert.equal(textsTo(waha, CONSIGNOR_CHAT).length, 1);
   } finally {
     restore();
+  }
+});
+
+// ── LOOKING AT THE ANSWERS AT THE SUMMARY ────────────────────────────────────
+
+const ODD_CHAT = [
+  fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Eskimo husky mix'), fromConsignor('5 months plus'),
+  fromConsignor('1'), fromConsignor('20k'), fromConsignor('Ikeja'), fromConsignor('2'), fromConsignor('Female, Raya'),
+  pic(1), fromConsignor('done'), fromConsignor('Remina'), fromConsignor('yes'),
+];
+
+test('answers the rules cannot vouch for are looked at by the AI at the summary, and what it flags is asked about', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const vision = makeFakeVision([], { details: { issues: [{ field: 'price', problem: 'Far too low for a husky mix puppy' }] } });
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+  try {
+    await toPetStore(ODD_CHAT, { OPENAI_API_KEY: 'oa-key' });
+    assert.equal(vision.detailCalls.length, 1);
+    // The answers and nothing else from the chat.
+    assert.match(vision.detailCalls[0].prompt, /"breed":"Eskimo husky mix","age":"5 months plus","price":"₦20,000"/);
+    const asked = textsTo(waha, CONSIGNOR_CHAT).at(-1);
+    assert.match(asked, /the \*price\* you gave, "₦20,000", doesn't look right\.[\s\S]*full amount[\s\S]*\*OK\* to keep it/);
+    // Logged with what it cost, like the photo check.
+    assert.ok(supabase.tables.ai_usage.some((r) => r.purpose === 'pet_details' && r.input_tokens === 380));
+
+    // Fixed, then the summary, and nothing more is asked of the AI.
+    await toPetStore([fromConsignor('200k')], { OPENAI_API_KEY: 'oa-key' });
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).at(-1), /Here's your listing[\s\S]*Price: ₦200,000/);
+    await toPetStore([fromConsignor('yes')], { OPENAI_API_KEY: 'oa-key' });
+    assert.equal(petSite.received[0].body.price, 200000);
+    assert.equal(vision.detailCalls.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('an answer the seller keeps is sent, and the owner is told to look at it', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const vision = makeFakeVision([], { details: { issues: [{ field: 'price', problem: 'Far too low for a husky mix puppy' }] } });
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, vision });
+  try {
+    await toPetStore([...ODD_CHAT, fromConsignor('OK'), fromConsignor('yes')], { OPENAI_API_KEY: 'oa-key' });
+    assert.equal(petSite.received[0].body.price, 20000);
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT).map((m) => m.text).join('\n');
+    assert.match(toOwner, /⚠️ Check before approving\. The seller kept these as they were:\n• price: "₦20,000", Far too low for a husky mix puppy/);
+  } finally {
+    restore();
+  }
+});
+
+test('a listing the rules vouch for costs no AI call, and without a key nothing is asked of it', async () => {
+  for (const [label, env] of [['vouched for', { OPENAI_API_KEY: 'oa-key' }], ['no key', {}]]) {
+    const vision = makeFakeVision([]);
+    const restore = installFetch({ supabase: makeFakeSupabase(petSeed()), waha: makeFakeWaha(), tokens: TOKENS, petSite: makeFakePetSite(), vision });
+    try {
+      await toPetStore(label === 'no key' ? ODD_CHAT : PET_CHAT, env);
+      assert.equal(vision.detailCalls.length, 0, label);
+    } finally {
+      restore();
+    }
   }
 });
 
