@@ -30,7 +30,8 @@ const PET_WORD = /\b(dogs?|pupp(y|ies)|pups?|pets?|cats?|kittens?|birds?|parrots
 // to be them selling — "do you sell puppies?" is a buyer and is left alone.
 const SELL_START = /^\s*(sell|rehome)\b/i;
 const GREETING = /^\s*(hi|hello|hey|good (morning|afternoon|evening))\b/i;
-const FIRST_PERSON_SELL = /\b(i|i'm|im|i'd|we|we're|my)\b[^.?!]{0,40}\b(sell|selling|rehome|rehoming|give away|giving away|list)\b/i;
+// "List" only as listing something: "list my dog", not "the food list".
+const FIRST_PERSON_SELL = /\b(i|i'm|im|i'd|we|we're|my)\b[^.?!]{0,40}\b(sell|selling|rehome|rehoming|give away|giving away|list\s+(?:my|our|a|the|this|these|her|him|them|it))\b/i;
 
 // "I'd like to sell on PuppyPlace" (the Sell page's own WhatsApp button names no
 // pet), "I have Boerboel puppies for sale", "does your pet store buy puppies?".
@@ -108,7 +109,7 @@ export function parseSellerName(raw) {
 
 export const PET_STATES = [
   'pet_type', 'pet_breed', 'pet_age', 'pet_deal', 'pet_price', 'pet_location',
-  'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_name', 'pet_contact', 'pet_review',
+  'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_name', 'pet_contact', 'pet_fix', 'pet_review',
 ];
 
 const TYPES = [
@@ -298,6 +299,62 @@ export function asksAboutApproval(text) {
   return QUESTION.test(t) && ASK_APPROVAL.test(t);
 }
 
+// ── IS THIS ANSWER THE KIND OF THING THAT WAS ASKED? ──────────────────────────
+// Plain rules, checked on every answer and again at the summary, at no cost:
+// a web link given as the age, "Listen" or "Okay boss" as the breed, a phone
+// number as the area.
+const LINK = /https?:\/\/|www\.|\.(com|ng|app|net|org|io|site)\b/i;
+// Whole links, to take out of text the AI wrote before the owner sees it.
+const LINKS = /(https?:\/\/|www\.)\S*|\S+\.(com|ng|app|net|org|io|site|example)\b\S*/gi;
+const CHAT_REPLY = /^\s*(listen|ok(ay)?|boss|hello|hi|hey|yes|no|sir|ma|madam|agent|i am an agent|i'?m an agent|wait|please|thanks?|good|fine|sure|alright|done|later|hm+)\b/i;
+const AGE_OK = /(\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|half)\b)[^]*?(weeks?|wks?|months?|mths?|years?|yrs?|days?)|\bnew\s*born\b/i;
+const CLEAN_AGE = /^\s*(about|around|approx\.?|i think|maybe)?\s*\d+(\.\d+)?\s*(-\s*\d+\s*)?(weeks?|wks?|months?|mths?|years?|yrs?|days?)(\s+old)?(\s*plus|\+)?\s*$/i;
+const HIGH_PRICE = 20_000_000;
+
+export const notABreed = (t) => !t || LINK.test(t) || CHAT_REPLY.test(t) || /\d{4,}/.test(t) || !/\p{L}{2}/u.test(t);
+export const ageOk = (t) => Boolean(t) && !LINK.test(t) && AGE_OK.test(t);
+export const placeOk = (t) => Boolean(t) && !LINK.test(t) && !/\d{7,}/.test(String(t).replace(/\s/g, '')) && /\p{L}{2}/u.test(t);
+
+// What at the summary does not look right, by the rules. [{ field, why }]
+export function irregularities(d) {
+  const out = [];
+  if (notABreed(d.breed)) out.push({ field: 'breed', why: "doesn't look like a breed" });
+  if (!ageOk(d.age)) out.push({ field: 'age', why: "doesn't look like an age" });
+  if (d.listing_type === 'sale' && (d.price < LOW_PRICE || d.price > HIGH_PRICE)) out.push({ field: 'price', why: 'looks unusual for a pet' });
+  if (!placeOk(d.location)) out.push({ field: 'location', why: "doesn't look like a place" });
+  return out;
+}
+
+// Whether the rules can vouch for every answer. When they cannot (a breed
+// they do not know, an age written oddly, a price far from usual, a long
+// seller name), the AI is asked to look; a listing they can vouch for costs
+// nothing.
+export function vouchedFor(d) {
+  const breeds = breedsNamedIn(d.breed);
+  const breedKnown = breeds.length === 1 && shortAnswer(String(d.breed ?? '').trim());
+  const ageClean = CLEAN_AGE.test(String(d.age ?? ''));
+  const priceUsual = d.listing_type !== 'sale' || (d.price >= 5_000 && d.price <= 5_000_000);
+  const nameShort = String(d.name ?? '').trim().split(/\s+/).length <= 3;
+  return breedKnown && ageClean && priceUsual && nameShort;
+}
+
+// The answers as the AI is shown them: what each question was, and what the
+// seller typed, short. Never anything else from the chat.
+export const DETAIL_FIELDS = ['breed', 'age', 'price', 'location', 'notes', 'seller_name'];
+export function detailsForCheck(d) {
+  const short = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  return {
+    pet: d.type === 'Other' ? 'pet (not a dog or cat)' : String(d.type ?? 'Dog').toLowerCase(),
+    breed: short(d.breed, 60),
+    age: short(d.age, 40),
+    price: d.listing_type === 'adoption' ? 'adoption (free)' : `₦${Number(d.price ?? 0).toLocaleString('en-NG')}`,
+    location: short(d.location, 80),
+    health: healthLine(d).replace(/^💉 /, ''),
+    notes: short(d.notes, 300),
+    seller_name: short(d.name, 60),
+  };
+}
+
 const petWord = (draft) => (draft.type === 'Cat' ? 'cat' : draft.type === 'Dog' ? 'dog' : 'pet');
 
 const SAY = {
@@ -392,7 +449,29 @@ const SAY = {
     '\n\nReply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
   reviewAgain: 'Reply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
   cancelled: 'Cancelled. Nothing was sent. Message *SELL* any time to list a pet.',
+  badAge: (d) => `How old is your ${petWord(d)}? Send it like *10 weeks* or *2 years*.`,
+  badLocation: 'Which city and area are you in? Send the place, like *Lekki, Lagos*.',
+  fixPrice: 'What price should buyers see? Send the full amount, like *150000* or *150k*.',
+  fixNotes: 'What should the notes for buyers say? Reply *skip* to leave them out.',
+  checkThis: (label, value, question) =>
+    `🔎 One thing before your summary: the *${label}* you gave, "${value}", doesn't look right.\n\n${question}\n\nOr reply *OK* to keep it as it is.`,
 };
+
+const FIX_LABEL = { breed: 'breed', age: 'age', price: 'price', location: 'area', notes: 'notes', seller_name: 'seller name' };
+const MAX_FIXES = 3;
+
+function fixMessage(d, fix) {
+  const value = fix.field === 'price' ? formatNaira(d.price) : String((fix.field === 'seller_name' ? d.name : d[fix.field]) ?? '').slice(0, 80);
+  const question = {
+    breed: SAY.badBreed(d),
+    age: SAY.badAge(d),
+    price: SAY.fixPrice,
+    location: SAY.badLocation,
+    notes: SAY.fixNotes,
+    seller_name: SAY.askName(d),
+  }[fix.field];
+  return SAY.checkThis(FIX_LABEL[fix.field], value, question);
+}
 
 function healthLine(d) {
   if (d.vaccinated && d.dewormed) return '💉 Vaccinated and dewormed';
@@ -461,7 +540,16 @@ function breedCheckLine(breed, c) {
   return `\n\n🔎 Breed check: the photos look like *${c.guess}*, which fits.`;
 }
 
-export function newPetListingMessage({ breed, price, listing_type, location }, { verified, note, breedCheck } = {}) {
+function flagsLine(listing, flags) {
+  if (!flags?.length) return '';
+  const value = (f) => (f.field === 'price' ? formatNaira(listing.price) : f.field === 'seller_name' ? listing.seller_name : f.field === 'notes' ? listing.description : listing[f.field]);
+  return (
+    '\n\n⚠️ Check before approving. The seller kept these as they were:\n' +
+    flags.map((f) => `• ${FIX_LABEL[f.field] ?? f.field}: "${String(value(f) ?? '').slice(0, 60)}"${f.why ? `, ${f.why}` : ''}`).join('\n')
+  );
+}
+
+export function newPetListingMessage({ breed, price, listing_type, location, ...listing }, { verified, note, breedCheck, flags } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
@@ -472,7 +560,8 @@ export function newPetListingMessage({ breed, price, listing_type, location }, {
       : verified
         ? '\n\n📸 Photos checked: a real pet, face visible.'
         : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`) +
-    breedCheckLine(breed, breedCheck)
+    breedCheckLine(breed, breedCheck) +
+    flagsLine({ breed, price, listing_type, location, ...listing }, flags)
   );
 }
 
@@ -668,7 +757,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       const several = severalBreeds(text);
       if (several) return reply('pet_breed', draft, SAY.whichBreed(several));
       const breed = parseBreed(text);
-      if (!breed) return reply('pet_breed', draft, SAY.badBreed(draft));
+      // "Listen", "Okay boss", a website: not a breed, however short.
+      if (!breed || notABreed(breed)) return reply('pet_breed', draft, SAY.badBreed(draft));
       // Picked out of a longer message: say which, so a wrong pick can be put right at the summary.
       const typed = text.replace(/\s+/g, ' ').trim().replace(TRAILING_PET, '').toLowerCase();
       const picked = breed.toLowerCase() !== typed ? `Breed: *${breed}* 👍` : null;
@@ -677,6 +767,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_age':
       if (!text) return reply('pet_age', draft, SAY.askAge(draft));
+      if (!ageOk(text)) return reply('pet_age', draft, SAY.badAge(draft));
       return reply('pet_deal', { ...draft, age: text.replace(/\s+/g, ' ').slice(0, MAX_AGE) }, SAY.askDeal);
 
     case 'pet_deal': {
@@ -712,6 +803,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_location':
       if (text.length < 2) return reply('pet_location', draft, SAY.askLocation);
+      if (!placeOk(text)) return reply('pet_location', draft, SAY.badLocation);
       return reply('pet_health', { ...draft, location: text.replace(/\s+/g, ' ').slice(0, MAX_LOCATION) }, SAY.askHealth);
 
     case 'pet_health': {
@@ -760,10 +852,22 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     }
 
     case 'pet_contact': {
-      if (ctx.phone && YES.test(text)) return review({ ...draft, whatsapp: ctx.phone }, store);
+      if (ctx.phone && YES.test(text)) return toReview({ ...draft, whatsapp: ctx.phone }, ctx, store);
       const number = normalizeNumber(text);
       if (!number) return reply('pet_contact', draft, SAY.badContact);
-      return review({ ...draft, whatsapp: number }, store);
+      return toReview({ ...draft, whatsapp: number }, ctx, store);
+    }
+
+    // Something at the summary that did not look right: the seller fixes it, or keeps it.
+    case 'pet_fix': {
+      const [fix, ...rest] = draft.fixes ?? [];
+      if (!fix) return review({ ...draft, fixes: undefined }, store);
+      if (/^\s*(ok|okay|keep( it)?|it'?s (fine|correct|right)|correct|yes|y)\b/i.test(text)) {
+        return nextFix({ ...draft, kept: [...(draft.kept ?? []), fix] }, rest, store);
+      }
+      const fixed = applyFix(fix.field, text, draft);
+      if (fixed.ask) return reply('pet_fix', draft, fixed.ask);
+      return nextFix(fixed.draft, rest, store);
     }
 
     case 'pet_review': {
@@ -885,7 +989,61 @@ function after(state, draft, ctx, store, prefix) {
     note = SAY.knownName(ctx.knownName);
   }
   if (!draft.whatsapp) return reply('pet_contact', draft, prefix, note, SAY.askContact(ctx.phone));
-  return review(draft, store);
+  return toReview(draft, ctx, store);
+}
+
+// On the way to the summary, once: the rules look at every answer, and the AI
+// only when the rules cannot vouch for them (ctx.detailsCheck 'auto'), always
+// ('always') or never ('off'), and only where there is a key (ctx.aiCheck).
+function toReview(draft, ctx, store) {
+  if (draft.detailsChecked) return review(draft, store);
+  const d = { ...draft, detailsChecked: true };
+  const flagged = irregularities(d);
+  if (flagged.length) return nextFix(d, flagged, store);
+  const mode = ctx.detailsCheck ?? 'auto';
+  if (ctx.aiCheck && (mode === 'always' || (mode === 'auto' && !vouchedFor(d)))) {
+    return { state: 'pet_review', draft: d, replies: [], action: { type: 'check_details' } };
+  }
+  return review(d, store);
+}
+
+// What the AI found (routes/waha.js asks it): [{ field, problem }], or none.
+export function petDetailsChecked(draft, issues, ctx = {}) {
+  const store = ctx.store ?? 'the store';
+  const seen = new Set();
+  const fixes = (issues ?? [])
+    .filter((i) => DETAIL_FIELDS.includes(i?.field) && !seen.has(i.field) && seen.add(i.field))
+    .filter((i) => i.field !== 'price' || draft.listing_type === 'sale')
+    .map((i) => ({ field: i.field, why: String(i.problem ?? '').replace(LINKS, '').replace(/\s+/g, ' ').trim().slice(0, 140), by: 'ai' }));
+  return nextFix({ ...draft, detailsChecked: true }, fixes, store);
+}
+
+// Ask about the next thing flagged, at most a few, then show the summary.
+function nextFix(draft, fixes, store) {
+  const asked = draft.fixesAsked ?? 0;
+  const [fix, ...rest] = asked < MAX_FIXES ? fixes : [];
+  if (!fix) return review({ ...draft, fixes: undefined }, store);
+  return reply('pet_fix', { ...draft, fixes: [fix, ...rest], fixesAsked: asked + 1 }, fixMessage(draft, fix));
+}
+
+// A corrected answer, checked by the same rules as the first time: { draft } or { ask }.
+function applyFix(field, text, d) {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (field === 'breed') {
+    const several = severalBreeds(t);
+    if (several) return { ask: SAY.whichBreed(several) };
+    const breed = !notABreed(t) && parseBreed(t);
+    return breed ? { draft: { ...d, breed } } : { ask: SAY.badBreed(d) };
+  }
+  if (field === 'age') return ageOk(t) ? { draft: { ...d, age: t.slice(0, MAX_AGE) } } : { ask: SAY.badAge(d) };
+  if (field === 'price') {
+    const [price] = pricesIn(t);
+    return price ? { draft: { ...d, price } } : { ask: SAY.badPrice };
+  }
+  if (field === 'location') return placeOk(t) ? { draft: { ...d, location: t.slice(0, MAX_LOCATION) } } : { ask: SAY.badLocation };
+  if (field === 'notes') return { draft: { ...d, notes: SKIP.test(t) ? null : t.slice(0, MAX_NOTES) } };
+  const name = parseSellerName(t);
+  return name ? { draft: { ...d, name, nameKnown: false } } : { ask: SAY.badName };
 }
 
 // The question a conversation is waiting on, to ask again after a note.
@@ -905,6 +1063,7 @@ function question(state, draft, ctx) {
       : draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
     pet_name: SAY.askName(draft),
     pet_contact: SAY.askContact(ctx.phone),
+    pet_fix: draft.fixes?.[0] ? fixMessage(draft, draft.fixes[0]) : SAY.reviewAgain,
     pet_review: SAY.reviewAgain,
   }[state];
 }
@@ -982,6 +1141,8 @@ function submit(draft) {
       verified: Boolean(draft.verified),
       checkNote: draft.checkNote ?? null,
       breedCheck: draft.breedCheck ?? null,
+      // Flagged at the summary and kept by the seller: the owner looks before approving.
+      flags: (draft.kept ?? []).map((f) => ({ field: f.field, why: f.why })),
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,

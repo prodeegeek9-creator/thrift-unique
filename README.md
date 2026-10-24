@@ -203,6 +203,24 @@ gone, "when will it be approved?" from that chat is answered while the site
 still has it waiting (`petPendingAnswer` in `routes/waha.js`); anything else
 they say stays the owner's.
 
+**Answers are checked**, first as they come: a web link or "Listen" is not a
+breed, an age needs a number and weeks, months or years, an area is not a
+link or a phone number; each is asked again on the spot. Then **at the
+summary**, once, everything is looked at together. The same rules, plus a
+price under ₦1,000 or over ₦20m, flag anything that slipped through. When
+the rules cannot vouch for every answer (a breed they do not know, an age
+written oddly, a price outside ₦5,000 to ₦5m, a long seller name), one short
+text-only call to OpenAI (`lib/petDetails.js`, the photo check's model) looks
+for answers that are not what was asked or that contradict each other. It
+sends the answers and nothing else from the chat: about 400 tokens, logged in
+`ai_usage` as `pet_details`. A listing the rules vouch for (most of them)
+costs nothing. Each flagged answer, at most three, is asked about in turn
+("the *price* you gave, "₦20,000", doesn't look right… or reply *OK* to keep
+it"), in the bot's own words, never the AI's. Anything kept is listed for the
+owner in the new-listing message. `PET_DETAILS_CHECK` (Worker variable):
+`auto` (the default), `always` to ask the AI about every listing, or `off`.
+No key, or an error, goes straight to the summary.
+
 **A seller who stops at the photos** (where most stop) is reminded once, from
 the store's number, 3 hours after their last message and only between 8am and
 9pm Lagos time, with their answers kept so there is nothing to fill in again

@@ -41,12 +41,14 @@ import {
   breedGuideDraftMessage,
   petProductsOwnerMessage,
   petPhotosDone,
+  petDetailsChecked,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
   asksAboutApproval,
   petPendingMessage,
   PET_STATES,
 } from '../lib/petIntake.js';
+import { checkPetDetails } from '../lib/petDetails.js';
 import { cartStep, codesIn, isBuy, BARE_BUY, paymentLinkMessage as cartPayMessage, ASK_PHONE } from '../lib/cart.js';
 import { createCartCheckout, abandonCart, cartLost, busyLine } from '../lib/cartCheckout.js';
 import { reservedMinutes } from '../lib/reservations.js';
@@ -1361,7 +1363,14 @@ async function withMedia(cfg, event) {
 async function petIntake(cfg, event, tenant, conversation) {
   event = await withMedia(cfg, event);
   const phone = await phoneFor(cfg, event.session, event.from).catch(() => null);
-  const ctx = { store: tenant.name, phone, knownName: await knownSellerName(cfg, tenant, event.from), browseUrl: petBrowseUrl(cfg) };
+  const ctx = {
+    store: tenant.name,
+    phone,
+    knownName: await knownSellerName(cfg, tenant, event.from),
+    browseUrl: petBrowseUrl(cfg),
+    detailsCheck: cfg.petDetailsCheck,
+    aiCheck: Boolean(cfg.openaiKey),
+  };
 
   // Photos sent together arrive as separate webhooks that this Worker handles at
   // the same time. Each reads the conversation, adds its photo and writes it back,
@@ -1415,6 +1424,10 @@ async function petIntake(cfg, event, tenant, conversation) {
     await processPetPhotos(cfg, tenant, event, result.draft, ctx);
   }
 
+  if (result.action?.type === 'check_details') {
+    await checkPetListingDetails(cfg, tenant, event, result.draft, ctx);
+  }
+
   if (result.action?.type === 'pet_listing') {
     await forwardPetListing(cfg, tenant, event, result.action);
   }
@@ -1426,6 +1439,22 @@ async function petIntake(cfg, event, tenant, conversation) {
   }
 
   return json({ ok: true, petIntake: result.state });
+}
+
+// At the summary, when the rules could not vouch for every answer: the AI looks
+// at them (lib/petDetails.js), and the seller is asked about anything it flags,
+// or shown the summary. Whatever goes wrong, the summary is shown.
+async function checkPetListingDetails(cfg, tenant, event, draft, ctx) {
+  const checked = await checkPetDetails(cfg, draft).catch(() => null);
+  if (checked?.error) console.warn('pet details not checked:', checked.error);
+  if (checked?.usage) {
+    await db(cfg)
+      .insert('ai_usage', { tenant_id: tenant.id, purpose: 'pet_details', ...checked.usage }, { returning: false })
+      .catch((err) => console.warn('ai usage not recorded:', err?.message ?? err));
+  }
+  const next = petDetailsChecked(draft, checked?.issues ?? [], ctx);
+  await persist(cfg, tenant, event.from, {}, next);
+  for (const reply of next.replies) await say(cfg, tenant, event.from, reply, { session: tenant.waha_session });
 }
 
 // The name this seller gave on an earlier listing, so they are not asked again.
@@ -1582,7 +1611,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
   await say(cfg, tenant, event.from, petSentMessage(tenant.name, typeof body?.manage_url === 'string' ? body.manage_url : null), own);
 
   const owner = chatId(tenant.whatsapp_number);
-  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck }));
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck, flags: action.flags }));
 
   // The first dog of a breed the site has no guide for: write one, for the store to approve.
   if (body?.breed_guide === 'missing') await fileBreedGuide(cfg, tenant, action.listing);

@@ -81,6 +81,12 @@ export function config(env) {
     openaiKey: env.OPENAI_API_KEY ? env.OPENAI_API_KEY.trim() : null,
     petVisionModel: env.PET_VISION_MODEL ? env.PET_VISION_MODEL.trim() : null,
     petVisionDetail: env.PET_VISION_DETAIL ? env.PET_VISION_DETAIL.trim().toLowerCase() : null,
+    // The look at a pet listing's answers at the summary (lib/petDetails.js):
+    // 'auto' asks the AI only when the plain rules cannot vouch for the answers,
+    // 'always' asks it for every listing, 'off' never (the rules still run).
+    petDetailsCheck: ['auto', 'always', 'off'].includes(String(env.PET_DETAILS_CHECK ?? '').trim().toLowerCase())
+      ? String(env.PET_DETAILS_CHECK).trim().toLowerCase()
+      : 'auto',
     priceInput: env.OPENAI_PRICE_INPUT_PER_M ? Number(env.OPENAI_PRICE_INPUT_PER_M) : NaN,
     priceCached: env.OPENAI_PRICE_CACHED_PER_M ? Number(env.OPENAI_PRICE_CACHED_PER_M) : NaN,
     priceOutput: env.OPENAI_PRICE_OUTPUT_PER_M ? Number(env.OPENAI_PRICE_OUTPUT_PER_M) : NaN,
