@@ -2867,7 +2867,7 @@ test('answers the rules cannot vouch for are looked at by the AI at the summary,
     await toPetStore(ODD_CHAT, { OPENAI_API_KEY: 'oa-key' });
     assert.equal(vision.detailCalls.length, 1);
     // The answers and nothing else from the chat.
-    assert.match(vision.detailCalls[0].prompt, /"breed":"Eskimo husky mix","age":"5 months plus","price":"₦20,000"/);
+    assert.match(vision.detailCalls[0].prompt, /"breed":"Eskimo husky mix","age":"5\+ months","price":"₦20,000"/);
     const asked = textsTo(waha, CONSIGNOR_CHAT).at(-1);
     assert.match(asked, /the \*price\* you gave, "₦20,000", doesn't look right\.[\s\S]*full amount[\s\S]*\*OK\* to keep it/);
     // Logged with what it cost, like the photo check.
