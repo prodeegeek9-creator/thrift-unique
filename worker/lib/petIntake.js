@@ -177,6 +177,86 @@ export function breedsNamedIn(raw) {
   return found;
 }
 
+// ── TIDYING ANSWERS AS THEY COME, AT NO COST ─────────────────────────────────
+// Put right what can be put right without asking: "Chihuahuas" is a Chihuahua,
+// "28weeks" is 28 weeks, "My dogs are 7 months old" is 7 months, "Port Hacourt"
+// is Port Harcourt.
+
+// A known breed named on its own, plural or lower case, is written its usual way.
+// Words for a mix ("local", "cross") are kept as the seller wrote them.
+const MIX_NAMES = new Set(['Mixed']);
+export function tidyBreed(raw) {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  const bare = t.toLowerCase().replace(/[^\p{L}\s-]/gu, '').replace(/\b(pure\s*bred|purebred|pure\s*breed|pedigree|full\s*blood)\b/g, '').replace(/\s+/g, ' ').trim();
+  for (const form of [bare, bare.replace(/(es|s)$/, ''), bare.replace(/s$/, '')]) {
+    const hit = BREED_ALIASES.find(([alias]) => alias === form);
+    if (hit && !MIX_NAMES.has(hit[1])) return hit[1];
+  }
+  return t === t.toLowerCase() ? t.replace(/(^|\s)(\p{L})/gu, (_, a, b) => a + b.toUpperCase()) : t;
+}
+
+const AGE_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, a: 1, an: 1, half: 0.5 };
+const AGE_UNIT = [[/^(weeks?|wks?|wk)$/i, 'week'], [/^(months?|mo?n?ths?|mnts?|mons?|mos?)$/i, 'month'], [/^(years?|yrs?|yr)$/i, 'year'], [/^(days?|dys?)$/i, 'day']];
+const AGE_IN = /(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|an?|half)\s*(?:(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*)?(weeks?|wks?|wk|months?|mo?n?ths?|mnts?|mons?|mos?|years?|yrs?|yr|days?|dys?)\b(\s*(?:plus|\+))?/i;
+// "28weeks" → "28 weeks", "My dogs are 7 months old" → "7 months", "1-3months" → "1-3 months".
+export function tidyAge(raw) {
+  const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  const m = AGE_IN.exec(t);
+  if (!m) return t;
+  const n = m[1].toLowerCase() in AGE_WORDS ? AGE_WORDS[m[1].toLowerCase()] : Number(m[1]);
+  const unit = AGE_UNIT.find(([re]) => re.test(m[3]))[1];
+  const many = m[2] ? true : n !== 1;
+  return `${m[2] ? `${n}-${m[2]}` : n}${m[4] ? '+' : ''} ${unit}${many ? 's' : ''}`;
+}
+
+// Nigerian cities sellers are in, with their state, to put a misspelt one right
+// ("Port Hacourt", "Ibadann") and write "Rivers state Port Harcourt" as
+// "Port Harcourt, Rivers". Anything else is kept as the seller wrote it.
+const CITIES = [
+  ['Lagos', 'Lagos'], ['Abuja', 'FCT'], ['Port Harcourt', 'Rivers'], ['Ibadan', 'Oyo'], ['Benin City', 'Edo'], ['Kano', 'Kano'],
+  ['Kaduna', 'Kaduna'], ['Enugu', 'Enugu'], ['Jos', 'Plateau'], ['Ilorin', 'Kwara'], ['Abeokuta', 'Ogun'], ['Akure', 'Ondo'],
+  ['Owerri', 'Imo'], ['Uyo', 'Akwa Ibom'], ['Calabar', 'Cross River'], ['Warri', 'Delta'], ['Asaba', 'Delta'], ['Onitsha', 'Anambra'],
+  ['Awka', 'Anambra'], ['Osogbo', 'Osun'], ['Ado Ekiti', 'Ekiti'], ['Makurdi', 'Benue'], ['Minna', 'Niger'], ['Lokoja', 'Kogi'],
+  ['Ogbomosho', 'Oyo'], ['Ijebu Ode', 'Ogun'], ['Sagamu', 'Ogun'], ['Nsukka', 'Enugu'], ['Aba', 'Abia'], ['Umuahia', 'Abia'],
+  ['Abakaliki', 'Ebonyi'], ['Bauchi', 'Bauchi'], ['Maiduguri', 'Borno'], ['Sokoto', 'Sokoto'], ['Yola', 'Adamawa'], ['Ikeja', 'Lagos'],
+  ['Lekki', 'Lagos'], ['Ikorodu', 'Lagos'], ['Mowe', 'Ogun'], ['Ota', 'Ogun'],
+];
+const STATE_WORDS = new Set(['state', 'city', 'nigeria', ...CITIES.flatMap(([, st]) => st.toLowerCase().split(' '))]);
+
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+
+export function tidyPlace(raw) {
+  let t = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  const words = t.split(' ');
+  let found = null;
+  // Each run of one to three words against each city; a near miss on a name
+  // long enough to judge is put right, an exact one only recognised.
+  for (let i = 0; i < words.length && !found; i++) {
+    for (let len = 3; len >= 1 && !found; len--) {
+      const span = words.slice(i, i + len).join(' ');
+      if (words.length < i + len) continue;
+      const key = span.toLowerCase().replace(/[^\p{L}\s]/gu, '');
+      for (const [city, state] of CITIES) {
+        const c = city.toLowerCase();
+        const near = key === c ? 0 : c.length >= 6 && Math.abs(key.length - c.length) <= 2 ? editDistance(key, c) : 9;
+        if (near <= (c.length >= 9 ? 2 : 1)) { found = { i, len, city, state, span }; break; }
+      }
+    }
+  }
+  if (!found) return t;
+  const rest = [...words.slice(0, found.i), ...words.slice(found.i + found.len)].map((w) => w.toLowerCase().replace(/[^\p{L}]/gu, ''));
+  // Only the city and its state (or "state"): written the usual way.
+  if (rest.every((w) => !w || STATE_WORDS.has(w))) return found.city === found.state || found.state === 'FCT' ? found.city : `${found.city}, ${found.state}`;
+  return t.replace(found.span, found.span.replace(/[\p{L}\s]+/u, found.city));
+}
+
 // A breeder's whole list ("Boerboel, Eskimo, Husky, Rottweiler…") rather than this
 // listing's breed. A cross ("Rottweiler and Boerboel mix") is one dog, and a short
 // answer is kept as typed.
@@ -252,7 +332,7 @@ export function breedFromPhotos(images) {
 
 // "250k to 300k", "250-300k", "250k or 300": the two amounts, when a seller gives a range.
 export function parsePriceRange(text) {
-  const m = /^\s*₦?\s*([\d.,]+)\s*(k|m)?\s*(?:-|–|—|to|and|or|\/)\s*₦?\s*([\d.,]+)\s*(k|m)?\s*$/i.exec(String(text ?? ''));
+  const m = /^\s*(?:₦|ngn|n)?\s*([\d.,]+)\s*(k|m)?\s*(?:-|–|—|to|and|or|\/)\s*(?:₦|ngn|n)?\s*([\d.,]+)\s*(k|m)?\s*$/i.exec(String(text ?? ''));
   if (!m) return null;
   const unitA = m[2] || (m[4] && Number(m[1].replace(/,/g, '')) < 1000 ? m[4] : '');
   const unitB = m[4] || (m[2] && Number(m[3].replace(/,/g, '')) < 1000 ? m[2] : '');
@@ -263,11 +343,16 @@ export function parsePriceRange(text) {
 // "50k per puppy", "45000 for female", "200k, we can negotiate": the amounts in a
 // sentence, each once. An age or a count ("10 weeks", "3 pups", "2females") is
 // not a price, and small numbers beside a real price ("2 males, 50k each") are counts.
-const AMOUNT = /(?<![\p{L}\d_.,])(?:₦|ngn|n)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|m)?(?![\p{L}\d])(?!\s*(?:weeks?|wks?|months?|mths?|years?|yrs?|days?|males?|females?|pups?|pupp(?:y|ies)|kittens?|old|litters?)\b)/giu;
+// Every common way of writing it: 600k, 600K, ₦600,000, N600,000, NGN 600000,
+// 600 thousand, 600,000 naira, 0.6m, 1.2 million, 600.000 (a dot for a comma).
+const AMOUNT = /(?<![\p{L}\d_.,])(?:₦|ngn|naira|n)?\s*(\d{1,3}(?:[,.]\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?)\s*(k|thousand|m|mil|mill|million)?(?:\s*(?:naira|ngn))?(?![\p{L}\d])(?!\s*(?:weeks?|wks?|months?|mo?nths?|mths?|mos?|years?|yrs?|days?|males?|females?|pups?|pupp(?:y|ies)|kittens?|old|litters?)\b)/giu;
+const UNIT_K = { k: 'k', thousand: 'k', m: 'm', mil: 'm', mill: 'm', million: 'm' };
+// "600.000" and "1.200.000" are thousands, written with dots.
+const amountDigits = (s) => (/^\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g, '') : s.replace(/,/g, ''));
 export function pricesIn(text) {
   const found = [];
   for (const m of String(text ?? '').matchAll(AMOUNT)) {
-    const n = parsePrice(m[1] + (m[2] ?? ''));
+    const n = parsePrice(amountDigits(m[1]) + (UNIT_K[String(m[2] ?? '').toLowerCase()] ?? ''));
     if (n != null && !found.includes(n)) found.push(n);
   }
   const real = found.filter((n) => n >= 1000);
@@ -307,8 +392,8 @@ const LINK = /https?:\/\/|www\.|\.(com|ng|app|net|org|io|site)\b/i;
 // Whole links, to take out of text the AI wrote before the owner sees it.
 const LINKS = /(https?:\/\/|www\.)\S*|\S+\.(com|ng|app|net|org|io|site|example)\b\S*/gi;
 const CHAT_REPLY = /^\s*(listen|ok(ay)?|boss|hello|hi|hey|yes|no|sir|ma|madam|agent|i am an agent|i'?m an agent|wait|please|thanks?|good|fine|sure|alright|done|later|hm+)\b/i;
-const AGE_OK = /(\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|half)\b)[^]*?(weeks?|wks?|months?|mths?|years?|yrs?|days?)|\bnew\s*born\b/i;
-const CLEAN_AGE = /^\s*(about|around|approx\.?|i think|maybe)?\s*\d+(\.\d+)?\s*(-\s*\d+\s*)?(weeks?|wks?|months?|mths?|years?|yrs?|days?)(\s+old)?(\s*plus|\+)?\s*$/i;
+const AGE_OK = /(\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|half)\b)[^]*?(weeks?|wks?|wk|months?|mo?n?ths?|mnts?|mons?|mos?|years?|yrs?|yr|days?|dys?)|\bnew\s*born\b/i;
+const CLEAN_AGE = /^\s*(about|around|approx\.?|i think|maybe)?\s*\d+(\.\d+)?\s*(-\s*\d+\s*)?\+?\s*(weeks?|wks?|wk|months?|mo?n?ths?|mnts?|mons?|mos?|years?|yrs?|yr|days?|dys?)(\s+old)?(\s*plus|\+)?\s*$/i;
 const HIGH_PRICE = 20_000_000;
 
 export const notABreed = (t) => !t || LINK.test(t) || CHAT_REPLY.test(t) || /\d{4,}/.test(t) || !/\p{L}{2}/u.test(t);
@@ -447,7 +532,7 @@ const SAY = {
       `Seller: ${d.name}${d.nameKnown ? ' (as before)' : ''}, +${d.whatsapp}`,
     ].filter(Boolean).join('\n') +
     '\n\nReply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
-  reviewAgain: 'Reply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
+  reviewAgain: 'Reply *YES* to send it for review, or *CANCEL*. To change something, say what, like *price 600k* or *age 7 months*.',
   cancelled: 'Cancelled. Nothing was sent. Message *SELL* any time to list a pet.',
   badAge: (d) => `How old is your ${petWord(d)}? Send it like *10 weeks* or *2 years*.`,
   badLocation: 'Which city and area are you in? Send the place, like *Lekki, Lagos*.',
@@ -680,6 +765,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
   const draft = { ...(live.draft ?? {}), images: [...(live.draft?.images ?? [])] };
 
+  if (!text && !message?.hasMedia) return reply(live.state, draft);
   if (CANCEL.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
   if (/^\s*(new|start (again|over|afresh)|restart)\s*[.!]*$/i.test(text)) return reply('pet_type', { images: [] }, SAY.askType);
 
@@ -762,13 +848,13 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       // Picked out of a longer message: say which, so a wrong pick can be put right at the summary.
       const typed = text.replace(/\s+/g, ' ').trim().replace(TRAILING_PET, '').toLowerCase();
       const picked = breed.toLowerCase() !== typed ? `Breed: *${breed}* 👍` : null;
-      return reply('pet_age', { ...draft, breed }, picked, SAY.askAge(draft));
+      return reply('pet_age', { ...draft, breed: tidyBreed(breed) }, picked, SAY.askAge(draft));
     }
 
     case 'pet_age':
       if (!text) return reply('pet_age', draft, SAY.askAge(draft));
       if (!ageOk(text)) return reply('pet_age', draft, SAY.badAge(draft));
-      return reply('pet_deal', { ...draft, age: text.replace(/\s+/g, ' ').slice(0, MAX_AGE) }, SAY.askDeal);
+      return reply('pet_deal', { ...draft, age: tidyAge(text).slice(0, MAX_AGE) }, SAY.askDeal);
 
     case 'pet_deal': {
       // "1", or in their own words: "Am selling", "for adoption".
@@ -786,7 +872,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       }
       const d = NEGOTIABLE_IN.test(text) ? { ...draft, negotiable: true } : draft;
       const range = parsePriceRange(text);
-      if (range) return reply('pet_price', d, SAY.priceRange(range[0], range[1]));
+      // A range is never taken: buyers see one price. The same amount twice ("500,000 or 500k") is just that price.
+      if (range && range[0] !== range[1]) return reply('pet_price', d, SAY.priceRange(range[0], range[1]));
       const prices = pricesIn(text);
       if (prices.length > 1) {
         const [a, b] = [...prices].sort((x, y) => x - y);
@@ -804,7 +891,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     case 'pet_location':
       if (text.length < 2) return reply('pet_location', draft, SAY.askLocation);
       if (!placeOk(text)) return reply('pet_location', draft, SAY.badLocation);
-      return reply('pet_health', { ...draft, location: text.replace(/\s+/g, ' ').slice(0, MAX_LOCATION) }, SAY.askHealth);
+      return reply('pet_health', { ...draft, location: tidyPlace(text).slice(0, MAX_LOCATION) }, SAY.askHealth);
 
     case 'pet_health': {
       const found = HEALTH.find(([, re]) => re.test(text));
@@ -823,6 +910,8 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 
     case 'pet_photos':
       if (!draft.images.length) return reply('pet_photos', draft, text ? SAY.noPhotos : SAY.askPhotos(draft));
+      // "done" while the photos are already being checked (the sixth photo starts it): nothing more.
+      if (draft.checkingSince && Date.now() - Date.parse(draft.checkingSince) < 120_000) return reply('pet_photos', draft);
       if (FILLER.test(text) || YES.test(text)) return processPhotos(draft);
       return reply('pet_photos', draft, SAY.morePhotos(draft.images.length));
 
@@ -862,7 +951,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     case 'pet_fix': {
       const [fix, ...rest] = draft.fixes ?? [];
       if (!fix) return review({ ...draft, fixes: undefined }, store);
-      if (/^\s*(ok|okay|keep( it)?|it'?s (fine|correct|right)|correct|yes|y)\b/i.test(text)) {
+      if (KEEP.test(text)) {
         return nextFix({ ...draft, kept: [...(draft.kept ?? []), fix] }, rest, store);
       }
       const fixed = applyFix(fix.field, text, draft);
@@ -878,6 +967,13 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       const name = renamed ? parseSellerName(renamed) : null;
       const petName = petNameIn(text);
       if (name || petName) return review({ ...draft, ...(name ? { name, nameKnown: false } : {}), ...(petName ? { petName } : {}) }, store);
+      const edit = EDIT.exec(text);
+      const field = edit && EDIT_FIELD[edit[1].toLowerCase()];
+      if (field && !(field === 'price' && draft.listing_type !== 'sale')) {
+        const fixed = applyFix(field, edit[2], draft);
+        if (fixed.ask) return reply('pet_review', draft, fixed.ask, SAY.reviewAgain);
+        return review(fixed.draft, store);
+      }
       if (NO.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
       return reply('pet_review', draft, SAY.reviewAgain);
     }
@@ -892,7 +988,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
 function processPhotos(draft, note) {
   return {
     state: 'pet_photos',
-    draft,
+    draft: { ...draft, checkingSince: new Date().toISOString() },
     replies: [note, SAY.checking].filter(Boolean),
     action: { type: 'process_photos' },
   };
@@ -920,7 +1016,7 @@ function whyNot(draft, v) {
 export function petPhotosDone(draft, images, ctx = {}) {
   const store = ctx.store ?? 'the store';
   // Why the photos were not looked at, kept to tell the store with the listing.
-  draft = { ...draft, checkNote: ctx.checkNote ?? undefined };
+  draft = { ...draft, checkNote: ctx.checkNote ?? undefined, checkingSince: undefined };
   if (!images?.length) return reply('pet_photos', { ...draft, images: [] }, SAY.photosNotSaved);
 
   const keep = [];
@@ -1033,14 +1129,14 @@ function applyFix(field, text, d) {
     const several = severalBreeds(t);
     if (several) return { ask: SAY.whichBreed(several) };
     const breed = !notABreed(t) && parseBreed(t);
-    return breed ? { draft: { ...d, breed } } : { ask: SAY.badBreed(d) };
+    return breed ? { draft: { ...d, breed: tidyBreed(breed) } } : { ask: SAY.badBreed(d) };
   }
-  if (field === 'age') return ageOk(t) ? { draft: { ...d, age: t.slice(0, MAX_AGE) } } : { ask: SAY.badAge(d) };
+  if (field === 'age') return ageOk(t) ? { draft: { ...d, age: tidyAge(t).slice(0, MAX_AGE) } } : { ask: SAY.badAge(d) };
   if (field === 'price') {
     const [price] = pricesIn(t);
-    return price ? { draft: { ...d, price } } : { ask: SAY.badPrice };
+    return price ? { draft: { ...d, price, ...(NEGOTIABLE_IN.test(t) ? { negotiable: true } : {}) } } : { ask: SAY.badPrice };
   }
-  if (field === 'location') return placeOk(t) ? { draft: { ...d, location: t.slice(0, MAX_LOCATION) } } : { ask: SAY.badLocation };
+  if (field === 'location') return placeOk(t) ? { draft: { ...d, location: tidyPlace(t).slice(0, MAX_LOCATION) } } : { ask: SAY.badLocation };
   if (field === 'notes') return { draft: { ...d, notes: SKIP.test(t) ? null : t.slice(0, MAX_NOTES) } };
   const name = parseSellerName(t);
   return name ? { draft: { ...d, name, nameKnown: false } } : { ask: SAY.badName };
@@ -1082,6 +1178,14 @@ export function petStale(conversation, ctx = {}) {
   const then = new Date(conversation.updated_at).getTime();
   return Number.isFinite(then) && now - then > PHOTOS_WAIT_HOURS * 3_600_000;
 }
+
+// "Leave as it is", "keep it", "it's correct", "no change": the answer stands.
+const KEEP = /^\s*(ok|okay|keep|leave|no change|don'?t change|do not change|as it is|it'?s (fine|correct|right|ok)|it is (fine|correct|right|ok)|that'?s (fine|correct|right|ok)|correct|fine|right|yes|y)\b/i;
+
+// At the summary, any answer changed in one message: "Change the price to
+// 600,000 negotiable", "age 7 months", "area Port Harcourt".
+const EDIT = /^\s*(?:please\s+)?(?:change|set|make|update|correct|put|edit)?\s*(?:the\s+|my\s+)?(price|amount|age|area|location|place|city|breed|notes?|description)\b\s*(?:to|is|should be|as|=|:|-)?\s*(.+)$/i;
+const EDIT_FIELD = { price: 'price', amount: 'price', age: 'age', area: 'location', location: 'location', place: 'location', city: 'location', breed: 'breed', note: 'notes', notes: 'notes', description: 'notes' };
 
 // "Change the seller name Kenny", "add my name Remina", "my name is Remina".
 const RENAME = /^\s*(?:(?:please\s+)?(?:change|edit|update|correct|add|use|put)\s+(?:the\s+|my\s+)?(?:seller'?s?\s+)?name\s*(?:to|as|:|-)?\s+|my\s+name\s+is\s+)(.+)$/i;

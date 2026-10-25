@@ -41,9 +41,11 @@ export function detailsPrompt(details) {
     'List only answers that are clearly wrong:\n' +
     '- not the kind of thing that was asked (a breed that is not a breed, an age that is not an age, ' +
     'a place that is not a place, a seller name that is the pet\'s name or a stray word);\n' +
-    '- far from normal, such as a price far too low or high for that pet in Nigeria (prices are in naira);\n' +
+    '- far from normal: a price about ten times too low or too high for that pet in Nigeria (prices are in naira; ' +
+    'pedigree and imported breeds can cost several hundred thousand, which is normal);\n' +
     '- in conflict with another answer, such as notes that contradict the vaccinations, the breed or the age.\n' +
-    'Do not list spelling, informal English or Pidgin, local breed names, or answers that are vague but plausible ' +
+    'Do not list spelling (a misspelt real place or breed is fine), informal English or Pidgin, local breed names, ' +
+    'a place given as a state and city in any order, or answers that are vague but plausible ' +
     '("about 8 weeks", "Lagos"). problem: at most 12 plain words, for the store owner. If nothing is clearly wrong, return no issues.'
   );
 }
