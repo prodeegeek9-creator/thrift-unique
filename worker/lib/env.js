@@ -68,6 +68,12 @@ export function config(env) {
     // intake is off for every store, whatever their flag says.
     petListingsUrl: env.PET_LISTINGS_URL ? env.PET_LISTINGS_URL.trim() : null,
     petListingsKey: env.PET_LISTINGS_KEY ? env.PET_LISTINGS_KEY.trim() : null,
+    // Where an approved pet is sent to be posted on the store's Facebook page
+    // and Instagram before the seller is told (routes/petListings.js): n8n's
+    // "Puppyplace Social Posting — Approved Pets" webhook. Not a secret
+    // (wrangler.jsonc `vars`); it only posts a pet that is live on the site,
+    // once. Unset means nothing is posted and the seller gets the pages only.
+    petSocialUrl: env.PET_SOCIAL_URL ? env.PET_SOCIAL_URL.trim() : null,
     // How long to wait between asking WAHA again for a photo it had not fetched yet.
     mediaRetryMs: env.MEDIA_RETRY_MS != null && env.MEDIA_RETRY_MS !== '' ? Number(env.MEDIA_RETRY_MS) : 1500,
 

@@ -284,6 +284,8 @@ export function installFetch({
   photoCheck = null,
   // The site a pet store lists on (PET_LISTINGS_URL): { url, handler(url, init) }.
   petSite = null,
+  // Where an approved pet is posted to social media (PET_SOCIAL_URL): { url, handler(url, init) }.
+  petSocial = null,
   // The photo-checking model (OpenAI): { handler(url, init) }.
   vision = null,
   // Automate Naija's Supabase (AUTOMATE_NAIJA_SUPABASE_URL): { url, handler(url, init) }.
@@ -318,6 +320,8 @@ export function installFetch({
     if (waha && url.startsWith(waha.url)) return waha.handler(url, init);
 
     if (photoCheck && url.startsWith(photoCheck.url)) return photoCheck.handler(url, init);
+
+    if (petSocial && url.startsWith(petSocial.url)) return petSocial.handler(url, init);
 
     if (petSite && url.startsWith(new URL(petSite.url).origin)) return petSite.handler(url, init);
 
