@@ -1907,7 +1907,7 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true, socials } = {}) {
   const received = [];
   const guides = [];
   const statusCalls = [];
@@ -1933,6 +1933,7 @@ function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}
           live: slugs.filter((x) => site.states[x] === 'live'),
           pending: slugs.filter((x) => site.states[x] === 'pending'),
           missing: slugs.filter((x) => !site.states[x] || site.states[x] === 'missing'),
+          ...(socials ? { socials } : {}),
         }));
       }
       received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
@@ -2792,6 +2793,72 @@ test('a notice WhatsApp refuses is tried again, a few times, never twice once se
     assert.equal(await notifyLivePets(inviteEnv()), null);
   } finally {
     restore();
+  }
+});
+
+const PET_SOCIAL = 'https://n8n.test/webhook/puppyplace-pet-approved';
+const SITE_SOCIALS = [
+  { name: 'Facebook', url: 'https://www.facebook.com/puppyplace_ng' },
+  { name: 'Instagram', url: 'https://www.instagram.com/puppyplace_ng' },
+  { name: 'TikTok', url: 'https://www.tiktok.com/@puppyplace.ng' },
+];
+
+// n8n's "Approved Pets" workflow: posts each slug once and answers with the posts.
+function makeFakePetSocial({ status = 200, answer = (slug) => ({ posted: true, slug, facebook_url: `https://www.facebook.com/1_${slug}`, instagram_url: `https://www.instagram.com/p/${slug}/` }) } = {}) {
+  const calls = [];
+  return {
+    url: PET_SOCIAL,
+    calls,
+    async handler(url, init) {
+      calls.push({ url, method: init.method, body: JSON.parse(init.body) });
+      if (status !== 200) return new Response('no', { status });
+      return new Response(JSON.stringify(answer(calls.at(-1).body.slug)));
+    },
+  };
+}
+
+test('an approved pet is posted to the store\'s Facebook and Instagram, and the seller gets those posts and the store\'s pages', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' }, socials: SITE_SOCIALS });
+  const petSocial = makeFakePetSocial();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, petSocial });
+
+  try {
+    assert.deepEqual(await notifyLivePets(wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', PET_SOCIAL_URL: PET_SOCIAL })), { notified: 1, expired: 0, failed: 0 });
+
+    // Posted before the seller is told, by slug alone: n8n reads the pet from the site.
+    assert.deepEqual(petSocial.calls, [{ url: PET_SOCIAL, method: 'POST', body: { slug: 'caucasian-1' } }]);
+
+    const live = waha.sent[0].text;
+    assert.match(live, /We've also posted it on our pages\. Like, comment and share it there:/);
+    // The pet's own posts in place of those two pages, and the page it was not posted on.
+    assert.match(live, /\nFacebook: https:\/\/www\.facebook\.com\/1_caucasian-1\nInstagram: https:\/\/www\.instagram\.com\/p\/caucasian-1\/\nTikTok: https:\/\/www\.tiktok\.com\/@puppyplace\.ng/);
+    assert.doesNotMatch(live, /facebook\.com\/puppyplace_ng/);
+    assert.match(live, /https:\/\/pets\.test\/pets\/caucasian-1[\s\S]*Facebook:[\s\S]*Please share it!/);
+    assert.equal(waha.sent.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('when posting to social media fails, or is not set up, the seller still gets the store\'s pages', async () => {
+  for (const [extraEnv, petSocial] of [[{ PET_SOCIAL_URL: PET_SOCIAL }, makeFakePetSocial({ status: 500 })], [{}, null]]) {
+    const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+    const waha = makeFakeWaha();
+    const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' }, socials: [...SITE_SOCIALS, { name: 'Bad', url: 'javascript:alert(1)' }] });
+    const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, petSocial });
+
+    try {
+      assert.deepEqual(await notifyLivePets(wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', ...extraEnv })), { notified: 1, expired: 0, failed: 0 });
+      const live = waha.sent[0].text;
+      assert.match(live, /Follow PuppyPlace and share your pet from our pages:\nFacebook: https:\/\/www\.facebook\.com\/puppyplace_ng\nInstagram: https:\/\/www\.instagram\.com\/puppyplace_ng\nTikTok: https:\/\/www\.tiktok\.com\/@puppyplace\.ng/);
+      // Only https links from the site are passed on.
+      assert.doesNotMatch(live, /Bad|javascript/);
+      assert.equal(supabase.tables.pet_listings[0].status, 'notified');
+    } finally {
+      restore();
+    }
   }
 });
 

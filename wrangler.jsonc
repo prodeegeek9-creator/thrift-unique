@@ -49,6 +49,10 @@
     // their WhatsApp (README, "Pets listed on the store's own site"). Its key
     // is the PET_LISTINGS_KEY secret, never here.
     "PET_LISTINGS_URL": "https://puppyplace.ng/api/seller-listings",
+    // Where an approved pet is posted to the store's Facebook and Instagram
+    // before the seller is told (n8n, "Puppyplace Social Posting — Approved
+    // Pets"). It reads the pet from the site itself, so needs no key.
+    "PET_SOCIAL_URL": "https://n8n.prodeegee.com/webhook/puppyplace-pet-approved",
 
     // Automate Naija, which sends its student alerts from the platform number
     // and decides what a student's AN- opt-in code means (worker/lib/

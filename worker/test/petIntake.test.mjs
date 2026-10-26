@@ -318,6 +318,11 @@ test('the owner learns whether the photos were checked, and the seller when the 
   assert.match(petLiveMessage({ store: 'PuppyPlace', breed: 'Cat', listing_type: 'adoption' }), /live on PuppyPlace for adoption/);
   // The seller is asked to share it, and given something to forward.
   assert.match(live, /Please share it![\s\S]*WhatsApp Status, Instagram and Facebook/);
+  // No social links, unless there are some.
+  assert.doesNotMatch(live, /our pages/);
+  const pages = [{ name: 'Facebook', url: 'https://fb.test/pp' }, { name: 'TikTok', url: 'https://tt.test/@pp' }];
+  assert.match(petLiveMessage({ store: 'PuppyPlace', breed: 'Lhasa', url: 'https://x/y', socials: pages }), /Follow PuppyPlace and share your pet from our pages:\nFacebook: https:\/\/fb\.test\/pp\nTikTok: https:\/\/tt\.test\/@pp\n\n📣/);
+  assert.match(petLiveMessage({ store: 'PuppyPlace', breed: 'Lhasa', url: 'https://x/y', socials: [{ ...pages[0], url: 'https://fb.test/post/1', posted: true }, pages[1]] }), /We've also posted it on our pages\. Like, comment and share it there:\nFacebook: https:\/\/fb\.test\/post\/1\nTikTok/);
   assert.equal(petShareMessage({ breed: 'Lhasa', listing_type: 'sale', url: 'https://puppyplace.ng/pets/lhasa-1' }), '🐾 Lhasa for sale on PuppyPlace. See photos and details:\nhttps://puppyplace.ng/pets/lhasa-1');
   assert.match(petShareMessage({ breed: 'Cat', listing_type: 'adoption', url: 'https://x/y' }), /Cat available for adoption/);
 });

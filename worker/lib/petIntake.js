@@ -663,12 +663,21 @@ export function breedGuideDraftMessage({ breed }) {
   );
 }
 
-// To the seller, when the store approves the listing: the link, and a push to
-// share it, since the seller sharing it is most of how a pet gets seen.
-export function petLiveMessage({ store, breed, listing_type, url }) {
+// To the seller, when the store approves the listing: the link, the store's
+// social pages (or the posts of this pet on them), and a push to share it,
+// since the seller sharing it is most of how a pet gets seen.
+// socials: [{ name, url, posted }], posted when the url is this pet's own post.
+export function petLiveMessage({ store, breed, listing_type, url, socials = [] }) {
+  const pages = socials.filter((s) => s?.name && s?.url);
   return (
     `🎉 Good news! Your *${breed}* is now live on ${store}${listing_type === 'adoption' ? ' for adoption' : ''}.` +
     (url ? `\n\nHere is your link:\n${url}` : '') +
+    (pages.length
+      ? (pages.some((s) => s.posted)
+          ? `\n\n📲 We've also posted it on our pages. Like, comment and share it there:`
+          : `\n\n📲 Follow ${store} and share your pet from our pages:`) +
+        pages.map((s) => `\n${s.name}: ${s.url}`).join('')
+      : '') +
     '\n\n📣 Please share it! Post it on your WhatsApp Status, Instagram and Facebook, and send it to friends, family and groups. The more people see it, the faster your pet finds a home.' +
     (url ? "\n\nI'm sending a ready-made message next. Just forward it 👇" : '') +
     '\n\nBuyers will message you directly on WhatsApp. Send *SELL* to list another pet.'

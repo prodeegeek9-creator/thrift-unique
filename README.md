@@ -354,9 +354,15 @@ remembered in `pet_listings` (migration 0051) with the chat it came from. Once
 a minute (`routes/petListings.js`) the Worker asks the site
 (`GET <PET_LISTINGS_URL>/status?slugs=…`, same shared key) which of the ones
 still waiting are live, and each seller whose listing is gets, in the same chat,
-their link with a push to share it on Status, Instagram, Facebook and with
-friends and groups, then the link again on its own in a message made to be
-forwarded. It asks rather than waiting to be told, so it does not matter how
+their link, the store's social pages, and a push to share it on Status,
+Instagram, Facebook and with friends and groups, then the link again on its own
+in a message made to be forwarded. Before that message the pet is posted to the
+store's Facebook page and Instagram: `PET_SOCIAL_URL` (`wrangler.jsonc` vars)
+is n8n's "Puppyplace Social Posting — Approved Pets" webhook, sent
+`{ "slug": "…" }`, which reads the pet from the site, posts it once and answers
+with the posts' links. Those replace the Facebook and Instagram pages in the
+message; the other pages (TikTok) come from the site's status answer
+(`socials`). If n8n fails or is slow (60 s), the seller gets the pages alone. It asks rather than waiting to be told, so it does not matter how
 the store approved the listing (a tick in the admin, the edit form, the
 database) and nothing depends on the site reaching this Worker. A listing
 deleted on the site is dropped; one nobody approved in 60 days is given up on;
