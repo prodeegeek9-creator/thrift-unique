@@ -36,6 +36,11 @@ export default function WhatsappLink() {
   const tenantId = tenant?.id;
   const isOwner = role === 'owner';
 
+  // After "Link again", WAHA takes a few seconds to go from the old FAILED to
+  // STARTING and then to a QR. Reading the old status once must not end the
+  // polling, or the code never appears: keep asking until this time.
+  const [waitUntil, setWaitUntil] = useState(0);
+
   const { data, isLoading } = useQuery({
     queryKey: ['tenant', tenantId, 'whatsapp-session'],
     queryFn: () => fetchWhatsappSession(tenantId),
@@ -44,12 +49,17 @@ export default function WhatsappLink() {
     // seconds or so, and a stale QR fails to scan with no explanation — which
     // reads as broken rather than as "wait a moment".
     refetchInterval: (query) =>
-      ['SCAN_QR_CODE', 'STARTING'].includes(query.state.data?.status) ? QR_POLL_MS : false,
+      ['SCAN_QR_CODE', 'STARTING'].includes(query.state.data?.status) || Date.now() < waitUntil
+        ? QR_POLL_MS
+        : false,
   });
 
   const link = useMutation({
     mutationFn: () => linkWhatsapp(tenantId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tenant', tenantId, 'whatsapp-session'] }),
+    onSuccess: () => {
+      setWaitUntil(Date.now() + 90_000);
+      qc.invalidateQueries({ queryKey: ['tenant', tenantId, 'whatsapp-session'] });
+    },
     onError: (e) => toast(e.message, 'error'),
   });
 
@@ -77,6 +87,8 @@ export default function WhatsappLink() {
 
   const status = data?.status ?? null;
   const pairing = status === 'SCAN_QR_CODE' || status === 'STARTING';
+  // Tapped Link, and no code to show yet.
+  const gettingCode = Date.now() < waitUntil && !data?.qr && status !== 'WORKING';
   const copy = SESSION_COPY[status] ?? {
     label: 'Not linked',
     tone: 'idle',
@@ -120,6 +132,13 @@ export default function WhatsappLink() {
         </p>
       ) : null}
 
+      {gettingCode ? (
+        <p className="mt-4 rounded-card bg-surface-2 p-4 text-center text-xs leading-relaxed text-muted">
+          Getting your QR code… this takes a few seconds. Have the phone ready: the code stays for
+          about a minute.
+        </p>
+      ) : null}
+
       {data?.qr ? (
         <div className="mt-4 flex flex-col items-center gap-2 rounded-card bg-surface-2 p-4">
           <img
@@ -128,7 +147,8 @@ export default function WhatsappLink() {
             className="h-44 w-44 rounded-lg bg-white p-2"
           />
           <p className="text-center text-[11px] leading-relaxed text-muted">
-            The code refreshes every few seconds. Keep this open while you scan.
+            The code refreshes every few seconds and stops after about a minute. If it runs out,
+            tap Link again.
           </p>
         </div>
       ) : null}
