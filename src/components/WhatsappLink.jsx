@@ -218,14 +218,27 @@ export default function WhatsappLink() {
               {unlink.isPending ? 'Stopping…' : 'Start over'}
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => link.mutate()}
-              disabled={link.isPending}
-              className="rounded-pill bg-green px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-            >
-              {link.isPending ? 'Starting…' : status ? 'Link again' : 'Link WhatsApp'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => link.mutate()}
+                disabled={link.isPending}
+                className="rounded-pill bg-green px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                {link.isPending ? 'Starting…' : status ? 'Link again' : 'Link WhatsApp'}
+              </button>
+              {/* A failed link that keeps failing needs a clean slate, not another try. */}
+              {status ? (
+                <button
+                  type="button"
+                  onClick={() => unlink.mutate()}
+                  disabled={unlink.isPending}
+                  className="rounded-pill border border-line px-3 py-1.5 text-xs font-medium text-muted hover:bg-surface-2 disabled:opacity-50"
+                >
+                  {unlink.isPending ? 'Clearing…' : 'Start over'}
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       ) : (

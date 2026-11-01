@@ -60,7 +60,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null, pairingStatus = 200, qrAsJson = false } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null, pairingStatus = 200, qrAsJson = false, createStatus = 201 } = {}) {
   const sent = [];
   const pairingRequests = [];
   // Chats whose history was read. `history` is what each one holds:
@@ -132,6 +132,10 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
       sent.push(body);
       events.push({ sent: body.chatId });
       return new Response(JSON.stringify({ id: { id: `out-${sent.length}` } }), { status: 200 });
+    }
+
+    if (path === '/api/sessions' && init.method === 'POST' && createStatus !== 201) {
+      return new Response('no', { status: createStatus });
     }
 
     if (path === '/api/sessions' && init.method === 'POST') {
@@ -1070,13 +1074,31 @@ test('linking again recovers a link that stopped halfway', async () => {
     );
 
     assert.equal(res.status, 200);
-    assert.equal(waha.created.length, 0);
-    assert.deepEqual(waha.stopped, ['ut-store']);
+    // A dead session is made again from nothing, with the same name and webhook secret.
+    assert.deepEqual(waha.deleted, ['ut-store']);
+    assert.equal(waha.created.length, 1);
+    assert.equal(waha.created[0].name, 'ut-store');
+    assert.equal(waha.created[0].config.webhooks[0].customHeaders[0].value, 'kept-secret');
     assert.deepEqual(waha.started, ['ut-store']);
     assert.equal(supabase.tables.tenants[0].waha_session, 'ut-store');
     // WAHA already signs this session's webhooks with the stored secret.
     assert.equal(supabase.tables.whatsapp_secrets.length, 1);
     assert.equal(supabase.tables.whatsapp_secrets[0].webhook_secret, 'kept-secret');
+  } finally {
+    restore();
+  }
+});
+
+test('if a dead session cannot be made again, linking falls back to stopping and starting it', async () => {
+  const supabase = makeFakeSupabase(seed({ secret: 'kept-secret' }));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'FAILED' } }, createStatus: 500 });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(sessionCall('POST', { token: 'tok-owner', body: { tenant: TENANT } }), wahaEnv(), {});
+    assert.equal(res.status, 200);
+    assert.deepEqual(waha.stopped, ['ut-store']);
+    assert.deepEqual(waha.started, ['ut-store']);
   } finally {
     restore();
   }

@@ -2313,12 +2313,28 @@ async function linkSession(request, env) {
         secret,
       });
     } else if (['FAILED', 'STOPPED'].includes(existing.status)) {
-      // WAHA refuses to start a session that failed (an expired QR, or a
-      // phone that unlinked it) until it has been stopped, so "Link again"
-      // would otherwise show the same dead session forever.
-      await stopSession(cfg, name).catch((err) => {
+      // A dead session is made again from nothing, the way the first link was:
+      // one that WhatsApp logged out keeps its old login, and stopping and
+      // starting it just fails again without ever showing a QR. If it cannot
+      // be made again, fall back to stopping it, which WAHA requires before
+      // it will start a session that failed.
+      let fresh = false;
+      try {
+        await deleteSession(cfg, name);
+        await createSession(cfg, tenant, {
+          webhookUrl: `${cfg.publicOrigin}/api/waha/webhook`,
+          secret,
+        });
+        fresh = true;
+      } catch (err) {
         if (!(err instanceof WahaError)) throw err;
-      });
+        console.warn('waha session rebuild failed, restarting it instead:', err.message);
+      }
+      if (!fresh) {
+        await stopSession(cfg, name).catch((err) => {
+          if (!(err instanceof WahaError)) throw err;
+        });
+      }
     }
     await startSession(cfg, name).catch((err) => {
       // Starting a session that is already running is a 4xx, not a problem.
