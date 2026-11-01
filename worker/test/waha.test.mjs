@@ -60,7 +60,7 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null, pairingStatus = 200 } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null, pairingStatus = 200, qrAsJson = false } = {}) {
   const sent = [];
   const pairingRequests = [];
   // Chats whose history was read. `history` is what each one holds:
@@ -186,6 +186,12 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     }
 
     const qr = path.match(/^\/api\/([^/]+)\/auth\/qr$/);
+    if (qr && qrAsJson) {
+      return new Response(JSON.stringify({ mimetype: 'image/png', data: 'iVBORw0KGgo=' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (qr) {
       return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
         status: 200,
@@ -1172,6 +1178,19 @@ test('when WAHA will not give a code the owner is told to try again or scan', as
     const res = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone: '08156740438' } }), wahaEnv(), {});
     assert.equal(res.status, 502);
     assert.match((await res.json()).error, /scan the QR instead/);
+  } finally {
+    restore();
+  }
+});
+
+test('a QR that WAHA hands over as JSON is shown as a picture, not as broken bytes', async () => {
+  const supabase = makeFakeSupabase(seed({ tenant: { waha_session: 'ut-store', waha_status: 'STARTING' }, secret: 's' }));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'SCAN_QR_CODE' } }, qrAsJson: true });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(sessionCall('GET', { token: 'tok-owner' }), wahaEnv(), {});
+    assert.equal((await res.json()).qr, 'data:image/png;base64,iVBORw0KGgo=');
   } finally {
     restore();
   }

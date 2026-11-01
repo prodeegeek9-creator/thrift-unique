@@ -237,6 +237,15 @@ export async function getQR(cfg, session) {
 
   try {
     const res = await call(`/api/${encodeURIComponent(session)}/auth/qr`, { raw: true });
+    // WAHA answers with the picture itself, or, depending on its version and
+    // the Accept header it is given, as JSON: { mimetype, data: <base64> }.
+    // Wrapping JSON bytes up as a PNG shows a broken image, so tell them apart.
+    if ((res.headers.get('content-type') ?? '').includes('json')) {
+      const body = await res.json().catch(() => null);
+      const data = typeof body?.data === 'string' ? body.data.replace(/\s/g, '') : '';
+      const mime = /^image\/(png|jpeg|gif|webp)$/.test(body?.mimetype ?? '') ? body.mimetype : 'image/png';
+      return data ? `data:${mime};base64,${data}` : null;
+    }
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (!bytes.byteLength) return null;
     return `data:image/png;base64,${base64(bytes)}`;
