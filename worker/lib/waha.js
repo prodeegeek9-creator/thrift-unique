@@ -249,6 +249,21 @@ export async function getQR(cfg, session) {
   }
 }
 
+// The 8-character code that links a device without a QR: the owner types it
+// into WhatsApp → Linked devices → Link with phone number instead. WAHA only
+// gives one while the session is waiting to be linked (SCAN_QR_CODE), and the
+// code belongs to the number it was asked for, so that has to be the WhatsApp
+// that is being linked. Null when WAHA answers without a code.
+export async function requestPairingCode(cfg, session, phone) {
+  const call = client(cfg);
+  const res = await call(`/api/${encodeURIComponent(session)}/auth/request-code`, {
+    method: 'POST',
+    body: { phoneNumber: phone },
+  });
+  const code = typeof res?.code === 'string' ? res.code.trim() : '';
+  return code || null;
+}
+
 // Chunked, because btoa(String.fromCharCode(...bytes)) spreads every byte into
 // an argument list and blows the stack on anything but a tiny input. A QR PNG
 // is small; this is here so it stays correct if something larger is ever

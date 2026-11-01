@@ -63,6 +63,12 @@ export async function linkWhatsapp(tenantId) {
   return call('/session', { method: 'POST', body: { tenant: tenantId } });
 }
 
+// The code that links a WhatsApp by phone number instead of the QR. Only works
+// while the session is waiting to be linked.
+export async function requestPairingCode(tenantId, phone) {
+  return call('/session/code', { method: 'POST', body: { tenant: tenantId, phone } });
+}
+
 export async function unlinkWhatsapp(tenantId) {
   return call(`/session?tenant=${encodeURIComponent(tenantId)}`, { method: 'DELETE' });
 }

@@ -82,6 +82,7 @@ import {
   stopSession,
   deleteSession,
   getQR,
+  requestPairingCode,
   WahaError,
   ensureStoreWebhook,
   rejectCall,
@@ -125,6 +126,11 @@ export async function handleWaha(request, env, path) {
     if (method === 'GET') return sessionStatus(request, env);
     if (method === 'POST') return linkSession(request, env);
     if (method === 'DELETE') return unlinkSession(request, env);
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  if (rest === '/session/code') {
+    if (method === 'POST') return pairingCode(request, env);
     return json({ error: 'Method not allowed' }, 405);
   }
 
@@ -2339,6 +2345,53 @@ async function linkSession(request, env) {
   );
 
   return json({ linked: true, status: 'STARTING', session: name });
+}
+
+// A number as WAHA wants it for pairing: digits only, country code first.
+// "0803 123 4567", "+234 803 123 4567" and "2348031234567" are the same number.
+// Null when it cannot be one.
+function pairingNumber(raw) {
+  let digits = String(raw ?? '').replace(/\D/g, '').replace(/^00/, '');
+  if (/^0\d{10}$/.test(digits)) digits = `234${digits.slice(1)}`;
+  return /^\d{10,15}$/.test(digits) ? digits : null;
+}
+
+// POST /api/waha/session/code { tenant, phone }  →  { code: "ABCD-EFGH" }
+//
+// The other way to link: instead of scanning the QR, the owner types this
+// code into WhatsApp → Linked devices → Link with phone number instead. Useful
+// when the phone that is being linked is the one showing the screen. Owner
+// only, like the QR, and only while the session is waiting to be linked.
+async function pairingCode(request, env) {
+  const cfg = require_(env, 'supabaseUrl', 'serviceKey', 'wahaUrl');
+  const { tenant: tenantId, phone } = await request.json().catch(() => ({}));
+
+  let member;
+  try {
+    member = await requireMember(request, cfg, tenantId, { roles: ['owner'] });
+  } catch (err) {
+    if (err instanceof NotMember) return refuseMember(err);
+    throw err;
+  }
+
+  const number = pairingNumber(phone);
+  if (!number) return json({ error: 'Enter the WhatsApp number you are linking, like 0803 123 4567.' }, 400);
+
+  const tenant = await db(cfg).one('tenants', `id=eq.${member.tenantId}&select=id,waha_session`);
+  if (!tenant?.waha_session) return json({ error: 'Tap Link WhatsApp first, then ask for the code.' }, 409);
+
+  try {
+    const live = await getSession(cfg, tenant.waha_session);
+    if ((live?.status ?? live?.state) !== 'SCAN_QR_CODE') {
+      return json({ error: 'WhatsApp is not ready to link yet. Wait a few seconds and try again.' }, 409);
+    }
+    const code = await requestPairingCode(cfg, tenant.waha_session, number);
+    if (!code) return json({ error: 'WhatsApp did not give a code. Try again, or scan the QR instead.' }, 502);
+    return json({ code });
+  } catch (err) {
+    console.error('waha pairing code failed:', err?.message ?? err);
+    return json({ error: 'WhatsApp did not give a code. Try again, or scan the QR instead.' }, 502);
+  }
 }
 
 // DELETE /api/waha/session?tenant=<id>
