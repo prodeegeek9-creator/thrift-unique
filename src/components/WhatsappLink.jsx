@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Icon from './ui/Icon.jsx';
 import { useTenant } from '../lib/TenantContext.jsx';
@@ -5,6 +6,7 @@ import { useToast } from '../lib/ToastContext.jsx';
 import {
   fetchWhatsappSession,
   linkWhatsapp,
+  requestPairingCode,
   unlinkWhatsapp,
   SESSION_COPY,
   QR_POLL_MS,
@@ -60,6 +62,19 @@ export default function WhatsappLink() {
     onError: (e) => toast(e.message, 'error'),
   });
 
+  // The other way to link: a code typed into WhatsApp instead of a QR scanned.
+  // Starts as the store's own number, which is the one being linked.
+  const [phone, setPhone] = useState(tenant?.whatsapp_number ? `+${tenant.whatsapp_number}` : '');
+  const [pairCode, setPairCode] = useState(null);
+  const getCode = useMutation({
+    mutationFn: () => requestPairingCode(tenantId, phone),
+    onSuccess: (r) => setPairCode(r.code),
+    onError: (e) => {
+      setPairCode(null);
+      toast(e.message, 'error');
+    },
+  });
+
   const status = data?.status ?? null;
   const pairing = status === 'SCAN_QR_CODE' || status === 'STARTING';
   const copy = SESSION_COPY[status] ?? {
@@ -77,6 +92,14 @@ export default function WhatsappLink() {
 
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-ink">Your WhatsApp</h2>
+          {/* Which store and number this is. Someone with two stores should not
+              have to guess which one they are about to relink. */}
+          {tenant?.name ? (
+            <p className="mt-0.5 text-[11px] font-medium text-ink">
+              {tenant.name}
+              {tenant.whatsapp_number ? ` · +${tenant.whatsapp_number}` : ''}
+            </p>
+          ) : null}
           <p className="mt-0.5 text-xs leading-relaxed text-muted">{copy.body}</p>
         </div>
 
@@ -107,6 +130,47 @@ export default function WhatsappLink() {
           <p className="text-center text-[11px] leading-relaxed text-muted">
             The code refreshes every few seconds. Keep this open while you scan.
           </p>
+        </div>
+      ) : null}
+
+      {/* Link with a phone number instead of the QR, while the session is waiting. */}
+      {isOwner && status === 'SCAN_QR_CODE' ? (
+        <div className="mt-3 rounded-card bg-surface-2 p-4">
+          <p className="text-xs font-semibold text-ink">Or link with a phone number</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-muted">
+            For when this screen is on the phone you are linking. Enter the WhatsApp number, get a
+            code, then on that phone open WhatsApp → Linked devices → Link a device → Link with
+            phone number instead, and type the code.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <input
+              type="tel"
+              inputMode="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="0803 123 4567"
+              aria-label="WhatsApp number to link"
+              className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-1.5 text-xs text-ink"
+            />
+            <button
+              type="button"
+              onClick={() => getCode.mutate()}
+              disabled={getCode.isPending || !phone.trim()}
+              className="rounded-pill bg-green px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {getCode.isPending ? 'Getting…' : pairCode ? 'New code' : 'Get code'}
+            </button>
+          </div>
+          {pairCode ? (
+            <div className="mt-3 text-center">
+              <p className="select-all font-mono text-2xl font-semibold tracking-widest text-ink">
+                {pairCode}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                Type this into WhatsApp within a minute or so. If it is refused, tap New code.
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

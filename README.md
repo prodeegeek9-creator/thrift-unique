@@ -402,7 +402,7 @@ src/
                  navItems.js — the nav as data, each item carrying its flag
     ui/          Icon, TierBadge, StatusPill, BrandMark, PageHeader, LogoLoader
     Require*.jsx Auth, Feature, StaffRole — the route guards
-    WhatsappLink.jsx  the QR-code pairing panel on Channels
+    WhatsappLink.jsx  the QR-code pairing panel on Channels (and linking by phone-number code, POST /api/waha/session/code)
   pages/
     seller/      Overview, Listings, Orders, OrderDetail, Payouts, Contacts,
                  Disputes, Analytics, Team, Channels, Billing, Settings, Help
@@ -702,7 +702,7 @@ almost every decision in that file follows from it:
 | | |
 |---|---|
 | **the platform session** | One number, every seller. What the "Open WhatsApp" button deep-links to, and where the listing conversation happens. An inbound message is resolved to a store by the sender's number. |
-| **a tenant session** | The seller's own WhatsApp, linked by scanning a QR code. It exists to post to their **Status** — which is the Starter tier's entire distribution channel, and is impossible from a platform number, because Status goes to *their* contacts. |
+| **a tenant session** | The seller's own WhatsApp, linked by scanning a QR code, or by typing a code from the owner's phone number (Link with phone number instead). It exists to post to their **Status** — which is the Starter tier's entire distribution channel, and is impossible from a platform number, because Status goes to *their* contacts. |
 
 Inbound traffic on a tenant session is deliberately ignored. That session is
 the seller's real WhatsApp with their real customers in it, and a bot answering

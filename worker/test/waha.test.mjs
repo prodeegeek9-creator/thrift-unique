@@ -60,8 +60,9 @@ function seed({ tenant = {}, secret = null } = {}) {
 
 // A WAHA stand-in that records what it was asked to do, so a test can assert
 // on what the seller and their contacts would actually have seen.
-function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null } = {}) {
+function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus = null, rejectStatus = 200, messages = {}, history = {}, historyStatus = null, pairingStatus = 200 } = {}) {
   const sent = [];
+  const pairingRequests = [];
   // Chats whose history was read. `history` is what each one holds:
   // chat → [{ fromMe, body }], newest first.
   const historyFetches = [];
@@ -176,6 +177,14 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
         : new Response(JSON.stringify({ message: 'not found' }), { status: 404 });
     }
 
+    const pair = path.match(/^\/api\/([^/]+)\/auth\/request-code$/);
+    if (pair) {
+      pairingRequests.push({ session: decodeURIComponent(pair[1]), ...body });
+      return pairingStatus === 200
+        ? new Response(JSON.stringify({ code: 'ABCD-1234' }), { status: 200 })
+        : new Response('no', { status: pairingStatus });
+    }
+
     const qr = path.match(/^\/api\/([^/]+)\/auth\/qr$/);
     if (qr) {
       return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
@@ -198,7 +207,7 @@ function makeFakeWaha({ sessions = {}, mediaStatus = 200, lids = {}, lidsStatus 
     return new Response('unexpected waha call', { status: 500 });
   }
 
-  return { url: WAHA_URL, handler, sent, mediaFetches, messageFetches, historyFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions };
+  return { url: WAHA_URL, handler, sent, mediaFetches, messageFetches, historyFetches, typing, events, statuses, started, stopped, created, deleted, updated, rejected, sessions, pairingRequests };
 }
 
 function wahaEnv(extra = {}) {
@@ -1085,6 +1094,84 @@ test('a member can read the session state, and sees the QR while it waits', asyn
 
     // WAHA is the authority, so the cached column is corrected on the way past.
     assert.equal(supabase.tables.tenants[0].waha_status, 'SCAN_QR_CODE');
+  } finally {
+    restore();
+  }
+});
+
+function codeCall({ token, body }) {
+  return new Request('https://example.com/api/waha/session/code', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: JSON.stringify(body),
+  });
+}
+
+test('an owner can link with a phone number code instead of the QR, in any way of writing the number', async () => {
+  const supabase = makeFakeSupabase(seed({ tenant: { waha_session: 'ut-store', waha_status: 'SCAN_QR_CODE' }, secret: 's' }));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'SCAN_QR_CODE' } } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    for (const phone of ['0815 674 0438', '+234 815 674 0438', '2348156740438', '00234 815 674 0438']) {
+      const res = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone } }), wahaEnv(), {});
+      assert.equal(res.status, 200, phone);
+      assert.deepEqual(await res.json(), { code: 'ABCD-1234' });
+    }
+    // WAHA is asked for the number with the country code and nothing else.
+    assert.ok(waha.pairingRequests.every((r) => r.session === 'ut-store' && r.phoneNumber === '2348156740438'));
+    assert.equal(waha.pairingRequests.length, 4);
+  } finally {
+    restore();
+  }
+});
+
+test('a phone number code is owner-only, needs a number, and waits for the session to be ready', async () => {
+  const waiting = { tenant: { waha_session: 'ut-store', waha_status: 'SCAN_QR_CODE' }, secret: 's' };
+  const supabase = makeFakeSupabase(seed(waiting));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'SCAN_QR_CODE' } } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    for (const token of [undefined, 'forged', 'tok-stranger', 'tok-staff']) {
+      const res = await worker.fetch(codeCall({ token, body: { tenant: TENANT, phone: '08156740438' } }), wahaEnv(), {});
+      assert.equal(res.status, 403, `token ${token} was given a code`);
+    }
+    for (const phone of ['', '12345', 'abc', '0815']) {
+      const res = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone } }), wahaEnv(), {});
+      assert.equal(res.status, 400, `"${phone}" was accepted`);
+    }
+    assert.equal(waha.pairingRequests.length, 0);
+
+    // Not waiting to be linked (still starting, or failed): no code is asked for.
+    waha.sessions['ut-store'].status = 'FAILED';
+    const failed = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone: '08156740438' } }), wahaEnv(), {});
+    assert.equal(failed.status, 409);
+    assert.equal(waha.pairingRequests.length, 0);
+  } finally {
+    restore();
+  }
+
+  // A store that never started linking has no session to pair.
+  const none = makeFakeSupabase(seed());
+  const restore2 = installFetch({ supabase: none, waha: makeFakeWaha(), tokens: TOKENS });
+  try {
+    const res = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone: '08156740438' } }), wahaEnv(), {});
+    assert.equal(res.status, 409);
+  } finally {
+    restore2();
+  }
+});
+
+test('when WAHA will not give a code the owner is told to try again or scan', async () => {
+  const supabase = makeFakeSupabase(seed({ tenant: { waha_session: 'ut-store', waha_status: 'SCAN_QR_CODE' }, secret: 's' }));
+  const waha = makeFakeWaha({ sessions: { 'ut-store': { name: 'ut-store', status: 'SCAN_QR_CODE' } }, pairingStatus: 422 });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS });
+
+  try {
+    const res = await worker.fetch(codeCall({ token: 'tok-owner', body: { tenant: TENANT, phone: '08156740438' } }), wahaEnv(), {});
+    assert.equal(res.status, 502);
+    assert.match((await res.json()).error, /scan the QR instead/);
   } finally {
     restore();
   }
