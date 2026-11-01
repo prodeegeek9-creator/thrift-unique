@@ -1907,7 +1907,7 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true, socials } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true, socials, socialPosting } = {}) {
   const received = [];
   const guides = [];
   const statusCalls = [];
@@ -1934,6 +1934,7 @@ function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}
           pending: slugs.filter((x) => site.states[x] === 'pending'),
           missing: slugs.filter((x) => !site.states[x] || site.states[x] === 'missing'),
           ...(socials ? { socials } : {}),
+          ...(socialPosting === undefined ? {} : { social_posting: socialPosting }),
         }));
       }
       received.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
@@ -2837,6 +2838,24 @@ test('an approved pet is posted to the store\'s Facebook and Instagram, and the 
     assert.doesNotMatch(live, /facebook\.com\/puppyplace_ng/);
     assert.match(live, /https:\/\/pets\.test\/pets\/caucasian-1[\s\S]*Facebook:[\s\S]*Please share it!/);
     assert.equal(waha.sent.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('a store that has turned social posting off in its admin is not posted, and the seller gets the pages', async () => {
+  const supabase = makeFakeSupabase(listingsSeed([['caucasian-1', SELLER_A]]));
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ states: { 'caucasian-1': 'live' }, socials: SITE_SOCIALS, socialPosting: false });
+  const petSocial = makeFakePetSocial();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite, petSocial });
+
+  try {
+    assert.deepEqual(await notifyLivePets(wahaEnv({ PET_LISTINGS_URL: PET_SITE, PET_LISTINGS_KEY: 'pet-key', PET_SOCIAL_URL: PET_SOCIAL })), { notified: 1, expired: 0, failed: 0 });
+    assert.equal(petSocial.calls.length, 0);
+    assert.match(waha.sent[0].text, /Follow PuppyPlace and share your pet from our pages:\nFacebook: https:\/\/www\.facebook\.com\/puppyplace_ng/);
+    assert.doesNotMatch(waha.sent[0].text, /also posted/);
+    assert.equal(supabase.tables.pet_listings[0].status, 'notified');
   } finally {
     restore();
   }

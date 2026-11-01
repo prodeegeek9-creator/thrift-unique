@@ -6,7 +6,9 @@
 // store's social pages, a push to share it, and the link again in a message
 // made to be forwarded. Before that the pet is posted to the store's Facebook
 // page and Instagram (PET_SOCIAL_URL, an n8n workflow), and those posts are
-// the links the seller gets for those two.
+// the links the seller gets for those two. The store can turn that off in its
+// admin (the site's status answer says social_posting: false); the seller then
+// gets the pages alone.
 //
 // It asks rather than waiting to be told, so it does not matter how the store
 // approved the listing (a tick in the admin, the edit form, the database), and
@@ -99,6 +101,9 @@ export async function notifyLivePets(env, { limit = 25 } = {}) {
   const live = new Set(Array.isArray(answer?.live) ? answer.live : []);
   const missing = new Set(Array.isArray(answer?.missing) ? answer.missing : []);
   const pages = socialPages(answer?.socials);
+  // Admin → Pets has a tick for posting approved pets. Only an explicit false stops it,
+  // so a site that does not send the field yet keeps posting.
+  const postToSocial = answer?.social_posting !== false;
 
   const origin = new URL(cfg.petListingsUrl).origin;
   const tenants = new Map();
@@ -140,7 +145,7 @@ export async function notifyLivePets(env, { limit = 25 } = {}) {
 
       const url = `${origin}/pets/${encodeURIComponent(row.slug)}`;
       const own = { session: tenant.waha_session };
-      const socials = withPosts(pages, await postToSocials(cfg, row.slug));
+      const socials = withPosts(pages, postToSocial ? await postToSocials(cfg, row.slug) : {});
       const sent = await say(cfg, tenant, row.chat_id, petLiveMessage({ store: tenant.name, breed: row.breed ?? 'pet', listing_type: row.listing_type, url, socials }), own);
       if (!sent) {
         // Nothing went, so trying again cannot send it twice.

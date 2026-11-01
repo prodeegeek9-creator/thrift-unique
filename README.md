@@ -362,7 +362,9 @@ is n8n's "Puppyplace Social Posting — Approved Pets" webhook, sent
 `{ "slug": "…" }`, which reads the pet from the site, posts it once and answers
 with the posts' links. Those replace the Facebook and Instagram pages in the
 message; the other pages (TikTok) come from the site's status answer
-(`socials`). If n8n fails or is slow (60 s), the seller gets the pages alone. It asks rather than waiting to be told, so it does not matter how
+(`socials`). If n8n fails or is slow (60 s), the seller gets the pages alone.
+The store can switch the posting off with the tick in Admin → Pets; the status
+answer then says `social_posting: false` and nothing is sent to n8n. It asks rather than waiting to be told, so it does not matter how
 the store approved the listing (a tick in the admin, the edit form, the
 database) and nothing depends on the site reaching this Worker. A listing
 deleted on the site is dropped; one nobody approved in 60 days is given up on;
