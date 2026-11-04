@@ -534,8 +534,19 @@ test('sellers are recognised however they put it, and buyers still are not', () 
     'My puppies are for sale',
     'Does your pet store buy puppies?',
     'Can I list on your site?',
+    // A breeder's long description before "available", and asking how to advertise here.
+    'I have beautiful male and female Domestic Shorthair kittens available for sale.',
+    "I'm interested in advertising my kittens on your platform.",
+    'I would like to know if you accept cat and kitten listings.',
+    'Can you tell me how to register as a seller? I have puppies',
+    'What do I need to post an advert for my dog?',
+    "Hello PuppyPlace team! Good day. I'm interested in advertising my kittens on your platform. I have beautiful male and female Domestic Shorthair kittens available for sale. I would like to know if you accept cat and kitten listings. If yes, please kindly explain how I can register as a seller and advertise them for free. Also, please let me know the requirements and information needed to post an advert. Thank you! 🐱",
   ]) assert.equal(wantsToSellPet(t), true, t);
-  for (const t of ['Do you have puppies for sale?', 'Do you sell puppies?', 'How much is the puppy?', 'I need a dog for sale', 'Is the puppy available?']) {
+  for (const t of [
+    'Do you have puppies for sale?', 'Do you sell puppies?', 'How much is the puppy?', 'I need a dog for sale', 'Is the puppy available?',
+    // Buyers asking about the ads and listings that are already up.
+    'I saw your advert for the puppy, is it still available?', 'Show me the cat listings',
+  ]) {
     assert.equal(wantsToSellPet(t), false, t);
   }
   const start = petIntakeStep(null, say("Hi PuppyPlace, I'd like to sell on PuppyPlace."), ctx);

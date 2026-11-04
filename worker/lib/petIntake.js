@@ -36,15 +36,20 @@ const FIRST_PERSON_SELL = /\b(i|i'm|im|i'd|we|we're|my)\b[^.?!]{0,40}\b(sell|sel
 // "I'd like to sell on PuppyPlace" (the Sell page's own WhatsApp button names no
 // pet), "I have Boerboel puppies for sale", "does your pet store buy puppies?".
 // Still never "do you have puppies for sale?" or "do you sell puppies?": buyers.
-const SELL_HERE = /\b(sell|list|post|advertise)\b[^.?!]{0,25}\b(on|with|through|via)\s+(puppy\s*place|your\s+(site|website|store|shop|platform|page|app))\b/i;
-const FIRST_PERSON_FOR_SALE = /\b((i|we)\s+(have|got)|i'?ve|we'?ve)\b[^.?!]{0,50}\b(for sale|available|to sell)\b|\bmy\b[^.?!]{0,40}\b(is|are)\s+(for sale|available)\b/i;
+const SELL_HERE = /\b(sell|list|post|advertis(?:e|ing))\b[^.?!]{0,25}\b(on|with|through|via)\s+(puppy\s*place|your\s+(site|website|store|shop|platform|page|app))\b/i;
+// "I have beautiful male and female Domestic Shorthair kittens available for sale":
+// a breeder's description can run well past fifty characters before "available".
+const FIRST_PERSON_FOR_SALE = /\b((i|we)\s+(have|got)|i'?ve|we'?ve)\b[^.?!]{0,90}\b(for sale|available|to sell)\b|\bmy\b[^.?!]{0,40}\b(is|are)\s+(for sale|available)\b/i;
+// Asking how to advertise here, not how to buy: "do you accept cat and kitten
+// listings?", "how can I register as a seller", "what do I need to post an advert".
+const WANTS_TO_ADVERTISE = /\b(accept|take|allow)\b[^.?!]{0,30}\b(cats?|kittens?|dogs?|pupp(?:y|ies)|pets?|birds?|rabbits?)(?:\s+and\s+\w+)?\s+(?:listings?|adverts?|ads)\b|\bregister\s+as\s+a\s+(?:seller|breeder)\b|\b(?:post|place|put|create)\s+(?:an?\s+)?(?:advert|ad)\b|\badvertis(?:e|ing)\s+(?:my|our)\b/i;
 const DO_YOU_BUY = /\b(do|does|can|will|would)\s+(you|your(\s+\w+){1,2})\s+(buy|take in|accept|help (me )?sell)\b/i;
 
 export function wantsToSellPet(text) {
   const t = String(text ?? '');
   if (SELL_START.test(t) || SELL_HERE.test(t)) return true;
   if (!PET_WORD.test(t)) return false;
-  return FIRST_PERSON_SELL.test(t) || FIRST_PERSON_FOR_SALE.test(t) || DO_YOU_BUY.test(t);
+  return FIRST_PERSON_SELL.test(t) || FIRST_PERSON_FOR_SALE.test(t) || DO_YOU_BUY.test(t) || WANTS_TO_ADVERTISE.test(t);
 }
 
 // "Ade", "Royal Paws Kennel", "Dave_k9": yes. "my name", "none", "test", a phone
