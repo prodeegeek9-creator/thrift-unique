@@ -6,6 +6,7 @@
 // Supabase-through-RLS, and to nothing else.
 
 import { sendPetInvites } from './routes/petInvites.js';
+import { sendPetResends } from './routes/petResends.js';
 import { notifyLivePets } from './routes/petListings.js';
 import { remindPetSellers } from './routes/petReminders.js';
 import { handlePetStoreSend } from './routes/petStore.js';
@@ -93,6 +94,12 @@ export default {
         sendPetInvites(env)
           .then((r) => r && console.log(`pet invites: ${JSON.stringify(r)}`))
           .catch((err) => console.error('pet invites:', err?.message ?? err))
+      );
+      // Listings to send to the site again after it failed them (routes/petResends.js).
+      ctx.waitUntil(
+        sendPetResends(env)
+          .then((r) => r && console.log(`pet resends: ${JSON.stringify(r)}`))
+          .catch((err) => console.error('pet resends:', err?.message ?? err))
       );
       // Pet stores' WhatsApp told to send call events, every fifth minute
       // (routes/petCalls.js). Applying it restarts the session for a few

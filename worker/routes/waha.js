@@ -1614,7 +1614,13 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       .catch((err) => console.error('pet listing not recorded:', err?.message ?? err));
   }
 
-  await say(cfg, tenant, event.from, petSentMessage(tenant.name, typeof body?.manage_url === 'string' ? body.manage_url : null), own);
+  await say(
+    cfg,
+    tenant,
+    event.from,
+    (action.sentPrefix ? `${action.sentPrefix}\n\n` : '') + petSentMessage(tenant.name, typeof body?.manage_url === 'string' ? body.manage_url : null),
+    own
+  );
 
   const owner = chatId(tenant.whatsapp_number);
   if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck, flags: action.flags }));
