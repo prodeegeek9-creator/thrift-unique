@@ -72,6 +72,7 @@ export function makeFakeSupabase(seed = {}, { rpcs = {} } = {}) {
     pet_sellers: ['tenant_id', 'chat_id'],
     pet_listings: ['tenant_id', 'slug'],
     pet_invites: ['tenant_id', 'phone'],
+    pet_resends: 'id',
     consignor_accounts: ['tenant_id', 'seller_chat_id'],
     payment_problems: ['kind', 'key'],
     web_signup_codes: 'code',

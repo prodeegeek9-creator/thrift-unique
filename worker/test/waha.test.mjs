@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import worker from '../index.js';
 import { sendPetInvites } from '../routes/petInvites.js';
+import { sendPetResends } from '../routes/petResends.js';
 import { notifyLivePets } from '../routes/petListings.js';
 import { remindPetSellers } from '../routes/petReminders.js';
 import { ensurePetCallEvents } from '../routes/petCalls.js';
@@ -2822,6 +2823,121 @@ test('the every-minute job sends the invitations', async () => {
     await Promise.all(waits);
     assert.equal(waha.sent.length, 3);
     assert.ok(supabase.tables.pet_invites.every((r) => r.status === 'sent'));
+  } finally {
+    restore();
+  }
+});
+
+// ── SENDING A LISTING AGAIN AFTER THE SITE FAILED IT ─────────────────────────
+
+const RESEND_PATHS = [`${TENANT}/aaa.jpg`, `${TENANT}/bbb.jpg`];
+const resendRow = (extra = {}) => ({
+  id: 'rs-1', tenant_id: TENANT, chat_id: '250070763053119@lid', status: 'pending', error: null, created_at: '2026-11-17T11:00:00Z', sent_at: null,
+  photo_paths: RESEND_PATHS,
+  listing: {
+    type: 'Dog', breed: 'German Shepherd', age: '10 months', listing_type: 'sale', price: 175000, location: 'Lagos',
+    vaccinated: true, dewormed: true, description: 'Female, brown', seller_name: 'Joel', whatsapp: '+2349054786919',
+  },
+  ...extra,
+});
+
+test('a listing that failed for our reason is sent again with its saved photos, and the seller and owner are told', async () => {
+  const supabase = makeFakeSupabase({ ...petSeed(), pet_resends: [resendRow()] });
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.deepEqual(await sendPetResends(inviteEnv()), { sent: 1, failed: 0, waiting: 0 });
+
+    // The site got the details the seller confirmed, with our public copies of the photos already saved.
+    assert.equal(petSite.received.length, 1);
+    const sent = petSite.received[0];
+    assert.equal(sent.auth, 'Bearer pet-key');
+    assert.equal(sent.body.breed, 'German Shepherd');
+    assert.equal(sent.body.price, 175000);
+    assert.equal(sent.body.whatsapp, '+2349054786919');
+    assert.deepEqual(sent.body.photos, RESEND_PATHS.map((p) => `${SUPABASE_URL}/storage/v1/object/public/product-images/${p}`));
+
+    // Remembered, so the seller hears when the store approves it.
+    assert.equal(supabase.tables.pet_listings.length, 1);
+    assert.equal(supabase.tables.pet_listings[0].chat_id, '250070763053119@lid');
+    assert.equal(supabase.tables.pet_listings[0].status, 'pending');
+
+    // One message to the seller: why it was late, then the usual "Sent!".
+    const toSeller = waha.sent.filter((m) => m.chatId === '250070763053119@lid');
+    assert.equal(toSeller.length, 1);
+    assert.equal(toSeller[0].session, STORE_SESSION);
+    assert.match(toSeller[0].text, /^Sorry for the wait 🙏 A fault on our side stopped your \*German Shepherd\* listing[\s\S]*✅ Sent! PuppyPlace will check your listing/);
+    // And the owner, to approve it, with the photos marked as not checked here.
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT);
+    assert.equal(toOwner.length, 1);
+    assert.match(toOwner[0].text, /New pet listing sent for review: \*German Shepherd\*, ₦175,000, Lagos[\s\S]*Photos weren't checked automatically \(sent again after the site refused photos/);
+
+    assert.equal(supabase.tables.pet_resends[0].status, 'sent');
+    assert.ok(supabase.tables.pet_resends[0].sent_at);
+    // Once: nothing is sent twice.
+    assert.equal(await sendPetResends(inviteEnv()), null);
+    assert.equal(petSite.received.length, 1);
+    assert.equal(waha.sent.length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test('the every-minute job sends the listings waiting to be sent again', async () => {
+  const supabase = makeFakeSupabase({ ...petSeed(), pet_resends: [resendRow()] });
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  const waits = [];
+
+  try {
+    await worker.scheduled({ cron: '* * * * *' }, inviteEnv(), { waitUntil: (p) => waits.push(p) });
+    await Promise.all(waits);
+    assert.equal(supabase.tables.pet_resends[0].status, 'sent');
+    assert.equal(petSite.received.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('a resend the site refuses again is left failed, once, with the owner told why', async () => {
+  const supabase = makeFakeSupabase({ ...petSeed(), pet_resends: [resendRow()] });
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ status: 502, body: { error: 'Could not save the photo', details: ['photo 1: storage upload failed (402: over quota)'] } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.deepEqual(await sendPetResends(inviteEnv()), { sent: 0, failed: 1, waiting: 0 });
+    assert.equal(supabase.tables.pet_resends[0].status, 'failed');
+    assert.equal(supabase.tables.pet_listings.length, 0);
+    assert.match(waha.sent.find((m) => m.chatId === SELLER_CHAT).text, /storage upload failed \(402: over quota\)/);
+    // Not tried again by itself: the seller is not told twice.
+    assert.equal(await sendPetResends(inviteEnv()), null);
+    assert.equal(petSite.received.length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('a resend waits while the store\'s WhatsApp is not linked, and is not lost', async () => {
+  const supabase = makeFakeSupabase({ ...petSeed(), pet_resends: [resendRow()] });
+  supabase.tables.tenants[0].waha_status = 'FAILED';
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+
+  try {
+    assert.deepEqual(await sendPetResends(inviteEnv()), { sent: 0, failed: 0, waiting: 1 });
+    assert.equal(supabase.tables.pet_resends[0].status, 'pending');
+    assert.equal(petSite.received.length, 0);
+    assert.equal(waha.sent.length, 0);
+
+    supabase.tables.tenants[0].waha_status = 'WORKING';
+    assert.deepEqual(await sendPetResends(inviteEnv()), { sent: 1, failed: 0, waiting: 0 });
+    // Nothing is configured for a store with no site: no sweep.
+    assert.equal(await sendPetResends(wahaEnv()), null);
   } finally {
     restore();
   }

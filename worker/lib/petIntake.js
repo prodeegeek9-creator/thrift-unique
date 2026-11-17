@@ -581,6 +581,12 @@ export function petSentMessage(store, manageUrl = null) {
   );
 }
 
+// Ahead of the usual "Sent!", for a listing that was sent again after the site
+// failed it for a reason that was not the seller's (routes/petResends.js).
+export function petResendNotice(breed) {
+  return `Sorry for the wait 🙏 A fault on our side stopped your *${breed}* listing from going through earlier. It's fixed, and I've sent it for review now.`;
+}
+
 // "When will it be approved?" from a seller whose listing is waiting.
 export function petPendingMessage({ store, breed }) {
   return (
