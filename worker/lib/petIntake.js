@@ -265,11 +265,29 @@ export function tidyPlace(raw) {
 // A breeder's whole list ("Boerboel, Eskimo, Husky, Rottweiler…") rather than this
 // listing's breed. A cross ("Rottweiler and Boerboel mix") is one dog, and a short
 // answer is kept as typed.
+//
+// Two breeds in one answer are never one listing, short or long, and a cross
+// that names both ("Eskimo husky mix", "Rottweiler x Boerboel") is two breeds
+// too: the seller is asked for one ("Husky mix" is one). A breed the list does
+// not know beside another ("Rottweiler and Spitz") is caught by the separator.
+const BREED_SPLIT = /\s*(?:,|\/|&|\+|;|\band\b|\bor\b|\bplus\b|\sx\s)\s*/i;
+// Words that describe the dog, not name a breed: "male and female Husky", "black and white Husky".
+const NOT_A_BREED_WORD = new Set([
+  'male', 'males', 'female', 'females', 'boy', 'boys', 'girl', 'girls', 'puppy', 'puppies', 'pup', 'pups', 'dog', 'dogs', 'cat', 'cats',
+  'kitten', 'kittens', 'mix', 'mixed', 'cross', 'crossbreed', 'pure', 'purebred', 'pedigree', 'black', 'white', 'brown', 'tan', 'cream', 'red',
+  'blue', 'grey', 'gray', 'gold', 'yellow', 'chocolate', 'brindle', 'fawn', 'small', 'medium', 'large', 'big', 'giant', 'young', 'adult',
+  'old', 'both', 'available', 'litter', 'week', 'weeks', 'month', 'months', 'year', 'years', 'day', 'days', 'the', 'a', 'an', 'of', 'in', 'is',
+]);
 function severalBreeds(text) {
   const t = String(text ?? '').replace(/\s+/g, ' ').trim();
-  if (shortAnswer(t) || /\b(mix|mixed|cross|crossbreed|crossed|x)\b/i.test(t)) return null;
   const named = breedsNamedIn(t).filter((b) => b !== 'Mixed');
-  return named.length >= 2 ? named : null;
+  if (named.length >= 2) return named;
+  // Plain words only: a web address or "Boerboel, 8 weeks" is not a list of breeds.
+  if (!shortAnswer(t) || !/^[\p{L}\s,/&+;'-]+$/u.test(t)) return null;
+  // "Rottweiler and Spitz": each side has a word that is not a description.
+  const sides = t.split(BREED_SPLIT).map((s) => s.trim()).filter(Boolean);
+  const breedish = sides.filter((s) => !/\d/.test(s) && s.toLowerCase().split(/[^\p{L}'-]+/u).some((w) => w.length >= 2 && !NOT_A_BREED_WORD.has(w)));
+  return sides.length >= 2 && breedish.length >= 2 ? breedish.map((s) => tidyBreed(s.replace(TRAILING_PET, '').trim())).slice(0, 5) : null;
 }
 
 // A seller who does not know the breed: the photos are asked instead.
@@ -470,7 +488,8 @@ const SAY = {
     `What breed is it? Just the breed name, like ${d.type === 'Cat' ? '*Persian*, *Siamese*' : '*Boerboel*, *Lhasa Apso*'} or *Mixed*. (Your other details come next.)`,
   whichBreed: (named) =>
     `One breed per listing 🙂 Which one is this listing for? (${named.slice(0, 5).join(', ')}${named.length > 5 ? '…' : ''})\n\n` +
-    'When it has been sent, reply *SELL* to list the next.',
+    'When it has been sent, reply *SELL* to list the next breed.\n' +
+    `A mix? Send the main breed with "mix", like *${named[0]} mix*.`,
   welcomeBack: (d) => `👋 Welcome back! I still have your *${d.breed}* listing from before. Carry on below, or reply *NEW* to start a different one.`,
   // Answers to what sellers ask partway through.
   approval: (store) =>
@@ -513,11 +532,14 @@ const SAY = {
   photosNotSaved: "I couldn't save those photos. Please send them again 📸",
   needFace: (d) =>
     `I can see your ${petWord(d)}, but not its face clearly 🐾. Please send a photo where the face is visible (eyes and nose), then type *done*.`,
-  askName: (d) => `What name should buyers see as the seller? *Your* name or your kennel's, not the ${petWord(d)}'s.`,
-  badName: "That doesn't look like a real name 🤔. Please send your name or your kennel's name, for example *Ade* or *Royal Paws Kennel*.",
+  askName: (d) =>
+    'What name should buyers see as the seller? Send *your own name*, or your *kennel\'s name* if you have one.\n\n' +
+    `⚠️ This is the *seller's* name, not the ${petWord(d)}'s.`,
+  badName: (d) =>
+    `That doesn't look like a real name 🤔. I need the *seller's* name: yours, or your kennel's, not the ${petWord(d)}'s. For example *Ade* or *Royal Paws Kennel*.`,
   petNameNotSeller: (d, petName) =>
     (petName ? `Thanks, I'll show *${petName}* as the ${petWord(d)}'s name 🐾 ` : `That sounds like your ${petWord(d)}'s name 🐾 `) +
-    "And what's *your* name, or your kennel's? Buyers see it as the seller.",
+    "And what's *your* name (the seller's), or your kennel's? That's the one buyers see.",
   knownName: (name) => `👤 I'll list this under *${name}*, as last time. You can change it at the summary.`,
   askContact: (phone) =>
     phone
@@ -945,7 +967,12 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       else if (draft.breedSuggest && YES.test(text)) { breed = draft.breedSuggest; source = 'suggested'; }
       else if (UNSURE.test(text)) breed = draft.breedSuggest ?? 'Mixed';
       // "No, Purebred American Eskimo": the breed, without the no.
-      else breed = parseBreed(text.replace(/^\s*(no|nope|not)\b[\s,.!:-]*/i, ''));
+      else {
+        const said = text.replace(/^\s*(no|nope|not)\b[\s,.!:-]*/i, '');
+        const several = severalBreeds(said);
+        if (several) return reply('pet_breed_confirm', draft, SAY.whichBreed(several));
+        breed = parseBreed(said);
+      }
       if (!breed) return reply('pet_breed_confirm', draft, SAY.badBreed(draft));
       const check = draft.breedSuggest ? { ...(draft.breedCheck ?? {}), guess: draft.breedSuggest, source } : draft.breedCheck;
       const d = { ...draft, breed, breedUnsure: false, breedSuggest: undefined, breedOptions: undefined, breedCheck: check ? { ...check, matches: sameBreed(breed, check.guess) } : undefined };
@@ -956,7 +983,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       const petName = petNameIn(text);
       const d = petName ? { ...draft, petName } : draft;
       const name = parseSellerName(text);
-      if (!name) return reply('pet_name', d, petName || PET_NAME_TALK.test(text) ? SAY.petNameNotSeller(d, petName) : SAY.badName);
+      if (!name) return reply('pet_name', d, petName || PET_NAME_TALK.test(text) ? SAY.petNameNotSeller(d, petName) : SAY.badName(d));
       return after('pet_name', { ...d, name, nameKnown: false }, ctx, store);
     }
 
@@ -1159,7 +1186,7 @@ function applyFix(field, text, d) {
   if (field === 'location') return placeOk(t) ? { draft: { ...d, location: tidyPlace(t).slice(0, MAX_LOCATION) } } : { ask: SAY.badLocation };
   if (field === 'notes') return { draft: { ...d, notes: SKIP.test(t) ? null : t.slice(0, MAX_NOTES) } };
   const name = parseSellerName(t);
-  return name ? { draft: { ...d, name, nameKnown: false } } : { ask: SAY.badName };
+  return name ? { draft: { ...d, name, nameKnown: false } } : { ask: SAY.badName(d) };
 }
 
 // The question a conversation is waiting on, to ask again after a note.

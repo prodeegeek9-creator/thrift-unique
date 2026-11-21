@@ -750,12 +750,47 @@ test('a breeder with many breeds lists one at a time', () => {
   const list = petIntakeStep(at('pet_breed'), say('Borehole Eskimo Husky German Shepherd Lhasa apso Rottweiler Cane corso'), ctx);
   assert.equal(list.state, 'pet_breed');
   assert.match(list.replies[0], /Which one is this listing for\? \(.*German Shepherd.*Lhasa Apso/);
-  // A cross is one dog, and a short answer is kept as typed.
-  assert.equal(petIntakeStep(at('pet_breed'), say('Eskimo husky mix'), ctx).draft.breed, 'Eskimo husky mix');
-  assert.equal(petIntakeStep(at('pet_breed'), say('Rottweiler and Boerboel cross, 2 pups'), ctx).state, 'pet_age');
+  // A mix is one breed with "mix" after it. One that names two breeds is two breeds, and is asked about.
+  assert.equal(petIntakeStep(at('pet_breed'), say('Husky mix'), ctx).draft.breed, 'Husky mix');
+  assert.equal(petIntakeStep(at('pet_breed'), say('Eskimo husky mix'), ctx).state, 'pet_breed');
+  assert.equal(petIntakeStep(at('pet_breed'), say('Rottweiler and Boerboel cross, 2 pups'), ctx).state, 'pet_breed');
   // Two puppies are not a breeder's list.
   const two = petIntakeStep(at('pet_breed'), say('2 different puppies, both females and are rottweiler crossbreed.'), ctx);
   assert.ok(!/one breed/.test(two.replies.join(' ')), two.replies.join(' '));
+});
+
+test('two breeds are never one listing, however short or written, and one breed with a description still is', () => {
+  const asks = ['German Shepherd and Rottweiler', 'Eskimo husky mix', 'Rottweiler x Boerboel', 'Boerboel, Husky', 'Labrador/Golden Retriever', 'Boerboel & Lhasa Apso', 'Rottweiler and Spitz', 'I have a Boerboel and a Rottweiler for sale'];
+  for (const body of asks) {
+    const r = petIntakeStep(at('pet_breed'), say(body), ctx);
+    assert.equal(r.state, 'pet_breed', body);
+    assert.match(r.replies[0], /One breed per listing 🙂 Which one is this listing for\?[\s\S]*reply \*SELL\* to list the next breed[\s\S]*A mix\? Send the main breed with "mix"/, body);
+  }
+  // The question gets a mix in one breed's name as its example.
+  assert.match(petIntakeStep(at('pet_breed'), say('Eskimo husky mix'), ctx).replies[0], /like \*American Eskimo mix\*/);
+  for (const body of ['Boerboel', 'German shepherd mix', 'Boerboel mixed', 'Male and female Husky', 'Black and white Husky', 'Boerboel, 8 weeks', 'Husky puppies', 'Black and Tan Coonhound', 'https://cskennels.netlify.app/x']) {
+    const r = petIntakeStep(at('pet_breed'), say(body), ctx);
+    assert.ok(!/One breed per listing/.test(r.replies.join(' ')), body);
+  }
+  // Also when the breed is asked again after the photos, and when it is changed at the summary.
+  assert.match(petIntakeStep(at('pet_breed_confirm', { breed: null }), say('Husky and Lhasa Apso'), ctx).replies[0], /One breed per listing/);
+  const review = petIntakeStep(at('pet_review', { breed: 'Boerboel', age: '8 weeks', listing_type: 'sale', price: 100000, location: 'Lagos', name: 'Ade', whatsapp: '2348031234567', images: [{ url: 'u' }] }), say('breed Husky and Lhasa Apso'), ctx);
+  assert.equal(review.state, 'pet_review');
+  assert.match(review.replies[0], /One breed per listing/);
+});
+
+test('every time the seller is asked for a name, it says it is theirs and not the dog\'s', () => {
+  for (const type of ['Dog', 'Cat']) {
+    const pet = type === 'Dog' ? 'dog' : 'cat';
+    const d = { type, images: [], breed: 'Boerboel', age: '8 weeks', listing_type: 'sale', price: 100000, location: 'Lagos', name: 'Ade', whatsapp: '2348031234567' };
+    const ask = petIntakeStep(at('pet_review', d), say('name'), ctx).replies[0];
+    assert.match(ask, /What name should buyers see as the seller\? Send \*your own name\*, or your \*kennel's name\*/);
+    assert.match(ask, new RegExp(`This is the \\*seller's\\* name, not the ${pet}'s`));
+    const bad = petIntakeStep(at('pet_name', d), say('none'), ctx).replies[0];
+    assert.match(bad, new RegExp(`I need the \\*seller's\\* name: yours, or your kennel's, not the ${pet}'s`));
+  }
+  // A pet's name given instead says so, and asks for the seller's.
+  assert.match(petIntakeStep(at('pet_name'), say('Zoe is her name'), ctx).replies[0], /And what's \*your\* name \(the seller's\), or your kennel's\?/);
 });
 
 test('"is it free?" and "what price should I sell?" are answered', () => {
