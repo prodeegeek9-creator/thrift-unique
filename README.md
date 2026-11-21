@@ -230,7 +230,7 @@ chat, and never twice for one listing (`remindedAt` in the draft).
 Answers are read the way sellers write them: "Am selling", a price inside a
 sentence ("50k per puppy", "200k, we can negotiate", which adds "Price is
 negotiable." to the notes), a price under ₦1,000 checked ("Did you mean
-₦70,000?"), a breeder's list of breeds asked down to one, "No, <breed>" to a
+₦70,000?"), any answer naming two breeds asked down to one (a list, "X and Y", "X x Y", "X/Y", or a cross that names both, like "Eskimo husky mix"; one breed with "mix" after it is fine, so is "Black and white Husky"), "No, <breed>" to a
 suggested breed.
 
 It is on for a store when all three hold:
