@@ -1130,7 +1130,7 @@ test('the age is always read back to confirm, and YES or the right age carries o
   assert.equal(petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('hmm'), ctx).state, 'pet_age_confirm');
 });
 
-test('a puppy under 5 weeks: the seller is told it should stay with its mother until 6 weeks, and the listing carries on', () => {
+test('a puppy or kitten under 5 weeks: the seller is told it should stay with its mother until 6 weeks, and the listing carries on', () => {
   const asked = petIntakeStep(at('pet_age', { type: 'Dog', breed: 'Boerboel' }), say('4 weeks'), ctx);
   const r = petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('yes'), ctx);
   assert.equal(r.state, 'pet_deal');
@@ -1143,10 +1143,14 @@ test('a puppy under 5 weeks: the seller is told it should stay with its mother u
   for (const age of ['5 weeks', '6 weeks', '2 months', '1 year', 'not sure']) {
     assert.ok(!isYoungPuppy({ type: 'Dog', age }), age);
   }
-  // Puppies only.
-  assert.ok(!isYoungPuppy({ type: 'Cat', age: '3 weeks' }));
+  // Kittens too, in their own words; other pets are not flagged.
+  assert.ok(isYoungPuppy({ type: 'Cat', age: '3 weeks' }));
+  assert.ok(!isYoungPuppy({ type: 'Cat', age: '7 weeks' }));
+  assert.ok(!isYoungPuppy({ type: 'Other', age: '3 weeks' }));
   const kitten = petIntakeStep({ state: 'pet_age_confirm', draft: { type: 'Cat', breed: 'Persian', age: '3 weeks', images: [] } }, say('yes'), ctx);
-  assert.equal(kitten.replies.length, 1);
+  assert.equal(kitten.replies.length, 2);
+  assert.match(kitten.replies[0], /^🍼 At 3 weeks, your kitten is still very young\. Kittens should stay with their mother until they're at least 6 weeks old/);
+  assert.match(newPetListingMessage({ type: 'Cat', breed: 'Persian', age: '3 weeks', listing_type: 'adoption' }, { young: true }), /The seller was told kittens should stay with their mother until 6 weeks/);
   assert.equal(ageInWeeks('2 months'), 2 * 4.345);
   assert.equal(ageInWeeks('1-3 months'), 4.345);
   assert.equal(ageInWeeks('soon'), null);

@@ -213,15 +213,17 @@ export function ageInWeeks(age) {
   return n * WEEKS_PER[AGE_UNIT.find(([re]) => re.test(m[3]))[1]];
 }
 
-// Puppies younger than this are flagged: the seller is told a puppy should stay
-// with its mother until MOTHER_WEEKS, and the store owner sees it with the
-// listing. The listing still goes ahead.
+// Puppies and kittens younger than this are flagged: the seller is told they
+// should stay with their mother until MOTHER_WEEKS, and the store owner sees it
+// with the listing. The listing still goes ahead.
 export const YOUNG_WEEKS = 5;
 export const MOTHER_WEEKS = 6;
 export const isYoungPuppy = (d) => {
-  const w = d?.type === 'Dog' ? ageInWeeks(d.age) : null;
+  const w = d?.type === 'Dog' || d?.type === 'Cat' ? ageInWeeks(d.age) : null;
   return w != null && w < YOUNG_WEEKS;
 };
+// "puppy" / "puppies", or "kitten" / "kittens".
+const babyWord = (d, many = false) => (d?.type === 'Cat' ? (many ? 'kittens' : 'kitten') : many ? 'puppies' : 'puppy');
 
 // "28weeks" → "28 weeks", "My dogs are 7 months old" → "7 months", "1-3months" → "1-3 months".
 export function tidyAge(raw) {
@@ -499,7 +501,7 @@ const SAY = {
   askAge: (d) => `How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
   confirmAge: (d) => `Just to confirm: your ${petWord(d)} is *${d.age}* old? Reply *YES*, or send the right age.`,
   tooYoung: (d) =>
-    `🍼 At ${d.age}, your puppy is still very young. Puppies should stay with their mother until they're at least ${MOTHER_WEEKS} weeks old, ` +
+    `🍼 At ${d.age}, your ${babyWord(d)} is still very young. ${babyWord(d, true).replace(/^./, (c) => c.toUpperCase())} should stay with their mother until they're at least ${MOTHER_WEEKS} weeks old, ` +
     "so please don't let a buyer take it home before then. You can still list it now 👍",
   askDeal:
     'Are you selling or giving it up for adoption?\n\n1 Selling\n2 Adoption (free to a good home)\n\nReply with the number.',
@@ -693,7 +695,7 @@ function flagsLine(listing, flags) {
 
 function youngLine(listing, young) {
   if (!young) return '';
-  return `\n\n🍼 Very young: *${listing.age}* old (under ${YOUNG_WEEKS} weeks). The seller was told puppies should stay with their mother until ${MOTHER_WEEKS} weeks, and the listing tells buyers the same.`;
+  return `\n\n🍼 Very young: *${listing.age}* old (under ${YOUNG_WEEKS} weeks). The seller was told ${babyWord(listing, true)} should stay with their mother until ${MOTHER_WEEKS} weeks, and the listing tells buyers the same.`;
 }
 
 export function newPetListingMessage({ breed, price, listing_type, location, ...listing }, { verified, note, breedCheck, flags, young } = {}) {
@@ -1350,7 +1352,7 @@ function submit(draft) {
       breedCheck: draft.breedCheck ?? null,
       // Flagged at the summary and kept by the seller: the owner looks before approving.
       flags: (draft.kept ?? []).map((f) => ({ field: f.field, why: f.why })),
-      // A puppy under YOUNG_WEEKS: the owner sees it with the listing.
+      // A puppy or kitten under YOUNG_WEEKS: the owner sees it with the listing.
       young: isYoungPuppy(draft),
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
