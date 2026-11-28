@@ -2116,6 +2116,7 @@ const PET_CHAT = [
   fromConsignor('skip'),
   fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SESSION}/pup.jpg` }),
   fromConsignor('done'),
+  fromConsignor('skip'),
   fromConsignor('Ade'),
   fromConsignor('yes'),
   fromConsignor('yes'),
@@ -2349,7 +2350,8 @@ function petChatThrough(photos, tail = []) {
     ...photos, fromConsignor('done'), ...tail,
   ];
 }
-const NAME_TO_YES = [fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')];
+// After the photos: no parents' photos, the seller's name, the number, YES.
+const NAME_TO_YES = [fromConsignor('skip'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')];
 
 const textsTo = (waha, chat) => waha.sent.filter((m) => m.chatId === chat).map((m) => m.text);
 
@@ -3195,7 +3197,7 @@ test('a seller asking when the listing they sent will be approved is told it is 
 const ODD_CHAT = [
   fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Husky mix'), fromConsignor('5 months plus'), fromConsignor('yes'),
   fromConsignor('1'), fromConsignor('20k'), fromConsignor('Ikeja'), fromConsignor('2'), fromConsignor('Female, Raya'),
-  pic(1), fromConsignor('done'), fromConsignor('Remina'), fromConsignor('yes'),
+  pic(1), fromConsignor('done'), fromConsignor('skip'), fromConsignor('Remina'), fromConsignor('yes'),
 ];
 
 test('answers the rules cannot vouch for are looked at by the AI at the summary, and what it flags is asked about', async () => {
@@ -3546,7 +3548,7 @@ test('a seller is asked their name once, and not again on their next listing', a
 
   try {
     // First listing: asked, and told "my name" is not one.
-    await toPetStore(petChatThrough([pic(1)], [fromConsignor('my name'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
+    await toPetStore(petChatThrough([pic(1)], [fromConsignor('skip'), fromConsignor('my name'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
     let seller = textsTo(waha, CONSIGNOR_CHAT);
     assert.equal(seller.filter((t) => NAME_QUESTION.test(t)).length, 1);
     assert.equal(seller.filter((t) => /doesn't look like a real name/.test(t)).length, 1);
@@ -3556,7 +3558,7 @@ test('a seller is asked their name once, and not again on their next listing', a
 
     // Second listing, same chat: no name question, the same name goes to the site.
     waha.sent.length = 0;
-    await toPetStore(petChatThrough([pic(2)], [fromConsignor('yes'), fromConsignor('yes')]));
+    await toPetStore(petChatThrough([pic(2)], [fromConsignor('skip'), fromConsignor('yes'), fromConsignor('yes')]));
     seller = textsTo(waha, CONSIGNOR_CHAT);
     assert.ok(!seller.some((t) => NAME_QUESTION.test(t)));
     assert.ok(seller.some((t) => /I'll list this under \*Ade\*, as last time/.test(t)));
@@ -3578,11 +3580,11 @@ test("another seller is not given somebody else's name, and a changed name is th
 
   try {
     // This chat has no name on record: asked.
-    await toPetStore(petChatThrough([pic(1)], [fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
+    await toPetStore(petChatThrough([pic(1)], [fromConsignor('skip'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
     assert.equal(textsTo(waha, CONSIGNOR_CHAT).filter((t) => NAME_QUESTION.test(t)).length, 1);
     // Later they change it at the summary: NAME, then the new one.
     waha.sent.length = 0;
-    await toPetStore(petChatThrough([pic(2)], [fromConsignor('yes'), fromConsignor('NAME'), fromConsignor('Royal Paws Kennel'), fromConsignor('yes')]));
+    await toPetStore(petChatThrough([pic(2)], [fromConsignor('skip'), fromConsignor('yes'), fromConsignor('NAME'), fromConsignor('Royal Paws Kennel'), fromConsignor('yes')]));
     assert.equal(petSite.received.at(-1).body.seller_name, 'Royal Paws Kennel');
     assert.equal(supabase.tables.pet_sellers.find((r) => r.chat_id === CONSIGNOR_CHAT).name, 'Royal Paws Kennel');
     assert.equal(supabase.tables.pet_sellers.find((r) => r.chat_id === '2348000000001@c.us').name, 'Someone Else');
@@ -3610,7 +3612,7 @@ test('a name is only kept once the listing has reached the site', async () => {
 const TWO_PHOTO_CHAT = [
   ...PET_CHAT.slice(0, 9),
   pic(1), pic(2),
-  fromConsignor('done'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes'),
+  fromConsignor('done'), fromConsignor('skip'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes'),
 ];
 const ON_SITE = { slug: 'boerboel-old', breed: 'Boerboel', live: true, sold: false, url: 'https://puppyplace.ng/pets/boerboel-old' };
 
@@ -3687,6 +3689,49 @@ test('the site refusing a duplicate photo at the last step tells the seller why'
   try {
     await toPetStore(PET_CHAT);
     assert.match(textsTo(waha, CONSIGNOR_CHAT).at(-1), /I couldn't send that listing:\n• photo 1 is already on PuppyPlace/);
+  } finally {
+    restore();
+  }
+});
+
+// ── THE PARENTS' PHOTOS, END TO END ──────────────────────────────────────────
+
+test("the parents' photos are saved, checked for repeats, and sent apart from the pet's own", async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite();
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(petChatThrough([pic(1)], [pic(5), fromConsignor('done'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]));
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).join('\n'), /photos of the puppy's parents[\s\S]*Parent photo saved[\s\S]*The parent photo will show at the end of your listing/);
+    // Checked like the pet's own: once for the pet's photo, once for the parent's.
+    assert.equal(petSite.photoChecks.length, 2);
+    const sent = petSite.received[0].body;
+    assert.equal(sent.photos.length, 1);
+    assert.equal(sent.parent_photos.length, 1);
+    assert.match(sent.parent_photos[0], new RegExp(`^${SUPABASE_URL}/storage/v1/object/public/product-images/`));
+    assert.equal(Object.keys(sent.photo_hashes).length, 2);
+  } finally {
+    restore();
+  }
+});
+
+test("a parent photo already on the site is refused, and the seller asked for a new one or a mating photo", async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ photoCheck: (link) => (petSite.photoChecks.length === 2 ? ON_SITE : null) });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(petChatThrough([pic(1)], [pic(5), fromConsignor('done')]));
+    const said = textsTo(waha, CONSIGNOR_CHAT).slice(-2).join('\n');
+    assert.match(said, /This parent photo is already on PuppyPlace/);
+    assert.match(said, /Please take a new photo of the parents, or send a mating photo/);
+    const conv = supabase.tables.bot_conversations.find((c) => c.chat_id === CONSIGNOR_CHAT);
+    assert.equal(conv.state, 'pet_parents');
+    // skip still goes on without them.
+    await toPetStore([fromConsignor('skip'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes')]);
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.parent_photos, undefined);
   } finally {
     restore();
   }

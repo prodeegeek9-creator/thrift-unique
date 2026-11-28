@@ -114,7 +114,7 @@ export function parseSellerName(raw) {
 
 export const PET_STATES = [
   'pet_type', 'pet_breed', 'pet_age', 'pet_age_confirm', 'pet_deal', 'pet_price', 'pet_location',
-  'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_name', 'pet_contact', 'pet_fix', 'pet_review',
+  'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_parents', 'pet_name', 'pet_contact', 'pet_fix', 'pet_review',
 ];
 
 const TYPES = [
@@ -217,6 +217,7 @@ export function ageInWeeks(age) {
 // should stay with their mother until MOTHER_WEEKS, and the store owner sees it
 // with the listing. The listing still goes ahead.
 export const YOUNG_WEEKS = 5;
+export const MAX_PARENT_PHOTOS = 2;
 export const MOTHER_WEEKS = 6;
 export const isYoungPuppy = (d) => {
   const w = d?.type === 'Dog' || d?.type === 'Cat' ? ageInWeeks(d.age) : null;
@@ -552,6 +553,13 @@ const SAY = {
   askPhotos: (d) =>
     `Now send clear, recent photos of your ${petWord(d)} 📸 (up to ${MAX_PET_PHOTOS}). Daylight works best, and the ${petWord(d)}'s *face must be clearly visible* in at least one. Type *done* when you've sent them.`,
   noPhotos: 'Buyers need to see it. Send at least one photo 📸',
+  askParents: (d) =>
+    `📸 Do you have photos of the ${babyWord(d)}'s parents (mum and/or dad), or a mating photo? Showing the parents makes a listing look more genuine, so buyers trust it more. ` +
+    `Send up to ${MAX_PARENT_PHOTOS} recent ones taken for this litter, then type *done*, or reply *skip* if you don't have any.`,
+  parentsAgain: 'Please take a new photo of the parents, or send a mating photo, then type *done*. Or reply *skip* to go on without.',
+  parentSaved: (n) => (n >= MAX_PARENT_PHOTOS ? null : 'Parent photo saved 👍 Send another, or type *done*.'),
+  parentsNotSaved: "I couldn't save the parents' photos, so your listing goes on without them.",
+  parentsAdded: (n) => `Thanks! ${n === 1 ? 'The parent photo' : "The parents' photos"} will show at the end of your listing 👍`,
   morePhotos: (n) => (n === 1 ? 'Got it 👍 Send more, or type *done*.' : `${n} photos. Send more, or type *done*.`),
   photoLimit: `That's ${MAX_PET_PHOTOS} photos, the most we can show.`,
   checking: 'Checking your photos… 🔍',
@@ -581,7 +589,7 @@ const SAY = {
       `📍 ${d.location}`,
       healthLine(d),
       d.notes ? `Notes: ${d.notes}` : null,
-      `${d.images.length} photo${d.images.length === 1 ? '' : 's'}${d.verified ? ' ✅ checked' : ''}`,
+      `${d.images.length} photo${d.images.length === 1 ? '' : 's'}${d.verified ? ' ✅ checked' : ''}${d.parentImages?.length ? `, plus ${d.parentImages.length} of the parents` : ''}`,
       `Seller: ${d.name}${d.nameKnown ? ' (as before)' : ''}, +${d.whatsapp}`,
     ].filter(Boolean).join('\n') +
     '\n\nReply *YES* to send it for review, *NAME* to change the seller name, or *CANCEL*.',
@@ -878,6 +886,16 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     return reply(live.state, draft, SAY.photoLost);
   }
 
+  // The parents' photos, kept apart: they go at the end of the listing, never first.
+  if (image && live.state === 'pet_parents') {
+    const parents = [...(draft.parentImages ?? [])];
+    if (parents.length >= MAX_PARENT_PHOTOS) return saveParents(draft);
+    parents.push(image);
+    const d = { ...draft, parentImages: parents };
+    if (parents.length >= MAX_PARENT_PHOTOS) return saveParents(d);
+    return reply('pet_parents', d, SAY.parentSaved(parents.length));
+  }
+
   // A photo is welcome at any point before the summary.
   if (image && live.state !== 'pet_review') {
     if (draft.images.length >= MAX_PET_PHOTOS) {
@@ -1028,6 +1046,16 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return after('pet_photos', d, ctx, store);
     }
 
+    // After the photos, for a dog or cat: the parents' photos, if the seller has them.
+    case 'pet_parents': {
+      const parents = draft.parentImages ?? [];
+      if (parents.length && (FILLER.test(text) || YES.test(text) || SKIP.test(text))) return saveParents(draft);
+      if (SKIP.test(text) || NOT_NOW.test(text) || UNSURE.test(text) || /\b(don'?t|do not|no)\b.{0,20}\b(have|got)\b/i.test(text)) {
+        return after('pet_photos', { ...draft, parentImages: [] }, ctx, store);
+      }
+      return reply('pet_parents', draft, parents.length ? SAY.parentSaved(parents.length) ?? SAY.askParents(draft) : SAY.askParents(draft));
+    }
+
     case 'pet_name': {
       const petName = petNameIn(text);
       const d = petName ? { ...draft, petName } : draft;
@@ -1087,6 +1115,27 @@ const AGE_RIGHT = /^\s*(correct|right|true|sure|exactly|yh|yea|yes\b|that'?s (ri
 // After the age is confirmed: the advice for a very young puppy, then on.
 function ageConfirmed(d) {
   return reply('pet_deal', d, isYoungPuppy(d) ? SAY.tooYoung(d) : null, SAY.askDeal);
+}
+
+// The parents' photos are saved outside this pure function (routes/waha.js),
+// and the stored ones come back to petParentsDone().
+function saveParents(draft) {
+  return { state: 'pet_parents', draft, replies: [], action: { type: 'save_parent_photos' } };
+}
+
+// stored is [{ stored, hash?, dupe? }]: a parent photo already on a listing
+// (dupe) is not used either. The parents' photos for a new litter are new photos.
+export function petParentsDone(draft, stored, ctx = {}) {
+  const store = ctx.store ?? 'the store';
+  const saved = (stored ?? []).filter((img) => img?.stored);
+  const dupes = saved.map((img, i) => (img.dupe ? { n: i + 1, d: img.dupe } : null)).filter(Boolean);
+  const parentImages = saved.filter((img) => !img.dupe);
+  if (dupes.length) {
+    const note = alreadyListedNote(store, dupes).replace(/\n\nIf it's the same pet[\s\S]*$/, '').replace(/^🚫 (This photo is|These photos are)/, (m, w) => `🚫 ${w === 'This photo is' ? 'This parent photo is' : 'These parent photos are'}`);
+    if (!parentImages.length) return reply('pet_parents', { ...draft, parentImages: [] }, note, SAY.parentsAgain);
+    return after('pet_photos', { ...draft, parentImages }, ctx, store, `${note}\n\n${SAY.parentsAdded(parentImages.length)}`);
+  }
+  return after('pet_photos', { ...draft, parentImages }, ctx, store, parentImages.length ? SAY.parentsAdded(parentImages.length) : SAY.parentsNotSaved);
 }
 
 // The photos are saved and looked at outside this pure function (routes/waha.js)
@@ -1198,6 +1247,10 @@ function typeIn(text, answer = false) {
 
 // What follows a finished step, skipping what is already known.
 function after(state, draft, ctx, store, prefix) {
+  // Once, after the photos, for a dog or cat: photos of the parents, which buyers trust.
+  if (state === 'pet_photos' && (draft.type === 'Dog' || draft.type === 'Cat') && !draft.parentsAsked) {
+    return reply('pet_parents', { ...draft, parentsAsked: true, parentImages: [] }, prefix, SAY.askParents(draft));
+  }
   // The name asked last time is used again, unless the seller changes it. Only
   // when coming from the photos: a seller who has just been asked is not asked twice.
   let note = null;
@@ -1285,6 +1338,7 @@ function question(state, draft, ctx) {
     pet_breed_confirm: draft.breedOptions
       ? SAY.whichOf(draft.breed, draft.breedOptions, null)
       : draft.breedSuggest ? SAY.suggestBreed(draft.breedSuggest) : SAY.askBreedAgain(draft),
+    pet_parents: draft.parentImages?.length ? 'Send another parent photo, or type *done*.' : SAY.askParents(draft),
     pet_name: SAY.askName(draft),
     pet_contact: SAY.askContact(ctx.phone),
     pet_fix: draft.fixes?.[0] ? fixMessage(draft, draft.fixes[0]) : SAY.reviewAgain,
@@ -1396,6 +1450,8 @@ function submit(draft) {
         ...(draft.petName ? { name: draft.petName } : {}),
       },
       images: draft.images,
+      // Photos of the parents: shown after the pet's own, checked for repeats like them.
+      parentImages: draft.parentImages ?? [],
     },
   };
 }

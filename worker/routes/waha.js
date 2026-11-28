@@ -42,6 +42,7 @@ import {
   petProductsOwnerMessage,
   petDuplicatePhotoOwnerMessage,
   petPhotosDone,
+  petParentsDone,
   petDetailsChecked,
   PET_RETRY_MESSAGE,
   wantsToSellPet,
@@ -1431,6 +1432,10 @@ async function petIntake(cfg, event, tenant, conversation) {
     await processPetPhotos(cfg, tenant, event, result.draft, ctx);
   }
 
+  if (result.action?.type === 'save_parent_photos') {
+    await saveParentPhotos(cfg, tenant, event, result.draft, ctx);
+  }
+
   if (result.action?.type === 'check_details') {
     await checkPetListingDetails(cfg, tenant, event, result.draft, ctx);
   }
@@ -1473,6 +1478,40 @@ async function knownSellerName(cfg, tenant, chat) {
     console.warn('seller name not read:', err?.message ?? err);
     return null;
   }
+}
+
+// The parents' photos, saved now while WhatsApp still serves them, and checked
+// for repeats like the pet's own: a new litter means new photos of the parents
+// (or a mating photo), not the last litter's.
+async function saveParentPhotos(cfg, tenant, event, draft, ctx) {
+  const stored = [];
+  for (const img of draft.parentImages ?? []) {
+    if (img.stored) { stored.push(img); continue; }
+    try {
+      stored.push({ stored: await storeImage(cfg, tenant.id, img) });
+    } catch (err) {
+      console.warn('parent photo not saved:', err?.message ?? err);
+    }
+  }
+  const fresh = stored.map((img, i) => ({ img, i })).filter(({ img }) => !img.hash);
+  if (fresh.length) {
+    const results = await listedPhotoCheck(cfg, fresh.map(({ img }) => publicUrl(cfg, img.stored)));
+    const dupes = [];
+    fresh.forEach(({ i }, k) => {
+      const r = results?.[k];
+      if (!r?.hash) return;
+      stored[i] = { ...stored[i], hash: r.hash, ...(r.match ? { dupe: { slug: r.match.slug ?? null, breed: r.match.breed ?? null, url: r.match.url ?? null } } : {}) };
+      if (r.match) dupes.push(r.match);
+    });
+    const owner = chatId(tenant.whatsapp_number);
+    if (dupes.length && owner) {
+      await say(cfg, tenant, owner, petDuplicatePhotoOwnerMessage({ phone: ctx.phone, breed: draft.breed, dupes })).catch(() => {});
+    }
+  }
+  const next = petParentsDone(draft, stored, ctx);
+  await persist(cfg, tenant, event.from, {}, next);
+  for (const reply of next.replies) await say(cfg, tenant, event.from, reply, { session: tenant.waha_session });
+  if (next.action?.type === 'check_details') await checkPetListingDetails(cfg, tenant, event, next.draft, ctx);
 }
 
 // The seller said "done": save the photos now, while WhatsApp still serves
@@ -1576,9 +1615,17 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     console.error('pet listing media failed:', err?.message ?? err);
   }
   const photos = paths.map((p) => publicUrl(cfg, p)).filter(Boolean);
+  // The parents' photos, saved when they were sent (or now, if that failed).
+  let parentPaths = (action.parentImages ?? []).filter((i) => i.stored).map((i) => i.stored);
+  try {
+    parentPaths = [...parentPaths, ...(await uploadAll(cfg, tenant.id, (action.parentImages ?? []).filter((i) => !i.stored)))];
+  } catch (err) {
+    console.warn('parent photos not saved:', err?.message ?? err);
+  }
+  const parent_photos = parentPaths.map((p) => publicUrl(cfg, p)).filter(Boolean);
   // The fingerprints the photo check gave, so the site need not make them again.
   const photo_hashes = {};
-  for (const img of action.images) if (img.stored && img.hash) photo_hashes[publicUrl(cfg, img.stored)] = img.hash;
+  for (const img of [...action.images, ...(action.parentImages ?? [])]) if (img.stored && img.hash) photo_hashes[publicUrl(cfg, img.stored)] = img.hash;
   if (!photos.length) {
     await say(cfg, tenant, event.from, "I couldn't save those photos. Send *SELL* to try again.", own);
     return false;
@@ -1593,7 +1640,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
       // owner_phone: the number this chat is (WhatsApp's own), the seller's
       // account on the site; whatsapp in the listing is the one buyers are given.
-      body: JSON.stringify({ ...action.listing, photos, ...(Object.keys(photo_hashes).length ? { photo_hashes } : {}), ...(ownerPhone ? { owner_phone: ownerPhone } : {}) }),
+      body: JSON.stringify({ ...action.listing, photos, ...(parent_photos.length ? { parent_photos } : {}), ...(Object.keys(photo_hashes).length ? { photo_hashes } : {}), ...(ownerPhone ? { owner_phone: ownerPhone } : {}) }),
     });
     // The site answers in JSON; anything else (a firewall page) is just noted.
     body = await res.json().catch(() => null);
@@ -1618,7 +1665,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       .join(': ') || null;
     console.error('pet listing refused:', res?.status ?? 'no answer', reason ?? '');
     if (action.draft) {
-      const draft = { ...action.draft, images: paths.map((stored) => ({ stored })) };
+      const draft = { ...action.draft, images: paths.map((stored) => ({ stored })), parentImages: (action.parentImages ?? []).filter((i) => i.stored) };
       await setConversation(cfg, tenant, event.from, { state: 'pet_review', draft }).catch(() => {});
     }
     await say(cfg, tenant, event.from, action.draft ? PET_RETRY_MESSAGE : 'Something went wrong sending that. Send *SELL* to try again in a moment.', own);

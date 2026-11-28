@@ -32,6 +32,7 @@ import {
   tidyPlace,
   ageInWeeks,
   isYoungPuppy,
+  petParentsDone,
 } from '../lib/petIntake.js';
 import { detailsPrompt } from '../lib/petDetails.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
@@ -73,6 +74,7 @@ const DOG = [
   photo(1),
   photo(2),
   say('done'),
+  say('skip'),
   say('Ade Kennels'),
   say('yes'),
 ];
@@ -245,7 +247,7 @@ test('photos that show the pet with a visible face are confirmed to the seller',
   const steps = run([...DOG.slice(0, 12), say('Ade')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() })));
   const afterDone = steps[11];
   assert.match(afterDone.replies[0], /✅ Photos checked: I can see a dog, and its face is clearly visible/);
-  assert.match(afterDone.replies.at(-1), /What name should buyers see/);
+  assert.match(afterDone.replies.at(-1), /photos of the puppy's parents/);
   assert.deepEqual(afterDone.draft.verified, { kind: 'dog' });
   // …and the summary shows it, and the site is told nothing it cannot store.
   const last = run([...DOG, say('YES')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() }))).at(-1);
@@ -266,7 +268,7 @@ test('photos of something else are left out, and the seller is told which', () =
   const r = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: verdicts[i] }))).at(-1);
   assert.match(r.replies[0], /I left out a photo:\n• Photo 2: it doesn't show a dog/);
   assert.equal(r.draft.images.length, 1);
-  assert.equal(r.state, 'pet_name');
+  assert.equal(r.state, 'pet_parents');
 });
 
 test('a cat in a dog listing is called out, and nothing but non-pets sends them back for new photos', () => {
@@ -294,13 +296,13 @@ test('the dog\'s face must show in at least one photo', () => {
   // The photos that were fine are kept, so one more is enough.
   assert.equal(r.draft.images.length, 2);
   const again = petPhotosDone(r.draft, [...r.draft.images, { stored: 'p9', v: pet() }], ctx);
-  assert.equal(again.state, 'pet_name');
+  assert.equal(again.state, 'pet_parents');
   assert.equal(again.draft.images[0].stored, 'p9');
 });
 
 test('photos that could not be looked at are listed, with no claim that they were checked', () => {
   const r = run([...DOG.slice(0, 12)]).at(-1);
-  assert.equal(r.state, 'pet_name');
+  assert.equal(r.state, 'pet_parents');
   assert.doesNotMatch(r.replies.join(' '), /checked/);
   assert.equal(r.draft.verified, undefined);
   const none = petPhotosDone({ type: 'Dog', images: [] }, [], ctx);
@@ -344,7 +346,7 @@ test('why the photos were not looked at travels with the listing to the owner', 
   // The note given when the photos were handled is kept on the draft and handed on with the listing.
   let conv = null;
   let last;
-  for (const m of DOG.slice(0, 12)) {
+  for (const m of DOG.slice(0, 13)) {
     let r = petIntakeStep(conv, m, ctx);
     if (r?.action?.type === 'process_photos') r = petPhotosDone(r.draft, r.draft.images.map((_, i) => ({ stored: `p${i}` })), { ...ctx, checkNote: 'OpenAI said HTTP 401' });
     conv = { state: r.state, draft: r.draft };
@@ -392,7 +394,7 @@ test('"my name", placeholders, numbers and web addresses are not names', () => {
 });
 
 test('a name that is not one is flagged, and asked for again', () => {
-  const asked = run(DOG.slice(0, 12)).at(-1);
+  const asked = run(DOG.slice(0, 13)).at(-1);
   assert.equal(asked.state, 'pet_name');
   for (const typed of ['my name', 'none', '08031234567']) {
     const flagged = petIntakeStep({ state: 'pet_name', draft: asked.draft }, say(typed), ctx);
@@ -409,13 +411,13 @@ test('a name that is not one is flagged, and asked for again', () => {
 test('a seller who has given a name before is not asked again, and can change it at the summary', () => {
   const known = { ...ctx, knownName: 'Dave_k9' };
   // Straight from the photos to the number, with the name already in place.
-  const afterPhotos = run(DOG.slice(0, 12), known).at(-1);
+  const afterPhotos = run(DOG.slice(0, 13), known).at(-1);
   assert.equal(afterPhotos.state, 'pet_contact');
   assert.equal(afterPhotos.draft.name, 'Dave_k9');
   assert.ok(afterPhotos.replies.some((r) => /I'll list this under \*Dave_k9\*, as last time/.test(r)));
   assert.ok(!afterPhotos.replies.some((r) => /What name should buyers see/.test(r)));
 
-  const summary = run([...DOG.slice(0, 12), say('yes')], known).at(-1);
+  const summary = run([...DOG.slice(0, 13), say('yes')], known).at(-1);
   assert.equal(summary.state, 'pet_review');
   assert.match(summary.replies[0], /Seller: Dave_k9 \(as before\), \+2348031234567/);
   assert.match(summary.replies[0], /\*YES\* to send it for review, \*NAME\* to change the seller name, or \*CANCEL\*/);
@@ -436,7 +438,7 @@ test('a seller who has given a name before is not asked again, and can change it
 });
 
 test('a first-time seller is still asked, and NAME at the summary works for them too', () => {
-  const first = run(DOG.slice(0, 12)).at(-1);
+  const first = run(DOG.slice(0, 13)).at(-1);
   assert.match(first.replies.at(-1), /What name should buyers see/);
   const summary = run(DOG).at(-1);
   assert.doesNotMatch(summary.replies[0], /as before/);
@@ -607,7 +609,7 @@ test("a seller who doesn't know the breed is offered the one the photos show, an
   const yes = petIntakeStep({ state: asked.state, draft: asked.draft }, say('yes'), ctx);
   assert.equal(yes.draft.breed, 'German Shepherd');
   assert.equal(yes.draft.breedCheck.source, 'suggested');
-  assert.equal(yes.state, 'pet_name');
+  assert.equal(yes.state, 'pet_parents');
   assert.match(newPetListingMessage({ breed: 'German Shepherd', price: 1, listing_type: 'sale' }, { verified: true, breedCheck: yes.draft.breedCheck }), /didn't know the breed; the photos suggested/);
 
   const typed = petIntakeStep({ state: asked.state, draft: asked.draft }, say('Belgian Malinois'), ctx);
@@ -640,7 +642,7 @@ test('"Turkish" is asked about after the photos: which Turkish breed, with what 
   assert.equal(petIntakeStep({ state: asked.state, draft: asked.draft }, say('2'), ctx).draft.breed, 'Turkish Angora');
   const keep = petIntakeStep({ state: asked.state, draft: asked.draft }, say('3'), ctx);
   assert.equal(keep.draft.breed, 'Turkish');
-  assert.equal(keep.state, 'pet_name');
+  assert.equal(keep.state, 'pet_parents');
   assert.equal(petIntakeStep({ state: asked.state, draft: asked.draft }, say('Turkish Angora'), ctx).draft.breed, 'Turkish Angora');
 
   // Photos that could not tell: the same question, in the usual order.
@@ -1178,4 +1180,74 @@ test('an age changed at the summary to under 5 weeks gets the advice too', () =>
   assert.match(r.replies[1], /Here's your listing/);
   // Changing something else says nothing about the age.
   assert.equal(petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('price 200k'), ctx).replies.length, 1);
+});
+
+// ── THE PARENTS' PHOTOS ──────────────────────────────────────────────────────
+
+const AT_PARENTS = DOG.slice(0, 12); // up to "done" on the pet's own photos
+
+test("after the pet's photos, a dog or cat seller is asked for the parents' photos, and told why", () => {
+  const r = run(AT_PARENTS).at(-1);
+  assert.equal(r.state, 'pet_parents');
+  assert.match(r.replies.at(-1), /photos of the puppy's parents \(mum and\/or dad\), or a mating photo\? Showing the parents makes a listing look more genuine, so buyers trust it more\. Send up to 2 recent ones taken for this litter/);
+  const kitten = petPhotosDone({ type: 'Cat', breed: 'Persian', images: [] }, [{ stored: 'k1' }], ctx);
+  assert.match(kitten.replies.at(-1), /photos of the kitten's parents/);
+  // Not for a parrot.
+  const bird = petPhotosDone({ type: 'Other', breed: 'Parrot', images: [] }, [{ stored: 'b1' }], ctx);
+  assert.equal(bird.state, 'pet_name');
+});
+
+test("skip goes on without the parents, and they are asked only once", () => {
+  const at = run(AT_PARENTS).at(-1);
+  for (const body of ['skip', 'no', "I don't have", 'not sure']) {
+    const r = petIntakeStep({ state: 'pet_parents', draft: at.draft }, say(body), ctx);
+    assert.equal(r.state, 'pet_name', body);
+    assert.match(r.replies.at(-1), /What name should buyers see/, body);
+  }
+  // A breed chosen after that does not ask again.
+  const again = petPhotosDone({ ...at.draft, parentsAsked: true }, [{ stored: 'p0' }], ctx);
+  assert.equal(again.state, 'pet_name');
+});
+
+test("the parents' photos are kept apart, saved at done or at two, and shown after the pet's own", () => {
+  const at = run(AT_PARENTS).at(-1);
+  const one = petIntakeStep({ state: 'pet_parents', draft: at.draft }, photo(7), ctx);
+  assert.equal(one.state, 'pet_parents');
+  assert.equal(one.draft.parentImages.length, 1);
+  assert.equal(one.draft.images.length, 2, "the pet's own photos are untouched");
+  assert.match(one.replies[0], /Parent photo saved/);
+  const done = petIntakeStep({ state: 'pet_parents', draft: one.draft }, say('done'), ctx);
+  assert.equal(done.action.type, 'save_parent_photos');
+  // The second one saves them straight away.
+  const two = petIntakeStep({ state: 'pet_parents', draft: one.draft }, photo(8), ctx);
+  assert.equal(two.action.type, 'save_parent_photos');
+  assert.equal(two.draft.parentImages.length, 2);
+
+  const saved = petParentsDone(two.draft, [{ stored: 'mum', hash: 'a' }, { stored: 'dad', hash: 'b' }], ctx);
+  assert.equal(saved.state, 'pet_name');
+  assert.match(saved.replies[0], /The parents' photos will show at the end of your listing/);
+  const summary = run([...AT_PARENTS, photo(7), photo(8)], ctx, unlooked);
+  // run() does not save parents' photos: play that part here.
+  let conv = { state: saved.state, draft: saved.draft };
+  let last;
+  for (const m of [say('Ade Kennels'), say('yes')]) { last = petIntakeStep(conv, m, ctx); conv = { state: last.state, draft: last.draft }; }
+  assert.match(last.replies[0], /2 photos, plus 2 of the parents/);
+  const sent = petIntakeStep(conv, say('YES'), ctx);
+  assert.deepEqual(sent.action.parentImages.map((i) => i.stored), ['mum', 'dad']);
+  assert.equal(sent.action.images.length, 2);
+  assert.ok(summary.length);
+});
+
+test("a parent photo already on the site is not used either: new photos of the parents, or a mating photo", () => {
+  const at = { ...run(AT_PARENTS).at(-1).draft, parentImages: [{ url: 'x' }, { url: 'y' }] };
+  const dupe = { slug: 'boerboel-old', breed: 'Boerboel', url: 'https://puppyplace.ng/pets/boerboel-old' };
+  const all = petParentsDone(at, [{ stored: 'mum', hash: 'a', dupe }, { stored: 'dad', hash: 'b', dupe }], ctx);
+  assert.equal(all.state, 'pet_parents');
+  assert.equal(all.draft.parentImages.length, 0);
+  assert.match(all.replies[0], /^🚫 These parent photos are already on PuppyPlace, so I can't use them:\n• Photo 1: https:\/\/puppyplace\.ng\/pets\/boerboel-old/);
+  assert.match(all.replies[1], /Please take a new photo of the parents, or send a mating photo/);
+  const some = petParentsDone(at, [{ stored: 'mum', hash: 'a', dupe }, { stored: 'dad', hash: 'b' }], ctx);
+  assert.equal(some.state, 'pet_name');
+  assert.deepEqual(some.draft.parentImages.map((i) => i.stored), ['dad']);
+  assert.match(some.replies[0], /This parent photo is already on PuppyPlace[\s\S]*The parent photo will show at the end/);
 });
