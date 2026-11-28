@@ -30,6 +30,8 @@ import {
   tidyBreed,
   tidyAge,
   tidyPlace,
+  ageInWeeks,
+  isYoungPuppy,
 } from '../lib/petIntake.js';
 import { detailsPrompt } from '../lib/petDetails.js';
 import { STALE_AFTER_HOURS } from '../lib/bot.js';
@@ -62,6 +64,7 @@ const DOG = [
   say('Hi PuppyPlace, I want to sell my dog.'),
   say('Boerboel'),
   say('10 weeks'),
+  say('yes'),
   say('1'),
   say('150k'),
   say('Lugbe, Abuja'),
@@ -134,7 +137,7 @@ test('a dog goes from the first message to a listing for the site', () => {
 
 test('adoption skips the price, and notes can be skipped', () => {
   const steps = run([
-    say('SELL'), say('3'), say('African grey parrot'), say('2 years'), say('2'),
+    say('SELL'), say('3'), say('African grey parrot'), say('2 years'), say('yes'), say('2'),
     say('Ikeja, Lagos'), say('4'), say('skip'), photo(), say('done'), say('Tolu'), say('yes'), say('yes'),
   ]);
   const { listing } = steps.at(-1).action;
@@ -162,18 +165,18 @@ test('buyers can be pointed at another number', () => {
 test('wrong answers are asked again, not guessed', () => {
   const at = (msgs) => run(msgs).at(-1);
   assert.equal(at([say('SELL'), say('a lion')]).state, 'pet_type');
-  assert.equal(at([say('SELL'), say('1'), say('Lab'), say('1 yr'), say('maybe')]).state, 'pet_deal');
-  assert.match(at([say('SELL'), say('1'), say('Lab'), say('1 yr'), say('1'), say('a lot')]).replies[0], /didn't catch a price/);
-  assert.equal(at([...DOG.slice(0, 6), say('7')]).state, 'pet_health');
+  assert.equal(at([say('SELL'), say('1'), say('Lab'), say('1 yr'), say('yes'), say('maybe')]).state, 'pet_deal');
+  assert.match(at([say('SELL'), say('1'), say('Lab'), say('1 yr'), say('yes'), say('1'), say('a lot')]).replies[0], /didn't catch a price/);
+  assert.equal(at([...DOG.slice(0, 7), say('7')]).state, 'pet_health');
   // No photo yet: "done" is not enough.
-  const noPhoto = at([...DOG.slice(0, 8), say('done')]);
+  const noPhoto = at([...DOG.slice(0, 9), say('done')]);
   assert.equal(noPhoto.state, 'pet_photos');
   assert.match(noPhoto.replies[0], /at least one photo/);
 });
 
 test('photos sent early count, and the limit is the site limit', () => {
   // A photo with the opening message, and one mid-way, both count.
-  const early = run([{ ...photo(1), body: 'I want to sell my dog' }, say('Lab'), photo(2), say('1 yr')]);
+  const early = run([{ ...photo(1), body: 'I want to sell my dog' }, say('Lab'), photo(2), say('1 yr'), say('yes')]);
   assert.equal(early.at(-1).draft.images.length, 2);
   assert.match(early[2].replies[0], /Photo saved/);
   assert.match(early[2].replies[1], /How old/);
@@ -181,7 +184,7 @@ test('photos sent early count, and the limit is the site limit', () => {
   // At the limit it hands over to saving and looking at them by itself, saying why.
   let conv = null;
   let handoff = null;
-  for (const m of [...DOG.slice(0, 8), ...Array.from({ length: MAX_PET_PHOTOS + 2 }, (_, i) => photo(i))]) {
+  for (const m of [...DOG.slice(0, 9), ...Array.from({ length: MAX_PET_PHOTOS + 2 }, (_, i) => photo(i))]) {
     const r = petIntakeStep(conv, m, ctx);
     if (r) conv = { state: r.state, draft: r.draft };
     if (r?.action?.type === 'process_photos' && !handoff) handoff = r;
@@ -227,7 +230,7 @@ test('the owner is told why a listing failed, in plain words', () => {
 
 const pet = (extra = {}) => ({ shows_pet: true, kind: 'dog', face_visible: true, ...extra });
 const NOT_A_PET = { shows_pet: false, kind: 'not_an_animal', face_visible: false };
-const TO_PHOTOS = DOG.slice(0, 8); // up to the question asking for photos
+const TO_PHOTOS = DOG.slice(0, 9); // up to the question asking for photos
 
 test('"done" hands the photos to be saved and looked at, and says so', () => {
   const r = petIntakeStep({ state: 'pet_photos', draft: { type: 'Dog', images: [{ url: 'u' }] } }, say('done'), ctx);
@@ -235,12 +238,12 @@ test('"done" hands the photos to be saved and looked at, and says so', () => {
   assert.equal(r.action.type, 'process_photos');
   assert.match(r.replies.at(-1), /Checking your photos/);
   // The question asking for photos says the face must show.
-  assert.match(run(TO_PHOTOS.slice(0, 8)).at(-1).replies[0], /face must be clearly visible/);
+  assert.match(run(TO_PHOTOS.slice(0, 9)).at(-1).replies[0], /face must be clearly visible/);
 });
 
 test('photos that show the pet with a visible face are confirmed to the seller', () => {
-  const steps = run([...DOG.slice(0, 11), say('Ade')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() })));
-  const afterDone = steps[10];
+  const steps = run([...DOG.slice(0, 12), say('Ade')], ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet() })));
+  const afterDone = steps[11];
   assert.match(afterDone.replies[0], /✅ Photos checked: I can see a dog, and its face is clearly visible/);
   assert.match(afterDone.replies.at(-1), /What name should buyers see/);
   assert.deepEqual(afterDone.draft.verified, { kind: 'dog' });
@@ -254,38 +257,38 @@ test('photos that show the pet with a visible face are confirmed to the seller',
 
 test('a photo with the face showing goes first, since buyers see it first', () => {
   const sides = [pet({ face_visible: false }), pet({ face_visible: true })];
-  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: sides[i] }))).at(-1);
+  const r = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: sides[i] }))).at(-1);
   assert.deepEqual(r.draft.images.map((i) => i.stored), ['p1', 'p0']);
 });
 
 test('photos of something else are left out, and the seller is told which', () => {
   const verdicts = [pet(), NOT_A_PET];
-  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: verdicts[i] }))).at(-1);
+  const r = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: verdicts[i] }))).at(-1);
   assert.match(r.replies[0], /I left out a photo:\n• Photo 2: it doesn't show a dog/);
   assert.equal(r.draft.images.length, 1);
   assert.equal(r.state, 'pet_name');
 });
 
 test('a cat in a dog listing is called out, and nothing but non-pets sends them back for new photos', () => {
-  const cat = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: i ? pet() : pet({ kind: 'cat' }) }))).at(-1);
+  const cat = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: i ? pet() : pet({ kind: 'cat' }) }))).at(-1);
   assert.match(cat.replies[0], /Photo 1: it looks like a cat, not a dog/);
 
-  const none = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: NOT_A_PET }))).at(-1);
+  const none = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: NOT_A_PET }))).at(-1);
   assert.equal(none.state, 'pet_photos');
   assert.equal(none.draft.images.length, 0);
   assert.match(none.replies.join('\n'), /Photo 1: it doesn't show a dog[\s\S]*Please send a clear photo of your dog/);
 
   // Another pet is not a dog or a cat.
-  const bird = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
+  const bird = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('yes'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
     (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ kind: 'bird' }) }))).at(-1);
   assert.match(bird.replies[0], /I can see a bird/);
-  const wrong = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
+  const wrong = run([say('SELL'), say('3'), say('Parrot'), say('2 years'), say('yes'), say('1'), say('50k'), say('Lagos'), say('1'), say('skip'), photo(1), say('done')], ctx,
     (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ kind: 'dog' }) }))).at(-1);
   assert.match(wrong.replies[0], /it looks like a dog, not a pet/);
 });
 
 test('the dog\'s face must show in at least one photo', () => {
-  const r = run(DOG.slice(0, 11), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ face_visible: false }) }))).at(-1);
+  const r = run(DOG.slice(0, 12), ctx, (d) => d.images.map((_, i) => ({ stored: `p${i}`, v: pet({ face_visible: false }) }))).at(-1);
   assert.equal(r.state, 'pet_photos');
   assert.match(r.replies.at(-1), /can see your dog, but not its face clearly[\s\S]*type \*done\*/);
   // The photos that were fine are kept, so one more is enough.
@@ -296,7 +299,7 @@ test('the dog\'s face must show in at least one photo', () => {
 });
 
 test('photos that could not be looked at are listed, with no claim that they were checked', () => {
-  const r = run([...DOG.slice(0, 11)]).at(-1);
+  const r = run([...DOG.slice(0, 12)]).at(-1);
   assert.equal(r.state, 'pet_name');
   assert.doesNotMatch(r.replies.join(' '), /checked/);
   assert.equal(r.draft.verified, undefined);
@@ -341,7 +344,7 @@ test('why the photos were not looked at travels with the listing to the owner', 
   // The note given when the photos were handled is kept on the draft and handed on with the listing.
   let conv = null;
   let last;
-  for (const m of DOG.slice(0, 11)) {
+  for (const m of DOG.slice(0, 12)) {
     let r = petIntakeStep(conv, m, ctx);
     if (r?.action?.type === 'process_photos') r = petPhotosDone(r.draft, r.draft.images.map((_, i) => ({ stored: `p${i}` })), { ...ctx, checkNote: 'OpenAI said HTTP 401' });
     conv = { state: r.state, draft: r.draft };
@@ -389,7 +392,7 @@ test('"my name", placeholders, numbers and web addresses are not names', () => {
 });
 
 test('a name that is not one is flagged, and asked for again', () => {
-  const asked = run(DOG.slice(0, 11)).at(-1);
+  const asked = run(DOG.slice(0, 12)).at(-1);
   assert.equal(asked.state, 'pet_name');
   for (const typed of ['my name', 'none', '08031234567']) {
     const flagged = petIntakeStep({ state: 'pet_name', draft: asked.draft }, say(typed), ctx);
@@ -406,13 +409,13 @@ test('a name that is not one is flagged, and asked for again', () => {
 test('a seller who has given a name before is not asked again, and can change it at the summary', () => {
   const known = { ...ctx, knownName: 'Dave_k9' };
   // Straight from the photos to the number, with the name already in place.
-  const afterPhotos = run(DOG.slice(0, 11), known).at(-1);
+  const afterPhotos = run(DOG.slice(0, 12), known).at(-1);
   assert.equal(afterPhotos.state, 'pet_contact');
   assert.equal(afterPhotos.draft.name, 'Dave_k9');
   assert.ok(afterPhotos.replies.some((r) => /I'll list this under \*Dave_k9\*, as last time/.test(r)));
   assert.ok(!afterPhotos.replies.some((r) => /What name should buyers see/.test(r)));
 
-  const summary = run([...DOG.slice(0, 11), say('yes')], known).at(-1);
+  const summary = run([...DOG.slice(0, 12), say('yes')], known).at(-1);
   assert.equal(summary.state, 'pet_review');
   assert.match(summary.replies[0], /Seller: Dave_k9 \(as before\), \+2348031234567/);
   assert.match(summary.replies[0], /\*YES\* to send it for review, \*NAME\* to change the seller name, or \*CANCEL\*/);
@@ -433,7 +436,7 @@ test('a seller who has given a name before is not asked again, and can change it
 });
 
 test('a first-time seller is still asked, and NAME at the summary works for them too', () => {
-  const first = run(DOG.slice(0, 11)).at(-1);
+  const first = run(DOG.slice(0, 12)).at(-1);
   assert.match(first.replies.at(-1), /What name should buyers see/);
   const summary = run(DOG).at(-1);
   assert.doesNotMatch(summary.replies[0], /as before/);
@@ -829,7 +832,7 @@ test('a price with words around it is found, and "negotiable" is kept for buyers
   assert.equal(two.state, 'pet_price');
   assert.match(two.replies[0], /₦40,000.*₦45,000/);
   // Negotiable shows at the summary and goes to the site with the notes.
-  const out = run([...DOG.slice(0, 4), say('150k negotiable'), ...DOG.slice(5), say('yes')]);
+  const out = run([...DOG.slice(0, 5), say('150k negotiable'), ...DOG.slice(6), say('yes')]);
   assert.match(out.at(-2).replies[0], /Price: ₦150,000 \(negotiable\)/);
   assert.equal(out.at(-1).action.listing.description, '3 males, 2 females\nPrice is negotiable.');
 });
@@ -871,7 +874,7 @@ test("the pet's name given as the seller's is kept as the pet's, and the seller'
   assert.equal(both.draft.name, 'Remina');
   assert.equal(both.draft.petName, 'Raya');
   // Sent to the site as the pet's name; the summary shows it.
-  const out = run([...DOG.slice(0, 7), say('Female, her name is Zoe'), ...DOG.slice(8), say('yes')]);
+  const out = run([...DOG.slice(0, 8), say('Female, her name is Zoe'), ...DOG.slice(9), say('yes')]);
   assert.match(out.at(-2).replies[0], /🐾 Name: Zoe/);
   assert.equal(out.at(-1).action.listing.name, 'Zoe');
   assert.equal(run([...DOG, say('yes')]).at(-1).action.listing.name, undefined);
@@ -946,7 +949,7 @@ test('the latest chat: "Listen" is not a breed, and a website is not an age', ()
   assert.equal(age.state, 'pet_age');
   assert.match(age.replies[0], /Send it like \*10 weeks\* or \*2 years\*/);
   for (const body of ['7 weeks old', '1yr', 'Eleven months', 'I think 8 weeks', '1-3months', 'Around 12 weeks I guess', 'a year']) {
-    assert.equal(petIntakeStep(at('pet_age'), say(body), ctx).state, 'pet_deal', body);
+    assert.equal(petIntakeStep(at('pet_age'), say(body), ctx).state, 'pet_age_confirm', body);
   }
   assert.equal(petIntakeStep(at('pet_location'), say('https://cskennels.netlify.app/'), ctx).state, 'pet_location');
   assert.equal(petIntakeStep(at('pet_location'), say('08031234567'), ctx).state, 'pet_location');
@@ -1077,7 +1080,7 @@ test('any answer can be changed at the summary in one message', () => {
 });
 
 test('"done" while the sixth photo is being checked does not check them twice, and an empty message is not answered', () => {
-  const sixth = run([...DOG.slice(0, 8), photo(1), photo(2), photo(3), photo(4), photo(5)], ctx, unlooked);
+  const sixth = run([...DOG.slice(0, 9), photo(1), photo(2), photo(3), photo(4), photo(5)], ctx, unlooked);
   let conv = { state: sixth.at(-1).state, draft: sixth.at(-1).draft };
   const limit = petIntakeStep(conv, photo(6), ctx);
   assert.equal(limit.action.type, 'process_photos');
@@ -1101,4 +1104,74 @@ test('every common way of writing a price or an age is understood and written on
   }
   assert.equal(tidyAge('3wks'), '3 weeks');
   assert.equal(tidyAge('2yrs'), '2 years');
+});
+
+// ── THE AGE, READ BACK, AND VERY YOUNG PUPPIES ───────────────────────────────
+
+test('the age is always read back to confirm, and YES or the right age carries on', () => {
+  const asked = petIntakeStep(at('pet_age', { type: 'Dog', breed: 'Boerboel' }), say('10weeks'), ctx);
+  assert.equal(asked.state, 'pet_age_confirm');
+  assert.equal(asked.replies[0], 'Just to confirm: your dog is *10 weeks* old? Reply *YES*, or send the right age.');
+  for (const body of ['yes', 'Correct', "that's right", 'ok']) {
+    const r = petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say(body), ctx);
+    assert.equal(r.state, 'pet_deal', body);
+    assert.equal(r.draft.age, '10 weeks', body);
+    assert.equal(r.replies.length, 1, body);
+  }
+  // The right age, sent instead of YES, is taken as it is.
+  const fixed = petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('sorry 12 weeks'), ctx);
+  assert.equal(fixed.state, 'pet_deal');
+  assert.equal(fixed.draft.age, '12 weeks');
+  // No: asked again.
+  const no = petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('no'), ctx);
+  assert.equal(no.state, 'pet_age');
+  assert.match(no.replies[0], /How old is your dog/);
+  // Anything else: the question again.
+  assert.equal(petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('hmm'), ctx).state, 'pet_age_confirm');
+});
+
+test('a puppy under 5 weeks: the seller is told it should stay with its mother until 6 weeks, and the listing carries on', () => {
+  const asked = petIntakeStep(at('pet_age', { type: 'Dog', breed: 'Boerboel' }), say('4 weeks'), ctx);
+  const r = petIntakeStep({ state: 'pet_age_confirm', draft: asked.draft }, say('yes'), ctx);
+  assert.equal(r.state, 'pet_deal');
+  assert.match(r.replies[0], /^🍼 At 4 weeks, your puppy is still very young\. Puppies should stay with their mother until they're at least 6 weeks old/);
+  assert.match(r.replies[0], /You can still list it now/);
+  assert.match(r.replies[1], /selling or giving it up for adoption/);
+  for (const age of ['3 days', '2-3 weeks', 'one month', '4.5 weeks']) {
+    assert.ok(isYoungPuppy({ type: 'Dog', age }), age);
+  }
+  for (const age of ['5 weeks', '6 weeks', '2 months', '1 year', 'not sure']) {
+    assert.ok(!isYoungPuppy({ type: 'Dog', age }), age);
+  }
+  // Puppies only.
+  assert.ok(!isYoungPuppy({ type: 'Cat', age: '3 weeks' }));
+  const kitten = petIntakeStep({ state: 'pet_age_confirm', draft: { type: 'Cat', breed: 'Persian', age: '3 weeks', images: [] } }, say('yes'), ctx);
+  assert.equal(kitten.replies.length, 1);
+  assert.equal(ageInWeeks('2 months'), 2 * 4.345);
+  assert.equal(ageInWeeks('1-3 months'), 4.345);
+  assert.equal(ageInWeeks('soon'), null);
+});
+
+test('a very young puppy is flagged to the store owner with the listing', () => {
+  const young = [...DOG.slice(0, 2), say('4 weeks'), ...DOG.slice(3), say('YES')];
+  const last = run(young).at(-1);
+  assert.equal(last.action.type, 'pet_listing');
+  assert.equal(last.action.young, true);
+  assert.equal(last.action.listing.age, '4 weeks');
+  const msg = newPetListingMessage(last.action.listing, { young: last.action.young });
+  assert.match(msg, /🍼 Very young: \*4 weeks\* old \(under 5 weeks\)\. The seller was told puppies should stay with their mother until 6 weeks/);
+  const old = run([...DOG, say('YES')]).at(-1).action;
+  assert.equal(old.young, false);
+  assert.doesNotMatch(newPetListingMessage(old.listing, { young: old.young }), /Very young/);
+});
+
+test('an age changed at the summary to under 5 weeks gets the advice too', () => {
+  const summary = run(DOG).at(-1);
+  assert.equal(summary.state, 'pet_review');
+  const r = petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('age 3 weeks'), ctx);
+  assert.equal(r.state, 'pet_review');
+  assert.match(r.replies[0], /^🍼 At 3 weeks, your puppy is still very young/);
+  assert.match(r.replies[1], /Here's your listing/);
+  // Changing something else says nothing about the age.
+  assert.equal(petIntakeStep({ state: 'pet_review', draft: summary.draft }, say('price 200k'), ctx).replies.length, 1);
 });

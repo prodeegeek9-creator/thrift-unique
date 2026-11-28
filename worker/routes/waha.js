@@ -1623,7 +1623,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
   );
 
   const owner = chatId(tenant.whatsapp_number);
-  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck, flags: action.flags }));
+  if (owner && !body?.duplicate) await say(cfg, tenant, owner, newPetListingMessage(action.listing, { verified: action.verified, note: action.checkNote, breedCheck: action.breedCheck, flags: action.flags, young: action.young }));
 
   // The first dog of a breed the site has no guide for: write one, for the store to approve.
   if (body?.breed_guide === 'missing') await fileBreedGuide(cfg, tenant, action.listing);

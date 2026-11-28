@@ -2098,6 +2098,7 @@ const PET_CHAT = [
   fromConsignor('Hi PuppyPlace, I want to sell my dog.'),
   fromConsignor('Boerboel'),
   fromConsignor('10 weeks'),
+  fromConsignor('yes'),
   fromConsignor('1'),
   fromConsignor('150k'),
   fromConsignor('Lugbe, Abuja'),
@@ -2333,7 +2334,7 @@ const pic = (n) => fromConsignor('', { media: `${WAHA_URL}/api/files/${STORE_SES
 
 function petChatThrough(photos, tail = []) {
   return [
-    fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Boerboel'), fromConsignor('10 weeks'),
+    fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Boerboel'), fromConsignor('10 weeks'), fromConsignor('yes'),
     fromConsignor('1'), fromConsignor('150k'), fromConsignor('Lugbe, Abuja'), fromConsignor('1'), fromConsignor('skip'),
     ...photos, fromConsignor('done'), ...tail,
   ];
@@ -3182,7 +3183,7 @@ test('a seller asking when the listing they sent will be approved is told it is 
 // ── LOOKING AT THE ANSWERS AT THE SUMMARY ────────────────────────────────────
 
 const ODD_CHAT = [
-  fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Husky mix'), fromConsignor('5 months plus'),
+  fromConsignor('Hi PuppyPlace, I want to sell my dog.'), fromConsignor('Husky mix'), fromConsignor('5 months plus'), fromConsignor('yes'),
   fromConsignor('1'), fromConsignor('20k'), fromConsignor('Ikeja'), fromConsignor('2'), fromConsignor('Female, Raya'),
   pic(1), fromConsignor('done'), fromConsignor('Remina'), fromConsignor('yes'),
 ];

@@ -113,7 +113,7 @@ export function parseSellerName(raw) {
 }
 
 export const PET_STATES = [
-  'pet_type', 'pet_breed', 'pet_age', 'pet_deal', 'pet_price', 'pet_location',
+  'pet_type', 'pet_breed', 'pet_age', 'pet_age_confirm', 'pet_deal', 'pet_price', 'pet_location',
   'pet_health', 'pet_notes', 'pet_photos', 'pet_breed_confirm', 'pet_name', 'pet_contact', 'pet_fix', 'pet_review',
 ];
 
@@ -203,6 +203,26 @@ export function tidyBreed(raw) {
 const AGE_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, a: 1, an: 1, half: 0.5 };
 const AGE_UNIT = [[/^(weeks?|wks?|wk)$/i, 'week'], [/^(months?|mo?n?ths?|mnts?|mons?|mos?)$/i, 'month'], [/^(years?|yrs?|yr)$/i, 'year'], [/^(days?|dys?)$/i, 'day']];
 const AGE_IN = /(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|an?|half)\s*(?:(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*)?(weeks?|wks?|wk|months?|mo?n?ths?|mnts?|mons?|mos?|years?|yrs?|yr|days?|dys?)\b(\s*(?:plus|\+))?/i;
+// How many weeks old an age is ("10 weeks", "1-3 months", "3 days"), taking
+// the youngest of a range; null when it can't be read.
+const WEEKS_PER = { day: 1 / 7, week: 1, month: 4.345, year: 52 };
+export function ageInWeeks(age) {
+  const m = AGE_IN.exec(String(age ?? ''));
+  if (!m) return null;
+  const n = m[1].toLowerCase() in AGE_WORDS ? AGE_WORDS[m[1].toLowerCase()] : Number(m[1]);
+  return n * WEEKS_PER[AGE_UNIT.find(([re]) => re.test(m[3]))[1]];
+}
+
+// Puppies younger than this are flagged: the seller is told a puppy should stay
+// with its mother until MOTHER_WEEKS, and the store owner sees it with the
+// listing. The listing still goes ahead.
+export const YOUNG_WEEKS = 5;
+export const MOTHER_WEEKS = 6;
+export const isYoungPuppy = (d) => {
+  const w = d?.type === 'Dog' ? ageInWeeks(d.age) : null;
+  return w != null && w < YOUNG_WEEKS;
+};
+
 // "28weeks" → "28 weeks", "My dogs are 7 months old" → "7 months", "1-3months" → "1-3 months".
 export function tidyAge(raw) {
   const t = String(raw ?? '').replace(/\s+/g, ' ').trim();
@@ -477,6 +497,10 @@ const SAY = {
       ? 'What kind of pet is it, and what breed? (e.g. African Grey parrot, Lionhead rabbit)'
       : `What breed is your ${petWord(d)}? (e.g. ${d.type === 'Cat' ? 'Persian, Siamese' : 'Boerboel, German Shepherd'}, or "mixed")`,
   askAge: (d) => `How old is your ${petWord(d)}? (e.g. 10 weeks, 2 years)`,
+  confirmAge: (d) => `Just to confirm: your ${petWord(d)} is *${d.age}* old? Reply *YES*, or send the right age.`,
+  tooYoung: (d) =>
+    `🍼 At ${d.age}, your puppy is still very young. Puppies should stay with their mother until they're at least ${MOTHER_WEEKS} weeks old, ` +
+    "so please don't let a buyer take it home before then. You can still list it now 👍",
   askDeal:
     'Are you selling or giving it up for adoption?\n\n1 Selling\n2 Adoption (free to a good home)\n\nReply with the number.',
   badDeal: 'Reply 1 if you are selling, or 2 for adoption.',
@@ -667,7 +691,12 @@ function flagsLine(listing, flags) {
   );
 }
 
-export function newPetListingMessage({ breed, price, listing_type, location, ...listing }, { verified, note, breedCheck, flags } = {}) {
+function youngLine(listing, young) {
+  if (!young) return '';
+  return `\n\n🍼 Very young: *${listing.age}* old (under ${YOUNG_WEEKS} weeks). The seller was told puppies should stay with their mother until ${MOTHER_WEEKS} weeks, and the listing tells buyers the same.`;
+}
+
+export function newPetListingMessage({ breed, price, listing_type, location, ...listing }, { verified, note, breedCheck, flags, young } = {}) {
   return (
     `🐾 New pet listing sent for review: *${breed}*, ` +
     (listing_type === 'adoption' ? 'for adoption' : formatNaira(price)) +
@@ -679,6 +708,7 @@ export function newPetListingMessage({ breed, price, listing_type, location, ...
         ? '\n\n📸 Photos checked: a real pet, face visible.'
         : `\n\n📸 Photos weren't checked automatically${note ? ` (${note})` : ''}. Look at them before approving.`) +
     breedCheckLine(breed, breedCheck) +
+    youngLine(listing, young) +
     flagsLine({ breed, price, listing_type, location, ...listing }, flags)
   );
 }
@@ -893,10 +923,20 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       return reply('pet_age', { ...draft, breed: tidyBreed(breed) }, picked, SAY.askAge(draft));
     }
 
-    case 'pet_age':
+    case 'pet_age': {
       if (!text) return reply('pet_age', draft, SAY.askAge(draft));
       if (!ageOk(text)) return reply('pet_age', draft, SAY.badAge(draft));
-      return reply('pet_deal', { ...draft, age: tidyAge(text).slice(0, MAX_AGE) }, SAY.askDeal);
+      const d = { ...draft, age: tidyAge(text).slice(0, MAX_AGE) };
+      return reply('pet_age_confirm', d, SAY.confirmAge(d));
+    }
+
+    // The age is always read back: a puppy listed as "4 weeks" by mistake gets advice it doesn't need.
+    case 'pet_age_confirm': {
+      if (ageOk(text)) return ageConfirmed({ ...draft, age: tidyAge(text).slice(0, MAX_AGE) });
+      if (YES.test(text) || AGE_RIGHT.test(text)) return ageConfirmed(draft);
+      if (NO.test(text) || /^\s*(wrong|not right|incorrect)\b/i.test(text)) return reply('pet_age', draft, SAY.askAge(draft));
+      return reply('pet_age_confirm', draft, SAY.confirmAge(draft));
+    }
 
     case 'pet_deal': {
       // "1", or in their own words: "Am selling", "for adoption".
@@ -1003,7 +1043,9 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       }
       const fixed = applyFix(fix.field, text, draft);
       if (fixed.ask) return reply('pet_fix', draft, fixed.ask);
-      return nextFix(fixed.draft, rest, store);
+      const young = youngNow(draft, fixed.draft);
+      const after = nextFix(fixed.draft, rest, store);
+      return young ? { ...after, replies: [young, ...after.replies] } : after;
     }
 
     case 'pet_review': {
@@ -1019,7 +1061,7 @@ export function petIntakeStep(conversation, message, ctx = {}) {
       if (field && !(field === 'price' && draft.listing_type !== 'sale')) {
         const fixed = applyFix(field, edit[2], draft);
         if (fixed.ask) return reply('pet_review', draft, fixed.ask, SAY.reviewAgain);
-        return review(fixed.draft, store);
+        return reply('pet_review', fixed.draft, youngNow(draft, fixed.draft), SAY.review(fixed.draft, store));
       }
       if (NO.test(text)) return { state: 'idle', draft: {}, replies: [SAY.cancelled], action: null };
       return reply('pet_review', draft, SAY.reviewAgain);
@@ -1028,6 +1070,14 @@ export function petIntakeStep(conversation, message, ctx = {}) {
     default:
       return null;
   }
+}
+
+// "That's right", "correct", "yes it is": the age read back stands.
+const AGE_RIGHT = /^\s*(correct|right|true|sure|exactly|yh|yea|yes\b|that'?s (right|correct)|it is|it'?s (right|correct))/i;
+
+// After the age is confirmed: the advice for a very young puppy, then on.
+function ageConfirmed(d) {
+  return reply('pet_deal', d, isYoungPuppy(d) ? SAY.tooYoung(d) : null, SAY.askDeal);
 }
 
 // The photos are saved and looked at outside this pure function (routes/waha.js)
@@ -1169,6 +1219,11 @@ function nextFix(draft, fixes, store) {
   return reply('pet_fix', { ...draft, fixes: [fix, ...rest], fixesAsked: asked + 1 }, fixMessage(draft, fix));
 }
 
+// The advice, when a changed age makes the puppy very young and it wasn't before.
+function youngNow(before, after) {
+  return isYoungPuppy(after) && (!isYoungPuppy(before) || before.age !== after.age) ? SAY.tooYoung(after) : null;
+}
+
 // A corrected answer, checked by the same rules as the first time: { draft } or { ask }.
 function applyFix(field, text, d) {
   const t = text.replace(/\s+/g, ' ').trim();
@@ -1195,6 +1250,7 @@ function question(state, draft, ctx) {
     pet_type: SAY.askType,
     pet_breed: SAY.askBreed(draft),
     pet_age: SAY.askAge(draft),
+    pet_age_confirm: SAY.confirmAge(draft),
     pet_deal: SAY.askDeal,
     pet_price: draft.priceGuess ? SAY.priceCheck(draft.priceGuess) : SAY.askPrice,
     pet_location: SAY.askLocation,
@@ -1294,6 +1350,8 @@ function submit(draft) {
       breedCheck: draft.breedCheck ?? null,
       // Flagged at the summary and kept by the seller: the owner looks before approving.
       flags: (draft.kept ?? []).map((f) => ({ field: f.field, why: f.why })),
+      // A puppy under YOUNG_WEEKS: the owner sees it with the listing.
+      young: isYoungPuppy(draft),
       // Kept so a failure that is ours, not the seller's, can put them back at
       // the summary instead of making them answer everything again.
       draft,
