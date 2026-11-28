@@ -2036,8 +2036,10 @@ const PET_SITE = 'https://pets.test/api/seller-listings';
 
 // `sequence` answers the calls in order, then falls back to status/body:
 // each entry is { status, body, text } or { throws: true }.
-function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true, socials, socialPosting } = {}) {
+function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}, statusCode = 200, guideStatus = 201, guideCreated = true, socials, socialPosting, photoCheck } = {}) {
   const received = [];
+  // what was asked at /api/seller-listings/photo-check
+  const photoChecks = [];
   const guides = [];
   const statusCalls = [];
   const queue = [...sequence];
@@ -2049,7 +2051,15 @@ function makeFakePetSite({ status = 201, body = null, sequence = [], states = {}
     guides,
     // slug → 'live' | 'pending' | 'missing', as the site's admin would have left it
     states,
+    photoChecks,
     async handler(url, init) {
+      if (new URL(url).pathname.endsWith('/photo-check')) {
+        const { photos } = JSON.parse(init.body);
+        photoChecks.push({ url, auth: init.headers?.Authorization ?? null, photos });
+        if (photoCheck === 'down') return new Response('no', { status: 503 });
+        // By default every photo is new; photoCheck(link, i) can say it is already listed.
+        return new Response(JSON.stringify({ ok: true, results: photos.map((p, i) => ({ hash: (i + 1).toString(16).padStart(16, '0'), match: photoCheck ? photoCheck(p, i) : null })) }));
+      }
       if (new URL(url).pathname === '/api/breed-guides') {
         guides.push({ url, auth: init.headers?.Authorization ?? null, body: JSON.parse(init.body) });
         return new Response(JSON.stringify({ ok: true, status: 'draft', created: guideCreated }), { status: guideStatus });
@@ -3590,6 +3600,93 @@ test('a name is only kept once the listing has reached the site', async () => {
   try {
     await toPetStore(petChatThrough([pic(1)], NAME_TO_YES));
     assert.equal(supabase.tables.pet_sellers.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+// ── PHOTOS ALREADY ON THE SITE ───────────────────────────────────────────────
+
+const TWO_PHOTO_CHAT = [
+  ...PET_CHAT.slice(0, 9),
+  pic(1), pic(2),
+  fromConsignor('done'), fromConsignor('Ade'), fromConsignor('yes'), fromConsignor('yes'),
+];
+const ON_SITE = { slug: 'boerboel-old', breed: 'Boerboel', live: true, sold: false, url: 'https://puppyplace.ng/pets/boerboel-old' };
+
+test('a photo already on the site is left out, the seller is told where it is, and the owner is warned', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ photoCheck: (link, i) => (i === 0 ? ON_SITE : null) });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(TWO_PHOTO_CHAT);
+    // Asked once, with our public copies, and the same key as the listing.
+    assert.equal(petSite.photoChecks.length, 1);
+    assert.equal(petSite.photoChecks[0].auth, 'Bearer pet-key');
+    assert.equal(petSite.photoChecks[0].url, `${PET_SITE}/photo-check`);
+    assert.equal(petSite.photoChecks[0].photos.length, 2);
+    assert.match(petSite.photoChecks[0].photos[0], new RegExp(`^${SUPABASE_URL}/storage/v1/object/public/product-images/`));
+
+    const toSeller = textsTo(waha, CONSIGNOR_CHAT).join('\n');
+    assert.match(toSeller, /🚫 This photo is already on PuppyPlace, so I can't use it:\n• Photo 1: https:\/\/puppyplace\.ng\/pets\/boerboel-old/);
+    assert.match(toSeller, /If it's the same pet, it's already listed, so there's no need to list it again/);
+    const toOwner = waha.sent.filter((m) => m.chatId === SELLER_CHAT).map((m) => m.text).join('\n');
+    assert.match(toOwner, /📸 A seller \(\+\d+\) listing a \*Boerboel\* sent a photo already on \*Boerboel\* \(https:\/\/puppyplace\.ng\/pets\/boerboel-old\)\. I didn't use it/);
+
+    // The listing goes ahead with the other photo only, and its fingerprint.
+    assert.equal(petSite.received.length, 1);
+    const sent = petSite.received[0].body;
+    assert.equal(sent.photos.length, 1);
+    assert.deepEqual(Object.values(sent.photo_hashes), ['0000000000000002']);
+    assert.deepEqual(Object.keys(sent.photo_hashes), sent.photos);
+  } finally {
+    restore();
+  }
+});
+
+test('when every photo is already on the site, nothing is sent until the seller sends their own', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ photoCheck: () => ON_SITE });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(PET_CHAT.slice(0, 11));
+    const last = textsTo(waha, CONSIGNOR_CHAT).slice(-2).join('\n');
+    assert.match(last, /This photo is already on PuppyPlace/);
+    assert.match(last, /Please send a clear photo of your dog/);
+    assert.equal(petSite.received.length, 0);
+    const conv = supabase.tables.bot_conversations.find((c) => c.chat_id === CONSIGNOR_CHAT);
+    assert.equal(conv.state, 'pet_photos');
+    assert.equal(conv.draft.images.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('a photo check that cannot be done never stops a listing', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ photoCheck: 'down' });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(PET_CHAT);
+    assert.equal(petSite.received.length, 1);
+    assert.equal(petSite.received[0].body.photo_hashes, undefined);
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).at(-1), /Sent!/);
+  } finally {
+    restore();
+  }
+});
+
+test('the site refusing a duplicate photo at the last step tells the seller why', async () => {
+  const supabase = makeFakeSupabase(petSeed());
+  const waha = makeFakeWaha();
+  const petSite = makeFakePetSite({ status: 400, body: { error: 'Duplicate photos', details: ['photo 1 is already on PuppyPlace (https://puppyplace.ng/pets/boerboel-old). Send photos you took of this pet.'] } });
+  const restore = installFetch({ supabase, waha, tokens: TOKENS, petSite });
+  try {
+    await toPetStore(PET_CHAT);
+    assert.match(textsTo(waha, CONSIGNOR_CHAT).at(-1), /I couldn't send that listing:\n• photo 1 is already on PuppyPlace/);
   } finally {
     restore();
   }

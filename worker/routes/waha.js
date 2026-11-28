@@ -40,6 +40,7 @@ import {
   newPetListingMessage,
   breedGuideDraftMessage,
   petProductsOwnerMessage,
+  petDuplicatePhotoOwnerMessage,
   petPhotosDone,
   petDetailsChecked,
   PET_RETRY_MESSAGE,
@@ -1493,8 +1494,26 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
     }
   }
 
+  // Photos already on a listing on the site (the same pet again, or someone
+  // else's photos): the site says which, and they are left out.
+  const fresh = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.hash && img.stored);
+  if (fresh.length) {
+    const results = await listedPhotoCheck(cfg, fresh.map(({ img }) => publicUrl(cfg, img.stored)));
+    const dupes = [];
+    fresh.forEach(({ i }, k) => {
+      const r = results?.[k];
+      if (!r?.hash) return;
+      images[i] = { ...images[i], hash: r.hash, ...(r.match ? { dupe: { slug: r.match.slug ?? null, breed: r.match.breed ?? null, url: r.match.url ?? null } } : {}) };
+      if (r.match) dupes.push(r.match);
+    });
+    const owner = chatId(tenant.whatsapp_number);
+    if (dupes.length && owner) {
+      await say(cfg, tenant, owner, petDuplicatePhotoOwnerMessage({ phone: ctx.phone, breed: draft.breed, dupes })).catch(() => {});
+    }
+  }
+
   // Only photos not already looked at, and only the first few: the rest ride along unchecked.
-  const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v).slice(0, MAX_CHECKED);
+  const unchecked = images.map((img, i) => ({ img, i })).filter(({ img }) => !img.v && !img.dupe).slice(0, MAX_CHECKED);
   // Why the photos were not looked at, if they were not: told to the store with the listing.
   let checkNote = null;
   if (!cfg.openaiKey) {
@@ -1521,6 +1540,27 @@ async function processPetPhotos(cfg, tenant, event, draft, ctx) {
   for (const reply of next.replies) await say(cfg, tenant, event.from, reply, own);
 }
 
+// The site's /api/seller-listings/photo-check: for each photo link, its
+// fingerprint and the listing it is already on, if any. null when it can't be
+// asked (an older site, no answer): the listing carries on, and the site
+// checks again when it is sent.
+async function listedPhotoCheck(cfg, urls) {
+  if (!cfg.petListingsUrl || !cfg.petListingsKey || !urls.length) return null;
+  try {
+    const res = await fetch(`${cfg.petListingsUrl.replace(/\/+$/, '')}/photo-check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
+      body: JSON.stringify({ photos: urls }),
+    });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    return Array.isArray(body?.results) ? body.results : null;
+  } catch (err) {
+    console.warn('photo check not done:', err?.message ?? err);
+    return null;
+  }
+}
+
 // Photos into our public bucket first: the site copies them from there, and a
 // WAHA media URL is neither public nor long-lived.
 export async function forwardPetListing(cfg, tenant, event, action) {
@@ -1536,6 +1576,9 @@ export async function forwardPetListing(cfg, tenant, event, action) {
     console.error('pet listing media failed:', err?.message ?? err);
   }
   const photos = paths.map((p) => publicUrl(cfg, p)).filter(Boolean);
+  // The fingerprints the photo check gave, so the site need not make them again.
+  const photo_hashes = {};
+  for (const img of action.images) if (img.stored && img.hash) photo_hashes[publicUrl(cfg, img.stored)] = img.hash;
   if (!photos.length) {
     await say(cfg, tenant, event.from, "I couldn't save those photos. Send *SELL* to try again.", own);
     return false;
@@ -1550,7 +1593,7 @@ export async function forwardPetListing(cfg, tenant, event, action) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.petListingsKey}` },
       // owner_phone: the number this chat is (WhatsApp's own), the seller's
       // account on the site; whatsapp in the listing is the one buyers are given.
-      body: JSON.stringify({ ...action.listing, photos, ...(ownerPhone ? { owner_phone: ownerPhone } : {}) }),
+      body: JSON.stringify({ ...action.listing, photos, ...(Object.keys(photo_hashes).length ? { photo_hashes } : {}), ...(ownerPhone ? { owner_phone: ownerPhone } : {}) }),
     });
     // The site answers in JSON; anything else (a firewall page) is just noted.
     body = await res.json().catch(() => null);

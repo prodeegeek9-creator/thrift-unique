@@ -716,6 +716,13 @@ export function newPetListingMessage({ breed, price, listing_type, location, ...
 }
 
 // To the store's owner, when a guide for a breed new to the site is waiting.
+// To the owner: a seller sent photos already on a listing; the bot left them out.
+export function petDuplicatePhotoOwnerMessage({ phone, breed, dupes }) {
+  const where = [...new Map(dupes.map((d) => [d.url ?? d.slug, d])).values()]
+    .map((d) => `*${d.breed || 'a pet'}*${d.url ? ` (${d.url})` : ''}`).join(', ');
+  return `📸 A seller${phone ? ` (+${phone})` : ''} listing a${/^[aeiou]/i.test(breed || '') ? 'n' : ''} *${breed || 'pet'}* sent ${dupes.length === 1 ? 'a photo' : 'photos'} already on ${where}. I didn't use ${dupes.length === 1 ? 'it' : 'them'} and asked for their own photos. It could be the same pet listed twice, or someone else's photos.`;
+}
+
 // To the owner: somebody wants to sell pet products, which the bot does not list.
 export function petProductsOwnerMessage({ phone }) {
   return `🛍️ Somebody wants to sell pet food, toys or accessories${phone ? ` (+${phone})` : ''}. The bot has told them you'll reply; their chat is waiting for you.`;
@@ -1109,9 +1116,21 @@ function whyNot(draft, v) {
   return `it looks like ${article(KIND_WORD[v.kind] ?? 'pet')} ${KIND_WORD[v.kind] ?? 'pet'}, not ${article(petWord(draft))} ${petWord(draft)}`;
 }
 
-// What came of saving and looking at the photos: images is [{ stored, v? }],
+// Photos already on a listing on the site are never used: the same pet listed
+// twice, or someone else's photos. The seller is told where each one is.
+function alreadyListedNote(store, dupes) {
+  if (!dupes.length) return null;
+  return (
+    `🚫 ${dupes.length === 1 ? 'This photo is' : 'These photos are'} already on ${store}, so I can't use ${dupes.length === 1 ? 'it' : 'them'}:\n` +
+    dupes.map(({ n, d }) => `• Photo ${n}${d.url ? `: ${d.url}` : ''}`).join('\n') +
+    `\n\nIf it's the same pet, it's already listed, so there's no need to list it again. If it's a different pet, please send photos you've taken of this one.`
+  );
+}
+
+// What came of saving and looking at the photos: images is [{ stored, v?, hash?, dupe? }],
 // v being { shows_pet, kind, face_visible } when a photo was looked at and
-// absent when it was not (no check set up, or it could not be done).
+// absent when it was not (no check set up, or it could not be done); dupe the
+// listing on the site the photo is already on ({ slug, breed, url }).
 export function petPhotosDone(draft, images, ctx = {}) {
   const store = ctx.store ?? 'the store';
   // Why the photos were not looked at, kept to tell the store with the listing.
@@ -1120,11 +1139,15 @@ export function petPhotosDone(draft, images, ctx = {}) {
 
   const keep = [];
   const dropped = [];
-  images.forEach((img, i) => (img.v && !fits(draft.type, img.v) ? dropped.push({ n: i + 1, v: img.v }) : keep.push(img)));
-  const droppedNote = dropped.length
-    ? `I left out ${dropped.length === 1 ? 'a photo' : 'some photos'}:\n` +
-      dropped.map(({ n, v }) => `• Photo ${n}: ${whyNot(draft, v)}`).join('\n')
-    : null;
+  const dupes = [];
+  images.forEach((img, i) => (img.dupe ? dupes.push({ n: i + 1, d: img.dupe }) : img.v && !fits(draft.type, img.v) ? dropped.push({ n: i + 1, v: img.v }) : keep.push(img)));
+  const droppedNote = [
+    alreadyListedNote(store, dupes),
+    dropped.length
+      ? `I left out ${dropped.length === 1 ? 'a photo' : 'some photos'}:\n` +
+        dropped.map(({ n, v }) => `• Photo ${n}: ${whyNot(draft, v)}`).join('\n')
+      : null,
+  ].filter(Boolean).join('\n\n') || null;
 
   if (!keep.length) {
     return reply('pet_photos', { ...draft, images: [] }, droppedNote, `Please send a clear photo of your ${petWord(draft)} 📸`);
